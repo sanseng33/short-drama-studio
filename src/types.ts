@@ -1,12 +1,13 @@
 export type Genre =
   | '男频玄幻'
   | '都市逆袭'
+  | '都市重生'
   | '古风女频重生'
   | '大女主'
 
 export type Platform = '红果' | '抖音试水' | '海外ReelShort'
 
-export type ArtStyle = '2D国风' | '2D日漫'
+export type ArtStyle = '2D国风' | '2D日漫' | '真人都市'
 
 export type StepId =
   | 'project'

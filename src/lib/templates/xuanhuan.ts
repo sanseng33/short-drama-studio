@@ -1,5 +1,6 @@
 /** 男频玄幻·废柴逆袭 模板引擎数据 */
 import type { Character, EpisodeOutline, EpisodeScript, Shot, ArtStyle } from '../../types'
+import { styleTag } from './styleTag'
 
 export const XUANHUAN_CHARACTERS: Character[] = [
   {
@@ -203,7 +204,6 @@ function seedance(
   lock: string,
   duration: number,
 ): string {
-  const styleTag = style === '2D国风' ? '2D国风仙侠动画，细腻线稿，水墨晕染背景' : '2D日漫风格，赛璐璐上色，高对比光影'
   const time =
     duration > 5
       ? `时间轴：0-${Math.min(2, duration)}s起幅定场；${Math.min(2, duration)}-${duration}s${action}。`
@@ -212,7 +212,7 @@ function seedance(
     `竖屏9:16。主体：${subject}（视觉锁定：${lock}）。`,
     `动作：${action}（单主动作，手脚动作清晰克制）。`,
     `镜头：${camera}。`,
-    `风格：${styleTag}，电影级光影，高清。`,
+    `风格：${styleTag(style, 'xianxia')}，电影级光影，高清。`,
     time,
     `限制：禁止多余手部特写乱摸；禁止从画框边缘突然闯入；保持角色五官与服装一致；无字幕无水印。`,
   ]

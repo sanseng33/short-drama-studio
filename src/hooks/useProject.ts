@@ -6,6 +6,7 @@ import {
   createSampleProject,
   defaultCharacters,
   defaultLogline,
+  defaultStyleForGenre,
   defaultTitle,
   generateOutline,
   generateScript,
@@ -49,20 +50,24 @@ export function useProject() {
   const loadSample = useCallback(() => {
     setProject(createSampleProject())
     setStep('project')
-    flash('已加载示例项目《古戒仙尊》')
+    flash('已加载示例项目（都市逆袭·真人都市）')
   }, [flash])
 
   const applyGenreDefaults = useCallback(() => {
     setProject((p) => {
-      const title = p.title === '未命名漫剧' || !p.title ? defaultTitle(p.genre) : p.title
+      const title =
+        p.title === '未命名漫剧' || p.title === '未命名短剧' || !p.title
+          ? defaultTitle(p.genre)
+          : p.title
       return {
         ...p,
         title,
+        style: defaultStyleForGenre(p.genre),
         characters: defaultCharacters(p.genre),
         logline: p.logline || defaultLogline(p.genre, title),
       }
     })
-    flash('已按题材填充角色与一句话故事')
+    flash('已按题材填充角色、Logline 与推荐画风')
   }, [flash])
 
   const genOutlineTemplate = useCallback(() => {

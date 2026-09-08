@@ -1,9 +1,9 @@
 import type { ProjectApi } from '../hooks/useProject'
 import type { ArtStyle, Genre, Platform } from '../types'
 
-const GENRES: Genre[] = ['男频玄幻', '都市逆袭', '古风女频重生', '大女主']
+const GENRES: Genre[] = ['男频玄幻', '都市逆袭', '都市重生', '古风女频重生', '大女主']
 const PLATFORMS: Platform[] = ['红果', '抖音试水', '海外ReelShort']
-const STYLES: ArtStyle[] = ['2D国风', '2D日漫']
+const STYLES: ArtStyle[] = ['2D国风', '2D日漫', '真人都市']
 
 export function ProjectSetup({ api }: { api: ProjectApi }) {
   const { project, update, applyGenreDefaults } = api
@@ -12,7 +12,8 @@ export function ProjectSetup({ api }: { api: ProjectApi }) {
       <header>
         <h2 className="text-lg font-semibold">项目设定</h2>
         <p className="mt-1 text-sm text-ink-muted">
-          选定题材与平台后，可用「按题材填充」一键生成角色卡与 logline。优先 2D 漫剧，题材公式：压抑 → 开挂 → 打脸。
+          选定题材与平台后，可用「按题材填充」一键生成角色卡与 logline。
+          漫剧可选 2D 国风/日漫；都市短剧推荐「真人都市」。公式：压抑 → 开挂 → 打脸。
         </p>
       </header>
 
@@ -97,12 +98,12 @@ export function ProjectSetup({ api }: { api: ProjectApi }) {
           className="field min-h-[88px]"
           value={project.logline}
           onChange={(e) => update({ logline: e.target.value })}
-          placeholder="被退婚的废柴少年觉醒上古神魂，一路打脸……"
+          placeholder="被撤职的落魄青年手握父亲密钥，逆袭商界打脸……"
         />
       </div>
 
       <button type="button" className="btn-primary" onClick={applyGenreDefaults}>
-        按题材填充角色与 Logline
+        按题材填充角色、Logline 与推荐画风
       </button>
     </div>
   )

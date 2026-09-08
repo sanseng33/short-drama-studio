@@ -1,5 +1,6 @@
 /** 女频重生·嫡女复仇 模板引擎数据 */
 import type { Character, EpisodeOutline, EpisodeScript, Shot, ArtStyle } from '../../types'
+import { styleTag } from './styleTag'
 
 export const NVPIN_CHARACTERS: Character[] = [
   {
@@ -203,10 +204,6 @@ function seedance(
   lock: string,
   duration: number,
 ): string {
-  const styleTag =
-    style === '2D国风'
-      ? '2D国风古装动画，精致服饰纹样，柔光水墨背景'
-      : '2D日漫古风，细腻瞳孔高光，柔和色调'
   const time =
     duration > 5
       ? `时间轴：0-${Math.min(2, duration)}s情绪铺垫；${Math.min(2, duration)}-${duration}s${action}。`
@@ -215,7 +212,7 @@ function seedance(
     `竖屏9:16。主体：${subject}（视觉锁定：${lock}）。`,
     `动作：${action}（单主动作，表情戏优先，手部克制）。`,
     `镜头：${camera}。`,
-    `风格：${styleTag}，电影级光影，高清。`,
+    `风格：${styleTag(style, 'gufeng')}，电影级光影，高清。`,
     time,
     `限制：禁止手部乱摸乱抓；禁止人物从画框边缘突然进入；五官服饰严格一致；无字幕无水印。`,
   ]
