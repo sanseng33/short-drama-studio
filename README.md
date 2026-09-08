@@ -9,6 +9,12 @@
 
 仓库：https://github.com/sanseng33/short-drama-studio
 
+## 在线地址（GitHub Pages）
+
+- **在线体验**：https://sanseng33.github.io/short-drama-studio/
+- 由 GitHub Actions 在 `main` 推送后自动构建并部署静态站点。
+- 线上默认 LLM Base URL 指向本机 `http://127.0.0.1:4000/v1`（需自行启动 LiteLLM）；也可在「设置」中改为任意兼容 OpenAI 协议的网关。
+
 ## 快速开始
 
 进入本目录后执行依赖安装，再启动开发服务器（见 package.json 的 scripts：dev / build / preview）。

@@ -108,7 +108,7 @@ export interface LlmSettings {
 export const DEFAULT_LLM: LlmSettings = {
   // Same LiteLLM proxy as apps/api (LITELLM_PROXY_BASE_URL + /v1).
   // Dev: Vite proxies /litellm -> http://127.0.0.1:4000 to avoid CORS.
-  baseURL: '/litellm/v1',
+  baseURL: import.meta.env.DEV ? '/litellm/v1' : 'http://127.0.0.1:4000/v1',
   apiKey: '',
   model: 'eureka-flash',
 }
