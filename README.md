@@ -2,9 +2,9 @@
 
 本地纯前端工具：面向 **AI 漫剧 / 短剧** 的剧本大纲、角色卡、分集剧本、工业分镜表与 Seedance 提示词生成。
 
-- **独立仓库**：可单独安装与启动；可选对接本机 LiteLLM（与 Pixel Workbench Agent 的代理约定兼容）。
+- **独立仓库**：可单独安装与启动；设置页填写兼容 OpenAI 协议的 Base URL + Key。
 - **离线可用**：内置「男频玄幻废柴逆袭」「女频重生嫡女复仇」等中文模板；无 API Key 也能出可用大纲 / 剧本 / 分镜 / 提示词。
-- **可选 LLM**：设置页填写兼容 OpenAI 协议的 Base URL + Key，用于增强生成。
+- **默认 LLM 示例**：DeepSeek（`https://api.deepseek.com/v1` + `deepseek-v4-flash`）；也可改 DeepSeek / 本机 LiteLLM 等。
 - **详细生产线**：请先读同目录 **[GUIDE.md](./GUIDE.md)**（选题 → 出片 → 投稿全流程）。
 
 仓库：https://github.com/sanseng33/short-drama-studio
@@ -13,7 +13,7 @@
 
 - **在线体验**：https://sanseng33.github.io/short-drama-studio/
 - 由 GitHub Actions 在 `main` 推送后自动构建并部署静态站点。
-- 线上默认 LLM Base URL 指向本机 `http://127.0.0.1:4000/v1`（需自行启动 LiteLLM）；也可在「设置」中改为任意兼容 OpenAI 协议的网关。
+- 线上默认 LLM 指向 DeepSeek（`https://api.deepseek.com/v1`）；在「设置」填写你的 API Key，或改成任意兼容 OpenAI 协议的网关。
 
 ## 快速开始
 
@@ -39,28 +39,20 @@
     npm run build
     npm run preview
 
-## LiteLLM（与主项目一致）
-
-本工具默认走 Pixel Workbench 本机 LiteLLM 代理，与 `apps/api` 相同：
-
-| 项 | 值 |
-| --- | --- |
-| 开发 Base URL | `/litellm/v1`（Vite 代理到 `http://127.0.0.1:4000`） |
-| 直连 Base URL | `http://127.0.0.1:4000/v1` |
-| Model | `eureka-flash` |
-| API Key | 与 `apps/api/.env` 的 `LITELLM_API_KEY` 相同 |
-
-先按仓库根 README「LiteLLM / OpenAI」启动 `:4000`，再在本页「设置」填写 Key。
-
-## 可选 LLM
+## 默认 LLM（DeepSeek）
 
 | 项 | 默认 |
 | --- | --- |
-| Base URL | https://api.openai.com/v1 |
-| API Key | 空（仅 localStorage） |
-| Model | gpt-4o-mini |
+| Base URL | `https://api.deepseek.com/v1` |
+| API Key | 空（仅存浏览器 localStorage） |
+| Model | `deepseek-v4-flash` |
 
-可改 DeepSeek 等兼容网关。无 Key 用模板生成。
+1. 打开 [platform.deepseek.com](https://platform.deepseek.com) 注册 → **API Keys** 创建密钥
+2. 在 **Billing / 充值** 预充余额（按量扣费）；新账号可能有试用额度
+3. 在应用「设置」粘贴 Key；可点「填入 DeepSeek 默认」
+4. 无 Key 时继续用「模板生成」
+
+也可改填 OpenAI / xAI，或本机 LiteLLM：开发时 Base URL 可用 `/litellm/v1`（Vite 代理到 `127.0.0.1:4000`）。
 
 ## 目录
 

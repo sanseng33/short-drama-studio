@@ -21,15 +21,24 @@ export function saveProject(project: Project): void {
 
 function migrateLlmSettings(settings: LlmSettings): LlmSettings {
   const next = { ...DEFAULT_LLM, ...settings }
-  // Old studio default pointed at OpenAI; remap to Pixel Workbench LiteLLM.
-  if (
-    !settings.baseURL ||
-    settings.baseURL === 'https://api.openai.com/v1' ||
-    settings.baseURL.includes('api.openai.com')
-  ) {
+  const base = (settings.baseURL || '').trim()
+  const shouldRemapBase =
+    !base ||
+    base === '/litellm/v1' ||
+    base === 'http://127.0.0.1:4000/v1' ||
+    base === 'http://127.0.0.1:4000' ||
+    base.includes('api.openai.com') ||
+    base.includes('api.x.ai')
+  if (shouldRemapBase) {
     next.baseURL = DEFAULT_LLM.baseURL
   }
-  if (!settings.model || settings.model === 'gpt-4o-mini') {
+  const model = (settings.model || '').trim()
+  if (
+    !model ||
+    model === 'eureka-flash' ||
+    model === 'gpt-4o-mini' ||
+    model.startsWith('grok-')
+  ) {
     next.model = DEFAULT_LLM.model
   }
   return next

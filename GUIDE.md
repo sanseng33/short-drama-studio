@@ -50,7 +50,7 @@
 分镜拆解要求 JSON 字段：shotNo,size,durationSec,visual,action,dialogue,camera,emotion,seedancePrompt,groupNote。
 seedancePrompt：主体→动作→镜头→风格→限制；竖屏9:16；单主动作；>5秒加0-Xs时间轴。
 
-本应用设置页可填兼容OpenAI协议的Base URL；无Key时用「模板生成」。
+本应用设置页默认示例为 DeepSeek（`https://api.deepseek.com/v1` + `deepseek-v4-flash`），也可改任意兼容 OpenAI 协议的 Base URL；无 Key 时用「模板生成」。
 
 ### 3.2 GPT-Image / 本地 ComfyUI（角色定妆与分镜宫格）
 

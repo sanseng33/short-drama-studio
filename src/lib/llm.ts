@@ -1,9 +1,11 @@
 import type { LlmSettings } from '../types'
 
-/** Accept `http://127.0.0.1:4000` or `.../v1` — always end with `/v1`. */
+/** Accept host or `.../v1` — always end with `/v1`. Empty base is an error. */
 function normalizeBaseUrl(raw: string): string {
   let base = raw.trim().replace(/\/$/, '')
-  if (!base) base = '/litellm/v1'
+  if (!base) {
+    throw new Error('未配置 Base URL，请在设置中填写（例如 https://api.deepseek.com/v1）。')
+  }
   if (!base.endsWith('/v1')) base = `${base}/v1`
   return base
 }
