@@ -1,12 +1,13 @@
 /** 都市逆袭 / 都市重生 · 真人短剧向模板 */
 import type { Character, EpisodeOutline, EpisodeScript, Shot, ArtStyle } from '../../types'
-import { styleTag } from './styleTag'
+import { buildFlexibleScript, buildFlexibleShots } from './flexible'
 
 export const DUSHI_NIXI_CHARACTERS: Character[] = [
   {
     id: 'c1',
     name: '陈默',
     role: '男主·落魄逆袭',
+    tags: ['protagonist'],
     visualLock:
       '二十五岁东亚男性，短发微乱，剑眉深目，下巴浅疤，初期憔悴有青茬；逆袭后剃须干净、气场沉稳，真人写实面孔',
     costume: '初期皱巴旧西装+白衬衫；逆袭后修身黑西装、银袖扣、黑色腕表',
@@ -16,6 +17,7 @@ export const DUSHI_NIXI_CHARACTERS: Character[] = [
     id: 'c2',
     name: '林可',
     role: '女主·投行精英',
+    tags: ['romantic', 'support'],
     visualLock:
       '二十四岁东亚女性，齐肩黑发侧分，杏眼，职业淡妆，气质干练带暖意，真人写实',
     costume: '米白西装套裙，细跟高跟鞋，珍珠耳钉',
@@ -25,6 +27,7 @@ export const DUSHI_NIXI_CHARACTERS: Character[] = [
     id: 'c3',
     name: '赵凯',
     role: '反派·假好友',
+    tags: ['antagonist'],
     visualLock:
       '二十六岁东亚男性，油头微卷，金丝眼镜，笑里藏刀，眼神飘忽，炫富感，真人写实',
     costume: '名牌运动外套+大金链；商务场合换成刺眼亮色西装',
@@ -37,6 +40,7 @@ export const DUSHI_CHONGSHENG_CHARACTERS: Character[] = [
     id: 'c1',
     name: '沈星',
     role: '女主·都市重生',
+    tags: ['protagonist'],
     visualLock:
       '二十六岁东亚女性，及肩波浪黑发，眉眼凌厉，肤色冷白；重生后眼神更沉，真人写实面孔',
     costume: '初期廉价职场连衣裙；逆袭后黑色大衣+白衬衫+细链',
@@ -46,6 +50,7 @@ export const DUSHI_CHONGSHENG_CHARACTERS: Character[] = [
     id: 'c2',
     name: '顾宴',
     role: '男主·隐秘总裁',
+    tags: ['romantic', 'support'],
     visualLock:
       '二十九岁东亚男性，短寸微长，深目高鼻，常穿黑衣，气场压迫但不张扬，真人写实',
     costume: '哑光黑西装，无logo，黑色手套偶现',
@@ -55,6 +60,7 @@ export const DUSHI_CHONGSHENG_CHARACTERS: Character[] = [
     id: 'c3',
     name: '苏晚',
     role: '反派·白莲闺蜜',
+    tags: ['antagonist'],
     visualLock:
       '二十五岁东亚女性，甜美娃娃脸，粉色唇彩，笑起来无辜，眼神算计，真人写实',
     costume: '浅粉针织裙，名媛风首饰',
@@ -245,6 +251,26 @@ export function buildDushiOutline(
   }))
 }
 
+
+function dushiFlavor(mode: 'nixi' | 'chongsheng') {
+  if (mode === 'chongsheng') {
+    return {
+      genreLabel: '都市重生·打脸复仇',
+      openingVisual: '五星酒店宴会厅，冷白灯光，宾客窃窃私语',
+      propName: '破碎的订婚戒',
+      propLock: '碎裂钻石订婚戒，折射冷光',
+      styleTone: 'dushi' as const,
+    }
+  }
+  return {
+    genreLabel: '都市逆袭·商战打脸',
+    openingVisual: '玻璃幕墙写字楼大堂，冷白灯光，人群围观',
+    propName: '旧怀表',
+    propLock: '做旧银色怀表，表盖刻字',
+    styleTone: 'dushi' as const,
+  }
+}
+
 export function buildDushiScript(
   ep: number,
   outline: EpisodeOutline,
@@ -252,103 +278,7 @@ export function buildDushiScript(
   seconds: number,
   mode: 'nixi' | 'chongsheng',
 ): EpisodeScript {
-  const hero = chars[0]
-  const partner = chars[1]
-  const villain = chars[2]
-  const h = hero?.name || (mode === 'chongsheng' ? '沈星' : '陈默')
-  const p = partner?.name || (mode === 'chongsheng' ? '顾宴' : '林可')
-  const v = villain?.name || (mode === 'chongsheng' ? '苏晚' : '赵凯')
-
-  const beats =
-    mode === 'chongsheng'
-      ? [
-          {
-            label: '【3秒钩子】',
-            content: `订婚宴灯光刺眼，${v}挽着男人笑，${h}心跳如鼓——她记得自己三秒后会坠落。`,
-            dialogue: `${h}（内心）：这次，绝不重来。`,
-          },
-          {
-            label: '【冲突升级】',
-            content: `${v}当众暗示${h}配不上联姻，宾客起哄；${h}站起，把订婚戒摔在大理石地面。`,
-            dialogue: `${v}：姐，你别冲动——`,
-          },
-          {
-            label: '【反转】',
-            content: `${h}亮出「未来」关键截图（重生记忆），${v}脸色煞白；${p}在角落抬眼。`,
-            dialogue: `${h}：你以为我什么都不知道？`,
-          },
-          {
-            label: '【情绪高点】',
-            content: `${p}走到${h}身侧挡开保镖，气场压场；宾客哗然，闪光灯狂闪。`,
-            dialogue: `${p}：谁再逼她，就和我的律师团队聊。`,
-          },
-          {
-            label: '【结尾悬念】',
-            content: `${h}拾起碎戒，屏幕亮起未知短信：欢迎回到第0天。`,
-            dialogue: `${h}：……谁？`,
-          },
-        ]
-      : [
-          {
-            label: '【3秒钩子】',
-            content: `华腾大厅，${h}被保安按住收拾纸箱，${v}拍手笑着接手他的工位。`,
-            dialogue: `${v}：兄弟，该学会认命了。`,
-          },
-          {
-            label: '【冲突升级】',
-            content: `客户被当众挖走，同事起哄；${h}握紧旧怀表，指节发白。`,
-            dialogue: `${h}：怀表……你到底藏了什么。`,
-          },
-          {
-            label: '【反转】',
-            content: `怀表弹出密钥投影，律师远程确认控股；${v}笑容僵住。`,
-            dialogue: `${h}：从这一秒起，规矩我定。`,
-          },
-          {
-            label: '【情绪高点】',
-            content: `${p}推门而入递上证据袋，舆论与资本瞬间倒戈；大厅哗然。`,
-            dialogue: `${p}：录音、转账、假合同，都在里面。`,
-          },
-          {
-            label: '【结尾悬念】',
-            content: `${h}走出大楼，手机震动：你父亲没有死。`,
-            dialogue: `${h}：……什么？`,
-          },
-        ]
-
-  const tag = mode === 'chongsheng' ? '都市重生·打脸复仇' : '都市逆袭·商战打脸'
-  const fullText = [
-    `# 第${ep}集《${outline.title}》`,
-    `时长约 ${seconds} 秒｜${tag}`,
-    '',
-    ...beats.flatMap((b) => [b.label, b.content, b.dialogue ? `台词：${b.dialogue}` : '', '']),
-  ].join('\n')
-
-  return { episode: ep, title: outline.title, beats, fullText }
-}
-
-function seedance(
-  subject: string,
-  action: string,
-  camera: string,
-  style: ArtStyle,
-  lock: string,
-  duration: number,
-): string {
-  const time =
-    duration > 5
-      ? `时间轴：0-${Math.min(2, duration)}s起幅定场；${Math.min(2, duration)}-${duration}s${action}。`
-      : ''
-  return [
-    `竖屏9:16。主体：${subject}（视觉锁定：${lock}）。`,
-    `动作：${action}（单主动作，表情克制真实）。`,
-    `镜头：${camera}。`,
-    `风格：${styleTag(style, 'dushi')}，电影级光影，高清。`,
-    time,
-    `限制：禁止二次元大眼睛；禁止夸张美颜磨皮；保持真人五官与服装一致；无字幕无水印；当代都市实景。`,
-  ]
-    .filter(Boolean)
-    .join('')
+  return buildFlexibleScript(ep, outline, chars, seconds, dushiFlavor(mode))
 }
 
 export function buildDushiShots(
@@ -360,124 +290,5 @@ export function buildDushiShots(
   seconds: number,
   mode: 'nixi' | 'chongsheng',
 ): Shot[] {
-  const hero = chars[0]
-  const partner = chars[1]
-  const villain = chars[2]
-  const loc = mode === 'chongsheng' ? '五星酒店宴会厅' : '玻璃幕墙写字楼大堂'
-  const prop = mode === 'chongsheng' ? '破碎的订婚戒' : '旧怀表'
-  const propLock =
-    mode === 'chongsheng' ? '碎裂钻石订婚戒，折射冷光' : '做旧银色怀表，表盖刻字'
-
-  const patterns: Omit<Shot, 'id' | 'shotNo' | 'seedancePrompt'>[] = [
-    {
-      size: '远景',
-      durationSec: 3,
-      visual: `${loc}，冷白灯光，人群窃窃私语`,
-      action: '镜头从门外缓缓推入大厅',
-      dialogue: '',
-      camera: '推',
-      emotion: '压抑',
-      groupNote: '镜头组A·开场定场',
-    },
-    {
-      size: '中景',
-      durationSec: 4,
-      visual: `${villain?.name || '反派'}站在高处台阶，笑容得意`,
-      action: `${villain?.name || '反派'}抬手指向下方，当众羞辱`,
-      dialogue: script.beats[0]?.dialogue || '',
-      camera: '固定',
-      emotion: '嚣张',
-      groupNote: '镜头组A·开场定场',
-    },
-    {
-      size: '近景',
-      durationSec: 3,
-      visual: `${hero?.name || '主角'}低头，下颌线紧绷，眼神压抑`,
-      action: '缓缓抬头，眼神转冷',
-      dialogue: script.beats[1]?.dialogue || '',
-      camera: '升',
-      emotion: '隐忍转锋',
-    },
-    {
-      size: '中景',
-      durationSec: 5,
-      visual: `${hero?.name || '主角'}与${villain?.name || '反派'}对峙，举起关键证据`,
-      action: '亮出关键证据，全场哗然',
-      dialogue: '',
-      camera: '跟',
-      emotion: '爆发',
-      groupNote: '镜头组B·冲突',
-    },
-    {
-      size: '特写',
-      durationSec: 2,
-      visual: '围观者手机举起拍摄，表情震惊',
-      action: '反应镜头，倒吸凉气',
-      dialogue: script.beats[2]?.dialogue || '',
-      camera: '固定',
-      emotion: '震惊',
-      groupNote: '镜头组B·冲突',
-    },
-    {
-      size: '近景',
-      durationSec: 4,
-      visual: `${partner?.name || '助力'}侧脸入画，气场冷静`,
-      action: '上前半步挡开人群',
-      dialogue: script.beats[3]?.dialogue || '',
-      camera: '摇',
-      emotion: '撑腰',
-    },
-    {
-      size: '特写',
-      durationSec: 3,
-      visual: `${prop}特写，光斑扫过`,
-      action: '道具轻微震动或反光一次',
-      dialogue: '',
-      camera: '推',
-      emotion: '悬疑',
-      groupNote: '镜头组C·悬念',
-    },
-    {
-      size: '中景',
-      durationSec: Math.max(3, seconds - 24),
-      visual: `${hero?.name || '主角'}背影走出旋转门，城市夜景霓虹`,
-      action: '停顿回眸，留下悬念',
-      dialogue: script.beats[4]?.dialogue || '',
-      camera: '拉',
-      emotion: '余韵/悬念',
-      groupNote: '镜头组C·悬念',
-    },
-  ]
-
-  return patterns.map((pat, i) => {
-    const subject =
-      i === 1
-        ? villain?.name || '反派'
-        : i === 5
-          ? partner?.name || '助力'
-          : i === 6
-            ? prop
-            : hero?.name || '主角'
-    const vlock =
-      i === 1
-        ? villain?.visualLock || ''
-        : i === 5
-          ? partner?.visualLock || ''
-          : i === 6
-            ? propLock
-            : hero?.visualLock || ''
-    return {
-      id: `s${ep}-${i + 1}`,
-      shotNo: i + 1,
-      ...pat,
-      seedancePrompt: seedance(
-        subject,
-        pat.action,
-        `${pat.camera}镜头，${pat.size}`,
-        style,
-        vlock,
-        pat.durationSec,
-      ),
-    }
-  })
+  return buildFlexibleShots(ep, outline, script, chars, style, seconds, dushiFlavor(mode))
 }

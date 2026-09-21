@@ -1,12 +1,13 @@
 /** 男频玄幻·废柴逆袭 模板引擎数据 */
 import type { Character, EpisodeOutline, EpisodeScript, Shot, ArtStyle } from '../../types'
-import { styleTag } from './styleTag'
+import { buildFlexibleScript, buildFlexibleShots } from './flexible'
 
 export const XUANHUAN_CHARACTERS: Character[] = [
   {
     id: 'c1',
     name: '林尘',
     role: '男主·废柴逆袭',
+    tags: ['protagonist'],
     visualLock:
       '十八岁少年，黑发微乱，右眉一道细疤，深邃黑瞳带金芒闪烁，清瘦但肩线利落，气质从隐忍到锋利',
     costume: '破旧青灰色短打外袍，腰束旧皮带，后期换玄黑镶金边长袍',
@@ -16,6 +17,7 @@ export const XUANHUAN_CHARACTERS: Character[] = [
     id: 'c2',
     name: '苏清雪',
     role: '女主·宗门天才',
+    tags: ['romantic', 'support'],
     visualLock:
       '十七岁少女，银白长发及腰，冰蓝瞳孔，鹅蛋脸，气质清冷如霜，眉心一点淡青莲印',
     costume: '白底蓝纹仙裙，外披半透明纱罩，腰佩冰晶佩',
@@ -25,6 +27,7 @@ export const XUANHUAN_CHARACTERS: Character[] = [
     id: 'c3',
     name: '赵无极',
     role: '反派·宗门少主',
+    tags: ['antagonist'],
     visualLock:
       '二十岁青年，金棕短发竖起，狭长凤眼，薄唇常带讥笑，面容英俊但眼神阴鸷',
     costume: '金纹红袍，肩披白狐裘，腰悬赤焰剑',
@@ -151,73 +154,22 @@ export function buildXuanhuanOutline(count: number, title: string): EpisodeOutli
   }))
 }
 
+
+const XH_FLAVOR = {
+  genreLabel: '男频玄幻·废柴逆袭',
+  openingVisual: '青云宗山门广场，乌云压顶，人群围观',
+  propName: '青铜古戒',
+  propLock: '锈迹青铜古戒，表面符文微光',
+  styleTone: 'xianxia' as const,
+}
+
 export function buildXuanhuanScript(
   ep: number,
   outline: EpisodeOutline,
   chars: Character[],
   seconds: number,
 ): EpisodeScript {
-  const hero = chars[0]?.name || '林尘'
-  const heroine = chars[1]?.name || '苏清雪'
-  const villain = chars[2]?.name || '赵无极'
-  const beats = [
-    {
-      label: '【3秒钩子】',
-      content: outline.hook,
-      dialogue: `${villain}（嘲讽）：「${hero}，今天就是你的死期！」`,
-    },
-    {
-      label: '【冲突升级】',
-      content: outline.summary,
-      dialogue: `${hero}（咬牙）：「你们……等着。」`,
-    },
-    {
-      label: '【反转】',
-      content: `局面急转：${hero}展现出众人意想不到的力量/计谋，现场哗然。`,
-      dialogue: `围观者甲：「这怎么可能？！他不是废柴吗？」`,
-    },
-    {
-      label: '【情绪高点】',
-      content: `${heroine}相关线索或态度变化，推动情感线与主线交织。`,
-      dialogue: `${heroine}（低声）：「你……到底是谁？」`,
-    },
-    {
-      label: '【结尾悬念】',
-      content: outline.cliffhanger,
-      dialogue: `旁白：下一集，答案即将揭晓……`,
-    },
-  ]
-  const fullText = [
-    `# 第${ep}集《${outline.title}》`,
-    `时长约 ${seconds} 秒｜男频玄幻废柴逆袭`,
-    '',
-    ...beats.flatMap((b) => [b.label, b.content, b.dialogue ? `台词：${b.dialogue}` : '', '']),
-  ].join('\n')
-  return { episode: ep, title: outline.title, beats, fullText }
-}
-
-function seedance(
-  subject: string,
-  action: string,
-  camera: string,
-  style: ArtStyle,
-  lock: string,
-  duration: number,
-): string {
-  const time =
-    duration > 5
-      ? `时间轴：0-${Math.min(2, duration)}s起幅定场；${Math.min(2, duration)}-${duration}s${action}。`
-      : ''
-  return [
-    `竖屏9:16。主体：${subject}（视觉锁定：${lock}）。`,
-    `动作：${action}（单主动作，手脚动作清晰克制）。`,
-    `镜头：${camera}。`,
-    `风格：${styleTag(style, 'xianxia')}，电影级光影，高清。`,
-    time,
-    `限制：禁止多余手部特写乱摸；禁止从画框边缘突然闯入；保持角色五官与服装一致；无字幕无水印。`,
-  ]
-    .filter(Boolean)
-    .join('')
+  return buildFlexibleScript(ep, outline, chars, seconds, XH_FLAVOR)
 }
 
 export function buildXuanhuanShots(
@@ -228,113 +180,5 @@ export function buildXuanhuanShots(
   style: ArtStyle,
   seconds: number,
 ): Shot[] {
-  const hero = chars[0]
-  const heroine = chars[1]
-  const villain = chars[2]
-  const lock = hero?.visualLock || '黑发少年'
-  const patterns: Omit<Shot, 'id' | 'shotNo' | 'seedancePrompt'>[] = [
-    {
-      size: '远景',
-      durationSec: 3,
-      visual: `青云宗山门广场，乌云压顶，人群围观`,
-      action: '镜头缓缓推近广场中央',
-      dialogue: '',
-      camera: '推',
-      emotion: '压抑',
-      groupNote: '镜头组A·开场定场',
-    },
-    {
-      size: '中景',
-      durationSec: 4,
-      visual: `${villain?.name || '反派'}立于高台，金纹红袍猎猎`,
-      action: `${villain?.name || '反派'}抬手指向下方，嘴角讥笑`,
-      dialogue: script.beats[0]?.dialogue || '',
-      camera: '固定',
-      emotion: '嚣张',
-      groupNote: '镜头组A·开场定场',
-    },
-    {
-      size: '近景',
-      durationSec: 3,
-      visual: `${hero?.name || '男主'}低着头，拳头紧握，右眉细疤清晰`,
-      action: '缓缓抬头，眼中金芒一闪',
-      dialogue: script.beats[1]?.dialogue || '',
-      camera: '升',
-      emotion: '隐忍转锋',
-    },
-    {
-      size: '中景',
-      durationSec: 5,
-      visual: `${hero?.name || '男主'}与对手对峙，灵气波动`,
-      action: '出拳命中，对方倒飞',
-      dialogue: '',
-      camera: '跟',
-      emotion: '爆发',
-      groupNote: '镜头组B·冲突',
-    },
-    {
-      size: '特写',
-      durationSec: 2,
-      visual: '围观者震惊的脸，瞳孔放大',
-      action: '反应镜头，倒吸凉气',
-      dialogue: script.beats[2]?.dialogue || '',
-      camera: '固定',
-      emotion: '震惊',
-      groupNote: '镜头组B·冲突',
-    },
-    {
-      size: '近景',
-      durationSec: 4,
-      visual: `${heroine?.name || '女主'}银白长发，冰蓝瞳，侧脸观战`,
-      action: '微微侧目，指尖轻触玉笛',
-      dialogue: script.beats[3]?.dialogue || '',
-      camera: '摇',
-      emotion: '好奇',
-    },
-    {
-      size: '特写',
-      durationSec: 3,
-      visual: `青铜古戒裂缝渗出金光`,
-      action: '金光脉动一次，戒指轻微震动',
-      dialogue: '',
-      camera: '推',
-      emotion: '悬疑',
-      groupNote: '镜头组C·悬念',
-    },
-    {
-      size: '中景',
-      durationSec: Math.max(3, seconds - 24),
-      visual: `${hero?.name || '男主'}背影立于广场，风吹衣袂`,
-      action: '转身离去，留下未说完的秘密感',
-      dialogue: script.beats[4]?.dialogue || '',
-      camera: '拉',
-      emotion: '余韵/悬念',
-      groupNote: '镜头组C·悬念',
-    },
-  ]
-
-  return patterns.map((p, i) => {
-    const subject =
-      i === 1
-        ? villain?.name || '反派'
-        : i === 5
-          ? heroine?.name || '女主'
-          : i === 6
-            ? '青铜古戒'
-            : hero?.name || '男主'
-    const vlock =
-      i === 1
-        ? villain?.visualLock || lock
-        : i === 5
-          ? heroine?.visualLock || lock
-          : i === 6
-            ? '锈迹青铜古戒，表面符文'
-            : lock
-    return {
-      id: `s${ep}-${i + 1}`,
-      shotNo: i + 1,
-      ...p,
-      seedancePrompt: seedance(subject, p.action, `${p.camera}镜头，${p.size}`, style, vlock, p.durationSec),
-    }
-  })
+  return buildFlexibleShots(ep, outline, script, chars, style, seconds, XH_FLAVOR)
 }

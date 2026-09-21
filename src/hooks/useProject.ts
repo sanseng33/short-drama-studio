@@ -37,6 +37,17 @@ export function useProject() {
     window.setTimeout(() => setToast(''), 2200)
   }, [])
 
+  const requireCast = useCallback(
+    (chars: Project['characters']) => {
+      if (!chars.length) {
+        flash('请至少保留 1 个角色再生成')
+        return false
+      }
+      return true
+    },
+    [flash],
+  )
+
   const update = useCallback((patch: Partial<Project>) => {
     setProject((p) => ({ ...p, ...patch }))
   }, [])
@@ -63,18 +74,25 @@ export function useProject() {
         ...p,
         title,
         style: defaultStyleForGenre(p.genre),
+        // Genre default cast is a named preset seed — user can add/remove freely afterward
         characters: defaultCharacters(p.genre),
-        logline: p.logline || defaultLogline(p.genre, title),
+        logline: p.logline.trim() ? p.logline : defaultLogline(p.genre, title),
       }
     })
-    flash('已按题材填充角色、Logline 与推荐画风')
+    flash('已应用题材预设（画风 / logline / 推荐阵容，可再改）')
   }, [flash])
 
   const genOutlineTemplate = useCallback(() => {
-    setProject((p) => ({
-      ...p,
-      outline: generateOutline(p.genre, p.episodeCount, p.title),
-    }))
+    setProject((p) => {
+      if (!p.characters.length) {
+        flash('请至少保留 1 个角色再生成')
+        return p
+      }
+      return {
+        ...p,
+        outline: generateOutline(p.genre, p.episodeCount, p.title),
+      }
+    })
     flash('大纲已用模板生成')
   }, [flash])
 
@@ -84,7 +102,7 @@ export function useProject() {
     try {
       const p = project
       const user = `题材:${p.genre} 标题:${p.title} 集数:${p.episodeCount} 每集${p.secondsPerEp}秒 画风:${p.style} logline:${p.logline}
-角色:${JSON.stringify(p.characters.map((c) => ({ name: c.name, role: c.role })))}
+角色:${JSON.stringify(p.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [] })))}
 请生成全部${p.episodeCount}集大纲JSON数组。`
       const text = await chatCompletion(llm, OUTLINE_SYSTEM, user)
       const json = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim()) as EpisodeOutline[]
@@ -99,6 +117,10 @@ export function useProject() {
 
   const genScriptTemplate = useCallback(() => {
     setProject((p) => {
+      if (!p.characters.length) {
+        flash('请至少保留 1 个角色再生成')
+        return p
+      }
       const ep = p.selectedEpisode
       const outline = p.outline.find((o) => o.episode === ep)
       if (!outline) {
@@ -181,7 +203,7 @@ export function useProject() {
       const user = `为第${p.selectedEpisode}集做分镜。画风${p.style} 时长${p.secondsPerEp}s
 大纲:${JSON.stringify(outline)}
 剧本:${script?.fullText || '(无)'}
-角色视觉锁定:${JSON.stringify(p.characters.map((c) => ({ name: c.name, visualLock: c.visualLock, costume: c.costume })))}`
+角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume })))}`
       const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user)
       const raw = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim()) as Shot[]
       const shots = raw.map((s, i) => ({

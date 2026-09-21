@@ -22,6 +22,8 @@ export interface Character {
   id: string
   name: string
   role: string
+  /** Optional targeting tags for generators, e.g. protagonist / antagonist / mentor */
+  tags?: string[]
   visualLock: string
   costume: string
   signatureProp: string

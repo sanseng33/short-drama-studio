@@ -26,6 +26,9 @@ import {
   buildDushiScript,
   buildDushiShots,
 } from './dushi'
+import { buildPresetCast, genreDefaultPreset } from './cast'
+export { CAST_PRESETS, buildPresetCast, genreDefaultPreset, resolveCast } from './cast'
+export type { CastPresetId } from './cast'
 
 function isNvpin(genre: Genre): boolean {
   return genre === '古风女频重生' || genre === '大女主'
@@ -40,10 +43,17 @@ function dushiMode(genre: Genre): 'nixi' | 'chongsheng' {
 }
 
 export function defaultCharacters(genre: Genre): Character[] {
-  if (isNvpin(genre)) return NVPIN_CHARACTERS.map((c) => ({ ...c }))
-  if (genre === '都市重生') return DUSHI_CHONGSHENG_CHARACTERS.map((c) => ({ ...c }))
-  if (genre === '都市逆袭') return DUSHI_NIXI_CHARACTERS.map((c) => ({ ...c }))
-  return XUANHUAN_CHARACTERS.map((c) => ({ ...c }))
+  // Genre seeds are named presets, not a rigid forever-structure
+  const seed = isNvpin(genre)
+    ? NVPIN_CHARACTERS
+    : genre === '都市重生'
+      ? DUSHI_CHONGSHENG_CHARACTERS
+      : genre === '都市逆袭'
+        ? DUSHI_NIXI_CHARACTERS
+        : XUANHUAN_CHARACTERS
+  const preset = genreDefaultPreset(genre)
+  if (preset === 'classic_triangle') return seed.map((c) => ({ ...c, tags: c.tags ? [...c.tags] : undefined }))
+  return buildPresetCast(preset, seed.map((c) => ({ ...c })))
 }
 
 export function defaultLogline(genre: Genre, title: string): string {
@@ -155,7 +165,7 @@ export function createBlankProject(): Project {
     secondsPerEp: 75,
     style: '2D国风',
     logline: '',
-    characters: defaultCharacters(genre),
+    characters: buildPresetCast('blank_protagonist'),
     outline: [],
     scripts: {},
     storyboards: {},

@@ -1,12 +1,13 @@
 /** 女频重生·嫡女复仇 模板引擎数据 */
 import type { Character, EpisodeOutline, EpisodeScript, Shot, ArtStyle } from '../../types'
-import { styleTag } from './styleTag'
+import { buildFlexibleScript, buildFlexibleShots } from './flexible'
 
 export const NVPIN_CHARACTERS: Character[] = [
   {
     id: 'c1',
     name: '沈清婉',
     role: '女主·重生嫡女',
+    tags: ['protagonist'],
     visualLock:
       '十九岁女子，乌发高盘点翠钗，凤眼桃花，肤若凝脂，左耳下一枚泪痣，气质从柔弱转为杀伐果断',
     costume: '初期淡粉襦裙（伪装柔弱）；觉醒后玄紫广袖华服，腰束金丝带',
@@ -16,6 +17,7 @@ export const NVPIN_CHARACTERS: Character[] = [
     id: 'c2',
     name: '顾承衍',
     role: '男主·权臣世子',
+    tags: ['romantic', 'support'],
     visualLock:
       '二十二岁男子，墨发束冠，剑眉星目，薄唇常带浅笑，身姿挺拔如松，眼底偶尔闪过冷意',
     costume: '玄色官袍绣暗纹金线，腰佩白玉佩',
@@ -25,6 +27,7 @@ export const NVPIN_CHARACTERS: Character[] = [
     id: 'c3',
     name: '沈清荷',
     role: '反派·庶妹白莲',
+    tags: ['antagonist'],
     visualLock:
       '十八岁少女，梨花带雨容貌，杏眼无辜，嘴角常含怯生生笑意，实则阴毒',
     costume: '素白纱裙，外罩浅绿披帛，装作清雅',
@@ -151,73 +154,22 @@ export function buildNvpinOutline(count: number, _title: string): EpisodeOutline
   }))
 }
 
+
+const NV_FLAVOR = {
+  genreLabel: '女频重生·嫡女复仇',
+  openingVisual: '红烛喜堂或沈府夜景，气氛诡异压抑',
+  propName: '白玉簪',
+  propLock: '白玉簪，簪尖藏银针',
+  styleTone: 'gufeng' as const,
+}
+
 export function buildNvpinScript(
   ep: number,
   outline: EpisodeOutline,
   chars: Character[],
   seconds: number,
 ): EpisodeScript {
-  const hero = chars[0]?.name || '沈清婉'
-  const heroMale = chars[1]?.name || '顾承衍'
-  const villain = chars[2]?.name || '沈清荷'
-  const beats = [
-    {
-      label: '【3秒钩子】',
-      content: outline.hook,
-      dialogue: `${villain}（楚楚可怜）：「姐姐，你别吓我……」`,
-    },
-    {
-      label: '【冲突升级】',
-      content: outline.summary,
-      dialogue: `${hero}（淡然）：「无妨，我慢慢奉陪。」`,
-    },
-    {
-      label: '【反转】',
-      content: `${hero}布局生效，${villain}的陷害反噬自身，场面逆转。`,
-      dialogue: `旁人惊呼：「这……怎么会是清荷做的？」`,
-    },
-    {
-      label: '【情绪高点】',
-      content: `${heroMale}介入或情感线升温，权谋与心动并行。`,
-      dialogue: `${heroMale}（低声）：「需要我的时候，折这半枚玉佩。」`,
-    },
-    {
-      label: '【结尾悬念】',
-      content: outline.cliffhanger,
-      dialogue: `旁白：棋局，才刚刚开始……`,
-    },
-  ]
-  const fullText = [
-    `# 第${ep}集《${outline.title}》`,
-    `时长约 ${seconds} 秒｜女频重生嫡女复仇`,
-    '',
-    ...beats.flatMap((b) => [b.label, b.content, b.dialogue ? `台词：${b.dialogue}` : '', '']),
-  ].join('\n')
-  return { episode: ep, title: outline.title, beats, fullText }
-}
-
-function seedance(
-  subject: string,
-  action: string,
-  camera: string,
-  style: ArtStyle,
-  lock: string,
-  duration: number,
-): string {
-  const time =
-    duration > 5
-      ? `时间轴：0-${Math.min(2, duration)}s情绪铺垫；${Math.min(2, duration)}-${duration}s${action}。`
-      : ''
-  return [
-    `竖屏9:16。主体：${subject}（视觉锁定：${lock}）。`,
-    `动作：${action}（单主动作，表情戏优先，手部克制）。`,
-    `镜头：${camera}。`,
-    `风格：${styleTag(style, 'gufeng')}，电影级光影，高清。`,
-    time,
-    `限制：禁止手部乱摸乱抓；禁止人物从画框边缘突然进入；五官服饰严格一致；无字幕无水印。`,
-  ]
-    .filter(Boolean)
-    .join('')
+  return buildFlexibleScript(ep, outline, chars, seconds, NV_FLAVOR)
 }
 
 export function buildNvpinShots(
@@ -228,115 +180,5 @@ export function buildNvpinShots(
   style: ArtStyle,
   seconds: number,
 ): Shot[] {
-  const hero = chars[0]
-  const heroMale = chars[1]
-  const villain = chars[2]
-  const lock = hero?.visualLock || '乌发女子'
-  const patterns: Omit<Shot, 'id' | 'shotNo' | 'seedancePrompt'>[] = [
-    {
-      size: '远景',
-      durationSec: 3,
-      visual: '红烛喜堂或沈府夜景，气氛诡异压抑',
-      action: '镜头缓慢横移过红幔',
-      dialogue: '',
-      camera: '移',
-      emotion: '压抑',
-      groupNote: '镜头组A·开场',
-    },
-    {
-      size: '近景',
-      durationSec: 4,
-      visual: `${hero?.name || '女主'}凤眼含寒，泪痣清晰`,
-      action: '缓缓抬眸，从柔弱转为锋利',
-      dialogue: script.beats[0]?.dialogue || '',
-      camera: '推',
-      emotion: '觉醒',
-      groupNote: '镜头组A·开场',
-    },
-    {
-      size: '中景',
-      durationSec: 4,
-      visual: `${villain?.name || '庶妹'}梨花带雨，素白纱裙`,
-      action: '抬手拭泪，偷瞄女主反应',
-      dialogue: '',
-      camera: '固定',
-      emotion: '伪善',
-    },
-    {
-      size: '中景',
-      durationSec: 5,
-      visual: '二人对峙于厅堂，仆人屏息',
-      action: `${hero?.name || '女主'}将「礼物」递给庶妹`,
-      dialogue: script.beats[1]?.dialogue || '',
-      camera: '摇',
-      emotion: '暗战',
-      groupNote: '镜头组B·交锋',
-    },
-    {
-      size: '特写',
-      durationSec: 2,
-      visual: '白玉簪尖一闪，银针若隐若现',
-      action: '指尖轻触簪身',
-      dialogue: '',
-      camera: '固定',
-      emotion: '杀意',
-      groupNote: '镜头组B·交锋',
-    },
-    {
-      size: '近景',
-      durationSec: 4,
-      visual: `${heroMale?.name || '男主'}墨发束冠，浅笑`,
-      action: '遥遥举杯或递帕，意味深长',
-      dialogue: script.beats[3]?.dialogue || '',
-      camera: '跟',
-      emotion: '暧昧/权谋',
-    },
-    {
-      size: '特写',
-      durationSec: 3,
-      visual: '密信/账本/酒杯关键道具特写',
-      action: '烛火晃动，字迹或药渣入画',
-      dialogue: '',
-      camera: '推',
-      emotion: '悬疑',
-      groupNote: '镜头组C·悬念',
-    },
-    {
-      size: '中景',
-      durationSec: Math.max(3, seconds - 25),
-      visual: `${hero?.name || '女主'}立于廊桥或窗前，夜色衬托`,
-      action: '转身入暗，留下未尽之言',
-      dialogue: script.beats[4]?.dialogue || '',
-      camera: '拉',
-      emotion: '余韵',
-      groupNote: '镜头组C·悬念',
-    },
-  ]
-
-  return patterns.map((p, i) => {
-    const subject =
-      i === 2
-        ? villain?.name || '庶妹'
-        : i === 5
-          ? heroMale?.name || '男主'
-          : i === 4 || i === 6
-            ? '关键道具'
-            : hero?.name || '女主'
-    const vlock =
-      i === 2
-        ? villain?.visualLock || lock
-        : i === 5
-          ? heroMale?.visualLock || lock
-          : i === 4
-            ? '白玉簪，簪尖藏银针'
-            : i === 6
-              ? '烛火下的密信与印章'
-              : lock
-    return {
-      id: `s${ep}-${i + 1}`,
-      shotNo: i + 1,
-      ...p,
-      seedancePrompt: seedance(subject, p.action, `${p.camera}镜头，${p.size}`, style, vlock, p.durationSec),
-    }
-  })
+  return buildFlexibleShots(ep, outline, script, chars, style, seconds, NV_FLAVOR)
 }
