@@ -19,7 +19,7 @@ import type { EpisodeOutline, Shot } from '../types'
 export function useProject() {
   const [project, setProject] = useState<Project>(() => loadProject() || createSampleProject())
   const [llm, setLlm] = useState<LlmSettings>(() => loadLlm())
-  const [step, setStep] = useState<StepId>('project')
+  const [step, setStep] = useState<StepId>('idea')
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')

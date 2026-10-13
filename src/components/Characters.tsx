@@ -174,6 +174,22 @@ export function Characters({ api }: { api: ProjectApi }) {
                   placeholder="protagonist, antagonist, mentor…"
                 />
               </div>
+              <div>
+                <label className="label">性格（可选）</label>
+                <textarea
+                  className="field min-h-[56px]"
+                  value={c.personality || ''}
+                  onChange={(e) => updateChar(c.id, { personality: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label">人物弧光（可选）</label>
+                <textarea
+                  className="field min-h-[56px]"
+                  value={c.arc || ''}
+                  onChange={(e) => updateChar(c.id, { arc: e.target.value })}
+                />
+              </div>
             </div>
           </div>
         ))}

@@ -8,6 +8,7 @@ import { ScriptPanel } from './components/ScriptPanel'
 import { Storyboard } from './components/Storyboard'
 import { ExportPanel } from './components/ExportPanel'
 import { Settings } from './components/Settings'
+import { IdeaPanel } from './components/IdeaPanel'
 
 export default function App() {
   const api = useProject()
@@ -51,6 +52,7 @@ export default function App() {
 
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl px-6 py-8">
+            {step === 'idea' && <IdeaPanel api={api} />}
             {step === 'project' && <ProjectSetup api={api} />}
             {step === 'characters' && <Characters api={api} />}
             {step === 'outline' && <Outline api={api} />}

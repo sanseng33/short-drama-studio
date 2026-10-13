@@ -10,6 +10,7 @@ export type Platform = '红果' | '抖音试水' | '海外ReelShort'
 export type ArtStyle = '2D国风' | '2D日漫' | '真人都市'
 
 export type StepId =
+  | 'idea'
   | 'project'
   | 'characters'
   | 'outline'
@@ -27,6 +28,9 @@ export interface Character {
   visualLock: string
   costume: string
   signatureProp: string
+  /** Optional personality / arc (filled by 从想法一键生成) */
+  personality?: string
+  arc?: string
 }
 
 export interface EpisodeOutline {
@@ -94,6 +98,10 @@ export interface Project {
   secondsPerEp: number
   style: ArtStyle
   logline: string
+  /** Free-form genre label from idea pipeline when it doesn't map to a preset genre */
+  customGenre?: string
+  /** World / setting text from idea pipeline */
+  worldSetting?: string
   characters: Character[]
   outline: EpisodeOutline[]
   scripts: Record<number, EpisodeScript>
@@ -116,6 +124,7 @@ export const DEFAULT_LLM: LlmSettings = {
 }
 
 export const STEPS: { id: StepId; label: string; desc: string }[] = [
+  { id: 'idea', label: '从想法一键生成', desc: '粘贴想法 → 全流程自动' },
   { id: 'project', label: '项目设定', desc: '题材 / 平台 / 集数' },
   { id: 'characters', label: '角色卡', desc: '视觉锁定与人设' },
   { id: 'outline', label: '大纲', desc: '分集钩子与悬念' },

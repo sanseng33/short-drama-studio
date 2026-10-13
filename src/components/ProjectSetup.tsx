@@ -102,6 +102,26 @@ export function ProjectSetup({ api }: { api: ProjectApi }) {
         />
       </div>
 
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="label">自定义题材标签（可选）</label>
+          <input
+            className="field"
+            value={project.customGenre || ''}
+            onChange={(e) => update({ customGenre: e.target.value })}
+            placeholder="如：悬疑校园 / 末世求生（模板仍按上方题材走）"
+          />
+        </div>
+        <div>
+          <label className="label">世界观 / 背景设定（可选）</label>
+          <textarea
+            className="field min-h-[40px]"
+            value={project.worldSetting || ''}
+            onChange={(e) => update({ worldSetting: e.target.value })}
+          />
+        </div>
+      </div>
+
       <button type="button" className="btn-primary" onClick={applyGenreDefaults}>
         应用题材预设（可再改）
       </button>

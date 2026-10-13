@@ -14,6 +14,7 @@ export async function chatCompletion(
   settings: LlmSettings,
   system: string,
   user: string,
+  opts: { signal?: AbortSignal; temperature?: number } = {},
 ): Promise<string> {
   if (!settings.apiKey.trim()) {
     throw new Error('未配置 API Key，请改用「模板生成」或在设置中填写密钥。')
@@ -21,13 +22,14 @@ export async function chatCompletion(
   const base = normalizeBaseUrl(settings.baseURL)
   const res = await fetch(`${base}/chat/completions`, {
     method: 'POST',
+    signal: opts.signal,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${settings.apiKey}`,
     },
     body: JSON.stringify({
       model: settings.model,
-      temperature: 0.85,
+      temperature: opts.temperature ?? 0.85,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: user },
