@@ -101,7 +101,7 @@
     "dialogue": "…",                 // 已去掉「名字：」前缀；无台词/无/— 为 ""
     "speaker": "c1",                 // 说话人 id；null = 旁白/无台词
     "speakerName": "林川",           // 字幕显示名（baseName 优先）
-    "voiceOnly": [],                 // 画外音说话人（OS/画外音/V.O./电话里，或不在 characterIds 中）
+    "voiceOnly": [],                 // 画外音/内心说话人（OS/画外音/V.O./电话里/内心等；内心可与 characterIds 重叠）
     "sfx": ["砰"],                   // 音效
     "overlayText": ["任务：反击"],   // 系统 UI / 屏幕文字，后期叠加
     "camera": "推", "size": "远景", "emotion": "…",
@@ -126,11 +126,11 @@
 2. **最短 2s**：1s/1.5s 镜头从邻镜借时；若整集段数过多无法满足，则合并同源/无台词的相邻段。
 3. **单说话人**：解析 `名字：` / `名字（情绪）：` / `名字(OS)：`，多说话人拆段。无前缀时若 characterIds ∪ voiceOnly 只有一个候选则取之；`旁白：` 为 null；其余 null 记 `speaker_unresolved` 警告。前缀同时匹配 `baseName`，存在造型变体时优先取本镜 characterIds 中的变体，其次本集最近出现的变体。
 4. **dialogue/sfx**：`无`/`无台词`/`—` → ""；`音效：砰`、`【音效】砰`、`【音效：砰】`、`(SFX)砰` 从 dialogue/action/prompt 中移出到 `sfx`。
-5. **characterIds** 仅画面内角色；OS/画外音/画外/V.O./电话里 标记的说话人、或不在 characterIds 中的说话人、以及分镜 `voiceOnly` 字段进入 `voiceOnly`（并从 characterIds 移除）。
+5. **characterIds** 仅画面内角色；OS/画外音/画外/V.O./电话里/广播 标记的说话人、或不在 characterIds 中的说话人、以及分镜 `voiceOnly` 字段进入 `voiceOnly`（并从 characterIds 移除）。**内心/心声/心想**：若该角色本就在 characterIds（在画面内），则保留在 characterIds，同时加入 `voiceOnly`；若不在画面内则仅进 `voiceOnly`。
 6. **overlayText**：系统视窗/系统提示/界面/转盘/弹窗/屏幕文字/『…』等描述及 `系统：` 台词进入 `overlayText`；`prompt` 中的 UI 渲染描述由 `indirectUiCue()` 替换为间接线索（默认「蓝光映在角色脸上，神情专注」）。
 7. **单动作**：action 含 随后/然后/接着/紧接着/同时 时拆成顺序段，prompt 中的动作文本替换为对应分段动作；时长改变的段会去掉原 `时间轴：…` 片段。
 8. **角色**：导出 costume、signatureProp、可选 baseName；为空时产生 `character_missing_costume` / `character_missing_prop` 警告（episode 为 0）。
 
 生成侧：分镜 LLM 提示词强制单动作、2–10s、≤4.5 字/秒、单说话人「名字：」前缀、独立 `sfx` / `overlayText` / `voiceOnly` 字段、只写 UI 的间接线索；想法抽取必填 costume/signatureProp，并把外观明显不同的阶段拆成 `白朴（变帅前）` / `白朴（变帅后）`（同 `baseName`）。Shot 新增可选 `sfx` / `overlayText` / `voiceOnly`，分镜卡片可编辑；角色卡可填本名 baseName。模板分镜会从无台词镜头借整秒以满足台词语速。
 
-测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分）。
+测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、内心画内保留、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分）。

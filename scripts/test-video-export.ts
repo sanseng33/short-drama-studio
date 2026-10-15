@@ -31,6 +31,7 @@ const ep1: Shot[] = [
   S({ durationSec: 4, characterIds: ['c5'], dialogue: '白朴：「认得我吗？」' }),
   S({ durationSec: 3, characterIds: ['c1', 'c2'], dialogue: '「谁在说话？」' }),
   S({ durationSec: 14, characterIds: ['c2'], dialogue: '赵泽：「三年前你父亲签下那份合同的时候，就已经注定了今天的结局。你以为一枚芯片能翻盘？我告诉你，整座城市都是赵家的棋盘！」' }),
+  S({ durationSec: 4, characterIds: ['c1'], dialogue: '林川（内心）：「不能再退了。」' }),
 ]
 const project: Project = {
   id: 'p_test', title: '测试', genre: '都市逆袭', platform: '红果', episodeCount: 1, secondsPerEp: 60, style: '真人都市',
@@ -101,5 +102,12 @@ t('>10s dialogue split at sentence punctuation', () => {
   assert.ok(p.filter((s) => s.dialogue).length >= 2); p.filter((s) => s.dialogue).forEach((s) => { assert.equal(s.speaker, 'c2'); assert.ok(dialogueSec(s.dialogue) <= s.durationSec + 1e-9, s.id) })
 })
 t('indirectUiCue helper', () => assert.equal(indirectUiCue('主体：少年，转盘在空中旋转。'), '主体：少年，蓝光映在角色脸上，神情专注。'))
+t('内心 onscreen → stay in characterIds + voiceOnly, speaker filled', () => {
+  const [s] = parent('t16')
+  assert.equal(s.speaker, 'c1')
+  assert.ok(s.characterIds.includes('c1'), 'onscreen 内心 should remain in characterIds')
+  assert.ok(s.voiceOnly.includes('c1'), 'onscreen 内心 should also be in voiceOnly')
+  assert.equal(s.dialogue, '不能再退了。')
+})
 console.log(`\n${pass} tests passed; ${out.shots.length} segments from ${ep1.length} shots; warnings: ${out.warnings.length}`)
 for (const s of out.shots) console.log(s.id, s.durationSec, s.speaker, JSON.stringify(s.dialogue))

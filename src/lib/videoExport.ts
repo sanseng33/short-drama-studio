@@ -24,7 +24,7 @@ export interface VideoPipelineShot {
   speaker: string | null
   /** display name for subtitles (baseName || name), null when speaker null */
   speakerName: string | null
-  /** speakers heard but not onscreen (OS / 画外音 / 电话里 / not in characterIds) */
+  /** speakers heard offscreen, or 内心/心声/心想 (may overlap characterIds when onscreen) */
   voiceOnly: string[]
   sfx: string[]
   /** system UI / on-screen text — render in post, never by the video model */
@@ -144,7 +144,9 @@ export function splitActions(action: string): string[] {
   return parts.length ? parts : [action || '']
 }
 
-const VOICE_TAG = /^(OS|O\.S\.?|画外音|画外|V\.?O\.?|电话里|电话|内心|心声|广播)$/i
+const VOICE_TAG = /^(OS|O\.S\.?|画外音|画外|V\.?O\.?|电话里|电话|内心|心声|心想|广播)$/i
+/** Inner monologue: keep onscreen speakers in characterIds and also list in voiceOnly */
+const INNER_TAG = /^(内心|心声|心想)$/
 const NARRATOR = /^(旁白|画外音|解说|narrator)$/i
 const SYSTEM = /^(系统|系统音|系统提示|系统声音)$/
 
@@ -342,7 +344,7 @@ function buildShotSegs(
   const shotSfx = uniq([...(s.sfx || []).map((x) => x.trim()).filter(Boolean), ...actionX.sfx])
 
   // dialogue → groups of consecutive lines with the same speaker
-  type Group = { speaker: string | null; narration: boolean; voice: boolean; lines: string[]; sfx: string[] }
+  type Group = { speaker: string | null; narration: boolean; voice: boolean; inner: boolean; lines: string[]; sfx: string[] }
   const groups: Group[] = []
   const dx = extractSfx((s.dialogue || '').replace(/\r/g, ''))
   const dsfx = dx.sfx
@@ -358,18 +360,20 @@ function buildShotSegs(
     let speaker: string | null = null
     let narration = false
     let voice = false
+    let inner = false
     if (line.name && NARRATOR.test(line.name) && !line.tag) narration = true
     else if (line.name) {
       speaker = resolveSpeaker(line.name, line.tag, chars, [...onscreen0, ...shotVoice], current) ?? null
       voice = Boolean(line.tag && VOICE_TAG.test(line.tag))
+      inner = Boolean(line.tag && INNER_TAG.test(line.tag))
       if (speaker) current.set(displayName(chars.find((c) => c.id === speaker)!), speaker)
     } else {
       const cands = uniq([...onscreen0, ...shotVoice])
       if (cands.length === 1) speaker = cands[0]
     }
     const last = groups[groups.length - 1]
-    if (last && last.speaker === speaker && last.narration === narration && last.voice === voice) last.lines.push(lx.text)
-    else groups.push({ speaker, narration, voice, lines: [lx.text], sfx: [] })
+    if (last && last.speaker === speaker && last.narration === narration && last.voice === voice && last.inner === inner) last.lines.push(lx.text)
+    else groups.push({ speaker, narration, voice, inner, lines: [lx.text], sfx: [] })
     groups[groups.length - 1].sfx.push(...lx.sfx)
   }
 
@@ -377,8 +381,14 @@ function buildShotSegs(
     ...shotVoice,
     ...groups.filter((g) => g.speaker && (g.voice || !onscreen0.includes(g.speaker))).map((g) => g.speaker!),
   ])
-  const onscreen = onscreen0.filter((id) => !shotVoice.includes(id) && !groups.some((g) => g.speaker === id && g.voice))
-  const voice = voiceIds.filter((id) => !onscreen.includes(id))
+  // OS/画外/V.O./电话/广播 → remove from characterIds; 内心/心声/心想 keep onscreen if originally present
+  const onscreen = onscreen0.filter(
+    (id) => !shotVoice.includes(id) && !groups.some((g) => g.speaker === id && g.voice && !g.inner),
+  )
+  const innerOnscreen = new Set(
+    groups.filter((g) => g.speaker && g.inner && onscreen0.includes(g.speaker)).map((g) => g.speaker!),
+  )
+  const voice = voiceIds.filter((id) => !onscreen.includes(id) || innerOnscreen.has(id))
 
   const n = Math.max(actions.length, groups.length, 1)
   const segs: Seg[] = []
