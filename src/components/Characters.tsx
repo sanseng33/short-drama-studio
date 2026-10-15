@@ -115,6 +115,13 @@ export function Characters({ api }: { api: ProjectApi }) {
                 value={c.name}
                 onChange={(e) => updateChar(c.id, { name: e.target.value })}
               />
+              <input
+                className="field !w-auto min-w-[6rem] text-xs"
+                placeholder="本名 baseName（造型变体用）"
+                title="同一角色的不同造型（如 白朴（变帅前）/白朴（变帅后））填相同本名，字幕显示本名"
+                value={c.baseName || ''}
+                onChange={(e) => updateChar(c.id, { baseName: e.target.value || undefined })}
+              />
               <div className="ml-auto flex gap-2">
                 <button type="button" className="btn-ghost !py-1 text-xs" onClick={() => duplicateChar(c.id)}>
                   复制

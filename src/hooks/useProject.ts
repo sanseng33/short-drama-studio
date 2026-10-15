@@ -204,8 +204,8 @@ export function useProject() {
       const user = `为第${p.selectedEpisode}集做分镜。画风${p.style} 时长${p.secondsPerEp}s
 大纲:${JSON.stringify(outline)}
 剧本:${script?.fullText || '(无)'}
-角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume })))}
-每镜请在 characters 字段给出出场角色名。`
+角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume, signatureProp: c.signatureProp, baseName: c.baseName })))}
+每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText；每镜单动作、2-10秒、台词≤4.5字/秒且只有一个「名字：」说话人。`
       const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user)
       const raw = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim()) as Shot[]
       const shots = normalizeLlmShots(raw, p.selectedEpisode, p.characters)

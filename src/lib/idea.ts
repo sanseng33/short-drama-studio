@@ -20,6 +20,10 @@ export interface IdeaCharacter {
   appearance: string
   personality: string
   arc: string
+  costume: string
+  signatureProp: string
+  /** shared real name when this entry is a look variant */
+  baseName?: string
 }
 
 export interface IdeaEpisode {
@@ -45,10 +49,10 @@ export const IDEA_SYSTEM = `你是资深AI短剧/漫剧策划。用户会给出�
  "artStyle": "必须是 ${KNOWN_STYLES.join(' / ')} 之一",
  "logline": "一句话故事",
  "world": "世界观/背景设定，2-4句",
- "characters": [{"name":"","role":"自由定位，如主角/对手/导师","tags":["protagonist|antagonist|support|mentor|romantic|deuteragonist 中选"],"appearance":"外貌+服装视觉锁定，适合AI绘图","personality":"性格","arc":"人物弧光"}],
+ "characters": [{"name":"","role":"自由定位，如主角/对手/导师","tags":["protagonist|antagonist|support|mentor|romantic|deuteragonist 中选"],"baseName":"本名（仅造型变体需要，如 白朴）","appearance":"外貌视觉锁定（脸型/发型/体型/年龄），适合AI绘图","costume":"服装（必填，具体到颜色款式）","signatureProp":"标志道具（必填，如 旧手机/玉佩/外卖箱）","personality":"性格","arc":"人物弧光"}],
  "episodes": [{"title":"","summary":"本集剧情2-3句","hook":"开场3秒钩子或结尾悬念"}]
 }
-规则：角色 1-8 个，只写想法中明确出现或强烈暗示的角色，不要强行补齐男主/女主/反派。集数按想法体量合理决定（通常 3-12 集，想法很短时 3-5 集）。全部中文。`
+规则：角色 1-8 个（变体单独计数），每个角色必须填写 costume 与 signatureProp，不能留空。若某角色在故事中有明显不同的外观（如变帅前/变帅后、伪装、变身、易容、长大），拆成多个角色条目，name 写成「白朴（变帅前）」「白朴（变帅后）」，baseName 都写「白朴」，各自 appearance/costume 明显不同。只写想法中明确出现或强烈暗示的角色，不要强行补齐男主/女主/反派。集数按想法体量合理决定（通常 3-12 集，想法很短时 3-5 集）。全部中文。`
 
 /** Strip code fences / leading prose and parse the first JSON object. */
 export function parseIdeaJson(text: string): IdeaResult {
@@ -66,7 +70,7 @@ export function parseIdeaJson(text: string): IdeaResult {
 const str = (v: unknown, d = ''): string => (typeof v === 'string' ? v.trim() : v == null ? d : String(v))
 
 export function normalizeIdea(raw: Partial<IdeaResult>): IdeaResult {
-  const chars = (Array.isArray(raw.characters) ? raw.characters : [])
+  const chars: IdeaCharacter[] = (Array.isArray(raw.characters) ? raw.characters : [])
     .map((c) => ({
       name: str(c?.name),
       role: str(c?.role, '角色'),
@@ -74,6 +78,9 @@ export function normalizeIdea(raw: Partial<IdeaResult>): IdeaResult {
       appearance: str(c?.appearance),
       personality: str(c?.personality),
       arc: str(c?.arc),
+      costume: str(c?.costume),
+      signatureProp: str(c?.signatureProp),
+      baseName: str(c?.baseName) || str(c?.name).match(/^(.+?)[（(][^）)]+[）)]$/)?.[1] || undefined,
     }))
     .filter((c) => c.name)
     .slice(0, 8)
@@ -85,7 +92,7 @@ export function normalizeIdea(raw: Partial<IdeaResult>): IdeaResult {
     }))
     .slice(0, 30)
   if (!eps.length) throw new Error('JSON 中缺少 episodes')
-  if (!chars.length) chars.push({ name: '主角', role: '主角', tags: ['protagonist'], appearance: '', personality: '', arc: '' })
+  if (!chars.length) chars.push({ name: '主角', role: '主角', tags: ['protagonist'], appearance: '', personality: '', arc: '', costume: '', signatureProp: '' })
   return {
     title: str(raw.title, '未命名短剧') || '未命名短剧',
     genre: str(raw.genre),
@@ -152,8 +159,9 @@ export function toCharacters(list: IdeaCharacter[]): Character[] {
       role: c.role || '角色',
       tags,
       visualLock: c.appearance || '待补充外貌与气质',
-      costume: '',
-      signatureProp: '',
+      costume: c.costume || '',
+      signatureProp: c.signatureProp || '',
+      ...(c.baseName ? { baseName: c.baseName } : {}),
       personality: c.personality,
       arc: c.arc,
     }
@@ -232,7 +240,7 @@ export function heuristicIdea(idea: string): IdeaResult {
       role = '导师'
       tags = ['mentor']
     }
-    return { name: n, role, tags, appearance: '', personality: '', arc: '' }
+    return { name: n, role, tags, appearance: '', personality: '', arc: '', costume: '', signatureProp: '' }
   })
 
   const sentences = text.split(/(?<=[。！？!?\n])/).map((s) => s.trim()).filter(Boolean)

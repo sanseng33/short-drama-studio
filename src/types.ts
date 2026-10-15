@@ -29,6 +29,8 @@ export interface Character {
   costume: string
   signatureProp: string
   /** Optional personality / arc (filled by 从想法一键生成) */
+  /** Shared real name for look variants, e.g. 白朴 for 白朴（变帅前）/白朴（变帅后）; used for subtitles */
+  baseName?: string
   personality?: string
   arc?: string
 }
@@ -89,6 +91,12 @@ export interface Shot {
   refImage?: string
   /** Characters appearing in this shot (values are characters[].id) */
   characterIds?: string[]
+  /** Sound effects, e.g. 砰 / 玻璃碎裂 */
+  sfx?: string[]
+  /** System UI / on-screen text — added in post, never rendered by the video model */
+  overlayText?: string[]
+  /** Offscreen voices (names or ids): OS / 画外音 / 电话里 */
+  voiceOnly?: string[]
 }
 
 export interface Project {

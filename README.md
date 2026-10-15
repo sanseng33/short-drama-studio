@@ -92,16 +92,23 @@
 {
   "schema": "short-drama-studio/video-pipeline@1",
   "project": { "id", "title", "style", "platform", "secondsPerEp" },
-  "characters": [{ "id", "name", "role", "tags", "visualLock", "costume", "signatureProp" }],
+  "characters": [{ "id", "name", "baseName?", "role", "tags", "visualLock", "costume", "signatureProp" }],
   "shots": [{
     "episode": 1, "shotNo": 1, "id": "s1-1",
     "characterIds": ["c1"],          // 引用 characters[].id
     "prompt": "…",                   // seedancePrompt，缺失时为 visual+action
     "visual": "…", "action": "…", "durationSec": 3,
-    "dialogue": "…", "speaker": "c1", // speaker 仅在台词形如「名字：…」可识别时出现
+    "dialogue": "…",                 // 已去掉「名字：」前缀；无台词/无/— 为 ""
+    "speaker": "c1",                 // 说话人 id；null = 旁白/无台词
+    "speakerName": "林川",           // 字幕显示名（baseName 优先）
+    "voiceOnly": [],                 // 画外音说话人（OS/画外音/V.O./电话里，或不在 characterIds 中）
+    "sfx": ["砰"],                   // 音效
+    "overlayText": ["任务：反击"],   // 系统 UI / 屏幕文字，后期叠加
     "camera": "推", "size": "远景", "emotion": "…",
-    "refImage": null                 // 参考图 URL/dataURL 或 null
-  }]
+    "refImage": null,                // ComfyUI input 下的文件名或绝对路径（LoadImage 不支持 URL）或 null
+    "segment": { "index": 0, "total": 2, "parentId": "s1-3" } // 仅当原镜被拆为多段
+  }],
+  "warnings": [{ "episode": 1, "shotId": "s1-3-a", "code": "dialogue_too_long", "message": "…" }]
 }
 ```
 
@@ -110,3 +117,20 @@
 **占位符过滤**：模板 / 想法兜底生成的占位文字（如「待补充外貌与气质」「待补充服装」「请描述主角外貌」「待定」「TODO」）不会进入导出：`prompt`、`visual`、`action` 与 `characters[].visualLock/costume/signatureProp` 中的占位内容被清除（仅为占位时导出空字符串），不会出现空的「（视觉锁定：）」片段。模板分镜生成本身也会跳过空/占位的视觉锁定（`src/lib/placeholder.ts`）。
 
 **长镜头拆分**：`buildVideoPipelineExport(project, { maxShotSec = 10 })`。`durationSec > maxShotSec` 的镜头拆成 `ceil(d / maxShotSec)` 段，时长近似均分（每段 ≤ maxShotSec，总和不变），id 为 `<id>-a`、`<id>-b`…，并附 `segment: { index, total, parentId }`（index 从 0 开始）；`dialogue`/`speaker` 仅保留在第一段，`prompt`/`characterIds` 各段相同。未拆分的镜头没有 `segment` 字段。schema 版本不变（仍为 video-pipeline@1，`segment` 为可选新增字段）。模板分镜的时长现均摊到各镜（单镜目标 ≤10s），不再把剩余时长全部堆到最后一镜。
+
+### 视频流水线规整（ComfyUI / H3 图生视频，单段 ≤10s）
+
+导出时（纯函数，不改动项目数据）逐集处理，**每集总时长严格不变**，所有段 2–10s（时间以 0.1s 为单位分配）：
+
+1. **台词语速** 4.5 字/秒（只计 CJK 与字母数字，忽略标点与说话人前缀）。台词所需时长超过镜头时长时，先从同集最近的无台词镜头借时（每镜保持 ≥2s，本镜 ≤maxShotSec），不够再从其他台词镜头的富余时长借；若所需时长 >10s，则在句末标点处拆成多段（每段 ≤2 句、≤10s），仍放不下记 `dialogue_too_long` 警告。
+2. **最短 2s**：1s/1.5s 镜头从邻镜借时；若整集段数过多无法满足，则合并同源/无台词的相邻段。
+3. **单说话人**：解析 `名字：` / `名字（情绪）：` / `名字(OS)：`，多说话人拆段。无前缀时若 characterIds ∪ voiceOnly 只有一个候选则取之；`旁白：` 为 null；其余 null 记 `speaker_unresolved` 警告。前缀同时匹配 `baseName`，存在造型变体时优先取本镜 characterIds 中的变体，其次本集最近出现的变体。
+4. **dialogue/sfx**：`无`/`无台词`/`—` → ""；`音效：砰`、`【音效】砰`、`【音效：砰】`、`(SFX)砰` 从 dialogue/action/prompt 中移出到 `sfx`。
+5. **characterIds** 仅画面内角色；OS/画外音/画外/V.O./电话里 标记的说话人、或不在 characterIds 中的说话人、以及分镜 `voiceOnly` 字段进入 `voiceOnly`（并从 characterIds 移除）。
+6. **overlayText**：系统视窗/系统提示/界面/转盘/弹窗/屏幕文字/『…』等描述及 `系统：` 台词进入 `overlayText`；`prompt` 中的 UI 渲染描述由 `indirectUiCue()` 替换为间接线索（默认「蓝光映在角色脸上，神情专注」）。
+7. **单动作**：action 含 随后/然后/接着/紧接着/同时 时拆成顺序段，prompt 中的动作文本替换为对应分段动作；时长改变的段会去掉原 `时间轴：…` 片段。
+8. **角色**：导出 costume、signatureProp、可选 baseName；为空时产生 `character_missing_costume` / `character_missing_prop` 警告（episode 为 0）。
+
+生成侧：分镜 LLM 提示词强制单动作、2–10s、≤4.5 字/秒、单说话人「名字：」前缀、独立 `sfx` / `overlayText` / `voiceOnly` 字段、只写 UI 的间接线索；想法抽取必填 costume/signatureProp，并把外观明显不同的阶段拆成 `白朴（变帅前）` / `白朴（变帅后）`（同 `baseName`）。Shot 新增可选 `sfx` / `overlayText` / `voiceOnly`，分镜卡片可编辑；角色卡可填本名 baseName。模板分镜会从无台词镜头借整秒以满足台词语速。
+
+测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分）。

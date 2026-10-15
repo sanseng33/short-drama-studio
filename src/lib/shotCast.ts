@@ -21,6 +21,7 @@ export function mapNamesToIds(list: unknown, chars: Character[]): string[] {
     const hit =
       chars.find((c) => c.id === t) ||
       chars.find((c) => c.name === t) ||
+      chars.find((c) => c.baseName === t) ||
       chars.find((c) => c.name && (t.includes(c.name) || c.name.includes(t)))
     if (hit && !out.includes(hit.id)) out.push(hit.id)
   }
@@ -45,6 +46,8 @@ export function speakerId(dialogue: string, chars: Character[]): string | undefi
 }
 
 type RawShot = Partial<Shot> & { characters?: unknown; characterNames?: unknown }
+const strArr = (v: unknown): string[] | undefined =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : typeof v === 'string' && v.trim() ? v.split(/[，,、]/).map((x) => x.trim()).filter(Boolean) : undefined
 
 /** Normalize LLM shot JSON: ids/shotNo + characterIds from names/ids, fallback detection. */
 export function normalizeLlmShots(raw: RawShot[], ep: number, chars: Character[]): Shot[] {
@@ -59,6 +62,15 @@ export function normalizeLlmShots(raw: RawShot[], ep: number, chars: Character[]
     if (!ids.length) ids = mapNamesToIds(characters, chars)
     if (!ids.length) ids = mapNamesToIds(characterNames, chars)
     if (!ids.length) ids = detectCharacterIds(s, chars)
-    return { ...s, characterIds: ids }
+    const sfx = strArr(x.sfx)
+    const overlayText = strArr(x.overlayText)
+    const voiceOnly = strArr(x.voiceOnly)
+    return {
+      ...s,
+      characterIds: ids,
+      ...(sfx ? { sfx } : {}),
+      ...(overlayText ? { overlayText } : {}),
+      ...(voiceOnly ? { voiceOnly } : {}),
+    }
   })
 }

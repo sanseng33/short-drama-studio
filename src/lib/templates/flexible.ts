@@ -377,6 +377,19 @@ export function buildFlexibleShots(
     }
   }
 
+  // Dialogue pacing (≤4.5 字/秒): lengthen dialogue shots by borrowing whole
+  // seconds from dialogue-free shots (each kept ≥2s, ≤MAX_SHOT_SEC).
+  const needSec = (d: string) =>
+    Math.ceil((d.replace(/^[^：:「]{1,12}[：:]/, '').match(/[\u4e00-\u9fffA-Za-z0-9]/g) || []).length / 4.5)
+  for (const p of chosen) {
+    while (p.dialogue && p.durationSec < Math.min(MAX_SHOT_SEC, needSec(p.dialogue))) {
+      const donor = chosen.find((q) => !q.dialogue && q.durationSec > 2)
+      if (!donor) break
+      donor.durationSec -= 1
+      p.durationSec += 1
+    }
+  }
+
   return chosen.map((p, i) => {
     const { subject, lock, cast: who, ...rest } = p
     // resolved cast for this shot, plus anyone named in the dialogue line

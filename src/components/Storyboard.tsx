@@ -1,3 +1,4 @@
+import type { Shot } from '../types'
 import type { ProjectApi } from '../hooks/useProject'
 import { CopyButton } from './CopyButton'
 import { shotCharacterIds } from '../lib/shotCast'
@@ -28,6 +29,12 @@ export function Storyboard({ api }: { api: ProjectApi }) {
     })
     update({ storyboards: { ...project.storyboards, [ep]: next } })
   }
+
+  const patchShot = (shotId: string, patch: Partial<Shot>) => {
+    const next = shots.map((s) => (s.id === shotId ? { ...s, ...patch } : s))
+    update({ storyboards: { ...project.storyboards, [ep]: next } })
+  }
+  const listOf = (v: string) => v.split(/[，,、]/).map((x) => x.trim()).filter(Boolean)
 
   const exportPipeline = () => {
     const data = buildVideoPipelineExport(project)
@@ -136,6 +143,32 @@ export function Storyboard({ api }: { api: ProjectApi }) {
                   <p className="font-mono text-xs text-ink-muted">{s.dialogue}</p>
                 </div>
               )}
+              {(
+                [
+                  ['sfx', '音效 sfx（逗号分隔）'],
+                  ['overlayText', '叠加文字 / 系统UI overlayText（后期叠加，逗号分隔）'],
+                  ['voiceOnly', '画外音角色 voiceOnly（角色名，逗号分隔）'],
+                ] as const
+              ).map(([k, label]) => (
+                <label key={k} className="block">
+                  <div className="label">{label}</div>
+                  <input
+                    className="field text-xs"
+                    defaultValue={(s[k] || []).join('，')}
+                    onBlur={(e) => patchShot(s.id, { [k]: listOf(e.target.value) })}
+                  />
+                </label>
+              ))}
+              <label className="block">
+                <div className="label">参考图 refImage</div>
+                <input
+                  className="field text-xs"
+                  defaultValue={s.refImage || ''}
+                  placeholder="例如 lin_chuan_ref.png"
+                  onBlur={(e) => patchShot(s.id, { refImage: e.target.value.trim() || undefined })}
+                />
+                <p className="mt-1 text-[11px] text-ink-faint">填 ComfyUI input 下的文件名或绝对路径，LoadImage 不支持 URL</p>
+              </label>
               <div className="sm:col-span-2">
                 <div className="mb-1 flex items-center justify-between">
                   <div className="label !mb-0">Seedance 提示词</div>
