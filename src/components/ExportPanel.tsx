@@ -2,6 +2,7 @@ import type { ProjectApi } from '../hooks/useProject'
 import { projectToMarkdown, seedancePack } from '../lib/export'
 import { downloadText } from '../lib/storage'
 import { CopyButton } from './CopyButton'
+import { buildVideoPipelineExport, videoPipelineFilename } from '../lib/videoExport'
 
 export function ExportPanel({ api }: { api: ProjectApi }) {
   const { project, flash } = api
@@ -67,6 +68,22 @@ export function ExportPanel({ api }: { api: ProjectApi }) {
         }}
       >
         下载全部已生成分镜的 Seedance 包
+      </button>
+
+      <button
+        type="button"
+        className="btn-primary ml-3"
+        onClick={() => {
+          const data = buildVideoPipelineExport(project)
+          if (!data.shots.length) {
+            flash('尚无分镜可导出')
+            return
+          }
+          downloadText(videoPipelineFilename(project), JSON.stringify(data, null, 2), 'application/json')
+          flash(`已导出视频流水线 JSON（${data.shots.length} 镜）`)
+        }}
+      >
+        导出给视频流水线
       </button>
 
       <div className="panel p-4">

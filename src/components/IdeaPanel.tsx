@@ -12,6 +12,7 @@ import {
   toOutline,
   type IdeaResult,
 } from '../lib/idea'
+import { normalizeLlmShots } from '../lib/shotCast'
 import { chatCompletion, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
 import { generateScript, generateStoryboard } from '../lib/templates'
 
@@ -167,11 +168,12 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
               const user = `为第${o.episode}集做分镜。画风${style} 时长${proj.secondsPerEp}s
 大纲:${JSON.stringify(o)}
 剧本:${script?.fullText || '(无)'}
-角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(proj.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume })))}`
+角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(proj.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume })))}
+每镜请在 characters 字段给出出场角色名。`
               const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user, { signal: ac.signal })
               const s = stripFence(text)
               const raw = JSON.parse(s.slice(s.indexOf('['), s.lastIndexOf(']') + 1)) as Shot[]
-              shots = raw.map((x, k) => ({ ...x, id: x.id || `s${o.episode}-${k + 1}`, shotNo: x.shotNo || k + 1 }))
+              shots = normalizeLlmShots(raw, o.episode, proj.characters)
             } catch (e) {
               if (ac.signal.aborted) throw e
               warnings++

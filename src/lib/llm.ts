@@ -52,5 +52,6 @@ export const OUTLINE_SYSTEM = `你是资深AI短剧/漫剧编剧。输出严格 
 
 export const SCRIPT_SYSTEM = `你是短剧编剧。输出中文分集剧本。节拍可按故事需要变化（不必固定五段），建议覆盖钩子/冲突/反转/悬念等要素，含对白。适合60-90秒竖屏。严格使用用户提供的角色列表，禁止擅自补齐「女主/男主/反派」。若只有一名角色，就写单人张力戏。`
 
-export const STORYBOARD_SYSTEM = `你是工业分镜师。输出 JSON 数组，字段：shotNo,size,durationSec,visual,action,dialogue,camera,emotion,seedancePrompt,groupNote。
+export const STORYBOARD_SYSTEM = `你是工业分镜师。输出 JSON 数组，字段：shotNo,size,durationSec,visual,action,dialogue,camera,emotion,seedancePrompt,groupNote,characters。
+characters：本镜出场角色名数组（必须是用户角色列表中的 name 原文，无人物镜头为 []）。
 镜数可随剧情与角色数量变化。seedancePrompt：主体→动作→镜头→风格→限制；竖屏9:16；只使用用户提供的角色视觉锁定；单主动作；>5秒加时间轴分段。禁止在角色缺失时硬写女主/男主。不要markdown围栏。`

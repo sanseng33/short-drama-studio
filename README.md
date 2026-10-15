@@ -83,3 +83,26 @@
 ## 免责
 
 仅供学习创作；投稿请遵守平台规范与版权。
+
+## 导出给视频流水线（video-pipeline@1）
+
+分镜页 / 导出页的「导出给视频流水线」按钮下载 `<剧名>-video-pipeline.json`（构建函数：`src/lib/videoExport.ts` 的 `buildVideoPipelineExport`，纯函数）。覆盖所有已生成分镜的集，按集号、镜号排序：
+
+```jsonc
+{
+  "schema": "short-drama-studio/video-pipeline@1",
+  "project": { "id", "title", "style", "platform", "secondsPerEp" },
+  "characters": [{ "id", "name", "role", "tags", "visualLock", "costume", "signatureProp" }],
+  "shots": [{
+    "episode": 1, "shotNo": 1, "id": "s1-1",
+    "characterIds": ["c1"],          // 引用 characters[].id
+    "prompt": "…",                   // seedancePrompt，缺失时为 visual+action
+    "visual": "…", "action": "…", "durationSec": 3,
+    "dialogue": "…", "speaker": "c1", // speaker 仅在台词形如「名字：…」可识别时出现
+    "camera": "推", "size": "远景", "emotion": "…",
+    "refImage": null                 // 参考图 URL/dataURL 或 null
+  }]
+}
+```
+
+每个镜头的 `characterIds`：模板生成取该镜已解析的出场角色；LLM 生成要求每镜返回 `characters` 角色名并映射为 id；兜底（含旧项目）按画面/动作/台词中出现的角色名自动识别。分镜卡片可点选角色芯片手动修正。示例：`samples/video-pipeline.sample.json`（由 `npx tsx scripts/gen-video-sample.ts` 生成）。

@@ -87,6 +87,8 @@ export interface Shot {
   seedancePrompt: string
   groupNote?: string
   refImage?: string
+  /** Characters appearing in this shot (values are characters[].id) */
+  characterIds?: string[]
 }
 
 export interface Project {

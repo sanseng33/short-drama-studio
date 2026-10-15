@@ -173,6 +173,7 @@ export function buildFlexibleShots(
   type Pat = Omit<Shot, 'id' | 'shotNo' | 'seedancePrompt'> & {
     subject: string
     lock: string
+    cast: Character[]
   }
 
   const patterns: Pat[] = [
@@ -187,6 +188,7 @@ export function buildFlexibleShots(
       groupNote: '镜头组A·开场',
       subject: '场景',
       lock: flavor.openingVisual,
+      cast: [],
     },
   ]
 
@@ -202,6 +204,7 @@ export function buildFlexibleShots(
       groupNote: '镜头组A·开场',
       subject: foe.name,
       lock: foe.visualLock,
+      cast: [foe],
     })
   } else {
     patterns.push({
@@ -215,6 +218,7 @@ export function buildFlexibleShots(
       groupNote: '镜头组A·开场',
       subject: '危机符号',
       lock: '具体物件与光影，写实清晰',
+      cast: [],
     })
   }
 
@@ -228,6 +232,7 @@ export function buildFlexibleShots(
     emotion: '隐忍转锋',
     subject: hero.name,
     lock: hero.visualLock,
+    cast: [hero],
   })
 
   patterns.push({
@@ -243,6 +248,7 @@ export function buildFlexibleShots(
     groupNote: '镜头组B·冲突',
     subject: hero.name,
     lock: hero.visualLock,
+    cast: foe ? [hero, foe] : [hero],
   })
 
   patterns.push({
@@ -256,6 +262,7 @@ export function buildFlexibleShots(
     groupNote: '镜头组B·冲突',
     subject: '反应',
     lock: '情绪反应清晰，避免杂乱手指',
+    cast: [],
   })
 
   if (mate && target >= 6) {
@@ -269,6 +276,7 @@ export function buildFlexibleShots(
       emotion: '助力',
       subject: mate.name,
       lock: mate.visualLock,
+      cast: [mate],
     })
   }
 
@@ -288,6 +296,7 @@ export function buildFlexibleShots(
       emotion: '侧写',
       subject: s.name,
       lock: s.visualLock,
+      cast: [s],
     })
   }
 
@@ -302,6 +311,7 @@ export function buildFlexibleShots(
     groupNote: '镜头组C·悬念',
     subject: flavor.propName,
     lock: flavor.propLock,
+    cast: [],
   })
 
   patterns.push({
@@ -315,6 +325,7 @@ export function buildFlexibleShots(
     groupNote: '镜头组C·悬念',
     subject: hero.name,
     lock: hero.visualLock,
+    cast: [hero],
   })
 
   let chosen = patterns.slice(0, target)
@@ -329,6 +340,7 @@ export function buildFlexibleShots(
       emotion: '决意',
       subject: hero.name,
       lock: hero.visualLock,
+      cast: [hero],
     })
     chosen = chosen.slice(0, target)
   }
@@ -338,11 +350,17 @@ export function buildFlexibleShots(
   last.durationSec = Math.max(3, last.durationSec + (seconds - used))
 
   return chosen.map((p, i) => {
-    const { subject, lock, ...rest } = p
+    const { subject, lock, cast: who, ...rest } = p
+    // resolved cast for this shot, plus anyone named in the dialogue line
+    const ids = who.map((c) => c.id)
+    for (const c of chars) {
+      if (!ids.includes(c.id) && c.name && rest.dialogue.includes(c.name)) ids.push(c.id)
+    }
     return {
       id: `s${ep}-${i + 1}`,
       shotNo: i + 1,
       ...rest,
+      characterIds: ids,
       seedancePrompt: seedance(
         subject,
         p.action,
