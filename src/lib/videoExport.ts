@@ -7,6 +7,8 @@ export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
 /** Dialogue pacing: Chinese chars (CJK + alnum) per second */
 export const CHARS_PER_SEC = 4.5
 export const MIN_SEG_SEC = 2
+/** Allocation / borrow / split step (seconds); all segment durationSec are multiples of this (except episode remainder on last seg). */
+export const DURATION_STEP = 0.5
 
 export interface VideoPipelineShot {
   episode: number
@@ -41,7 +43,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'speaker_unresolved' | 'character_missing_costume' | 'character_missing_prop'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'character_missing_costume' | 'character_missing_prop'
   message: string
 }
 
@@ -267,14 +269,17 @@ interface Seg {
   voice: string[]
   sfx: string[]
   overlay: string[]
-  /** 0.1s units */
+  /** DURATION_STEP (0.5s) units */
   u: number
   need: number
 }
 
 const uniq = <T,>(a: T[]) => [...new Set(a)]
-const needUnits = (s: Seg) => Math.ceil((dialogueSec(s.dialogue) * 10) - 1e-9)
-const lower = (s: Seg, max: number) => Math.max(MIN_SEG_SEC * 10, Math.min(s.need, max))
+const toUnits = (sec: number) => Math.round(sec / DURATION_STEP)
+const toSec = (u: number) => u * DURATION_STEP
+const MIN_UNITS = toUnits(MIN_SEG_SEC)
+const needUnits = (s: Seg) => Math.ceil(dialogueSec(s.dialogue) / DURATION_STEP - 1e-9)
+const lower = (s: Seg, max: number) => Math.max(MIN_UNITS, Math.min(s.need, max))
 
 /** Move time inside an episode so every seg is within [lower, max]; prefers dialogue-free nearest donors. */
 function allocate(segs: Seg[], max: number) {
@@ -412,14 +417,14 @@ function buildShotSegs(
     })
   }
   for (const sg of segs) sg.need = needUnits(sg)
-  const total = Math.round((Number(s.durationSec) || 0) * 10)
+  const total = toUnits(Number(s.durationSec) || 0)
   // long shot with too few segments: time-split continuation segments (no dialogue)
-  const k = Math.max(segs.length, Math.ceil(total / 100))
+  const k = Math.max(segs.length, Math.ceil(total / toUnits(10)))
   while (segs.length < k) {
     const last = segs[segs.length - 1]
     segs.push({ ...last, dialogue: '', speaker: null, narration: false, sfx: [], overlay: [], need: 0 })
   }
-  const us = splitUnits(Math.max(total, 1), segs.map((x) => Math.max(x.need, 20)))
+  const us = splitUnits(Math.max(total, 1), segs.map((x) => Math.max(x.need, MIN_UNITS)))
   segs.forEach((x, i) => (x.u = total ? us[i] : 0))
   return segs
 }
@@ -437,7 +442,7 @@ function partPrompt(base: string, origAction: string, sg: Seg, changedTime: bool
 
 export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOptions = {}): VideoPipelineExport {
   const maxSec = Math.max(MIN_SEG_SEC, opts.maxShotSec ?? 10)
-  const max = Math.round(maxSec * 10)
+  const max = toUnits(maxSec)
   const chars = project.characters
   const warnings: VideoPipelineWarning[] = []
   const eps = Object.keys(project.storyboards || {})
@@ -449,7 +454,15 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     const list = [...project.storyboards[ep]].sort((a, b) => a.shotNo - b.shotNo)
     const current = new Map<string, string>()
     let segs: Seg[] = list.flatMap((s) => buildShotSegs(ep, s, chars, current))
-    const T = segs.reduce((a, b) => a + b.u, 0)
+    const rawTotal = list.reduce((a, s) => a + (Number(s.durationSec) || 0), 0)
+    const targetUnits = Math.floor(rawTotal / DURATION_STEP + 1e-9)
+    const remainderSec = Math.round((rawTotal - targetUnits * DURATION_STEP) * 1000) / 1000
+    let T = segs.reduce((a, b) => a + b.u, 0)
+    if (segs.length && T !== targetUnits) {
+      segs[segs.length - 1].u += targetUnits - T
+      if (segs[segs.length - 1].u < 0) segs[segs.length - 1].u = 0
+      T = segs.reduce((a, b) => a + b.u, 0)
+    }
     allocate(segs, max)
     // still too long and > max: split dialogue at sentence punctuation into new segments
     segs = segs.flatMap((sg) => {
@@ -496,16 +509,25 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     allocate(segs, max)
 
     // number + emit
+    if (remainderSec > 1e-9) {
+      warnings.push({
+        episode: ep,
+        code: 'duration_remainder',
+        message: `本集总时长 ${rawTotal}s 不是 ${DURATION_STEP}s 的倍数，余数 ${remainderSec}s 加在最后一段`,
+      })
+    }
     const byParent = new Map<string, Seg[]>()
     for (const sg of segs) byParent.set(sg.parentId, [...(byParent.get(sg.parentId) || []), sg])
-    for (const sg of segs) {
+    for (let si = 0; si < segs.length; si++) {
+      const sg = segs[si]
       const s = sg.shot
       const group = byParent.get(sg.parentId)!
       const idx = group.indexOf(sg)
       const multi = group.length > 1
       const basePrompt =
         cleanPrompt(s.seedancePrompt?.trim() || '') || [cleanField(s.visual), cleanField(s.action)].filter(Boolean).join('，')
-      const durationSec = sg.u / 10
+      let durationSec = toSec(sg.u)
+      if (si === segs.length - 1 && remainderSec > 1e-9) durationSec = Math.round((durationSec + remainderSec) * 1000) / 1000
       const sp = sg.speaker ? chars.find((c) => c.id === sg.speaker) : undefined
       const id = multi ? `${s.id}-${String.fromCharCode(97 + idx)}` : s.id
       shots.push({
@@ -534,9 +556,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
           episode: ep,
           shotId: id,
           code: 'dialogue_too_long',
-          message: `台词需 ${(sg.need / 10).toFixed(1)}s（${pacedChars(sg.dialogue)}字 @${CHARS_PER_SEC}字/秒），仅分配到 ${durationSec}s，无法在本集内借到时长`,
+          message: `台词需 ${toSec(sg.need).toFixed(1)}s（${pacedChars(sg.dialogue)}字 @${CHARS_PER_SEC}字/秒），仅分配到 ${durationSec}s，无法在本集内借到时长`,
         })
-      if (sg.u < MIN_SEG_SEC * 10 || sg.u > max)
+      if (sg.u < MIN_UNITS || sg.u > max)
         warnings.push({ episode: ep, shotId: id, code: 'segment_duration', message: `段时长 ${durationSec}s 超出 ${MIN_SEG_SEC}–${maxSec}s` })
       if (sg.dialogue && !sg.speaker && !sg.narration)
         warnings.push({ episode: ep, shotId: id, code: 'speaker_unresolved', message: `台词无法确定说话人：${sg.dialogue.slice(0, 20)}` })

@@ -1,5 +1,6 @@
 /** npx tsx scripts/test-video-export.ts — fixtures for video-pipeline@1 export */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { buildVideoPipelineExport, dialogueSec, indirectUiCue } from '../src/lib/videoExport'
 import type { Character, Project, Shot } from '../src/types'
 
@@ -108,6 +109,13 @@ t('内心 onscreen → stay in characterIds + voiceOnly, speaker filled', () => 
   assert.ok(s.characterIds.includes('c1'), 'onscreen 内心 should remain in characterIds')
   assert.ok(s.voiceOnly.includes('c1'), 'onscreen 内心 should also be in voiceOnly')
   assert.equal(s.dialogue, '不能再退了。')
+})
+t('all durationSec multiples of 0.5 (fixtures)', () => {
+  out.shots.forEach((s) => assert.ok(Math.abs(s.durationSec % 0.5) < 1e-9, `${s.id} ${s.durationSec}`))
+})
+t('all durationSec multiples of 0.5 (sample)', () => {
+  const sample = JSON.parse(readFileSync('samples/video-pipeline.sample.json', 'utf8')) as { shots: { id: string; durationSec: number }[] }
+  sample.shots.forEach((s) => assert.ok(Math.abs(s.durationSec % 0.5) < 1e-9, `sample ${s.id} ${s.durationSec}`))
 })
 console.log(`\n${pass} tests passed; ${out.shots.length} segments from ${ep1.length} shots; warnings: ${out.warnings.length}`)
 for (const s of out.shots) console.log(s.id, s.durationSec, s.speaker, JSON.stringify(s.dialogue))
