@@ -43,7 +43,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'character_missing_costume' | 'character_missing_prop'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop'
   message: string
 }
 
@@ -102,42 +102,110 @@ export function extractSfx(text: string): { text: string; sfx: string[] } {
   return { text: t, sfx }
 }
 
+/** Explicit UI-window wording in prompts (a clause matching this is replaced by the indirect cue). */
 const UI_RE = /(系统视窗|系统提示|系统面板|系统界面|系统弹窗|界面|转盘|弹窗|屏幕文字|提示框|悬浮窗|全息屏|光幕|面板文字)/
+/** Keywords after which a quoted string is on-screen UI text. */
+const UI_KEY = /(系统|视窗|提示|面板|界面|弹窗|屏幕|手机|短信|消息|通知|字样|写着|显示|浮现|弹出|跳出|标题|字幕|光幕|全息|悬浮窗|提示框|转盘|选项|余额|聊天|对话框)/
+/** `标签：内容` labels whose content is UI text. */
+const UI_LABEL = /(系统提示|系统消息|界面显示|弹窗|屏幕文字|屏幕显示|提示框|面板文字|字幕|手机屏幕|短信|通知)\s*[：:]\s*([^。；;\n]+)/g
+/** Prompt field labels — `动作：…` etc. are never overlay text. */
+const FIELD_LABEL = /^(主体|动作|镜头|风格|限制|画面|场景|景别|光线|时间轴|运镜|备注|要求|注意)\s*[：:]/
 export const INDIRECT_UI_CUE = '蓝光映在角色脸上，神情专注'
 
-/** Pull UI/on-screen text descriptions out of a free-text field. */
-export function extractOverlay(text: string): string[] {
+/** Negative directive (限制：/不出现/禁止/避免/无字幕…) — stays in prompt, never overlay. */
+export function isConstraintText(t: string): boolean {
+  const x = (t || '').trim()
+  return (
+    /^(限制|禁止|避免|要求|注意)\s*[：:]/.test(x) ||
+    /(不出现|不显示|不要|不得|不可出现|不能出现|不改变|不切换|不带|禁止|避免|无字幕|无水印|无文字|无界面|无任何|无台词|无可读|没有任何文字)/.test(x)
+  )
+}
+/** Visual description (not literal text): e.g. 眼睛是两个转盘 / 手腕戴着腕表. */
+export function isDescriptionText(t: string): boolean {
+  const x = (t || '').trim()
+  if (/[『「“"]/.test(x)) return false
+  if (FIELD_LABEL.test(x)) return true
+  return /(眼睛|双眼|眼中|眼里|眼睛里|手腕|戴着|戴一|腕表|小人|像素|身上|旋转|映在|画面|镜头|慢悠悠|特写|光团|蓝光|红光)/.test(x)
+}
+/** Keep only literal on-screen UI text. */
+export function isOverlayText(t: string): boolean {
+  const x = (t || '').trim()
+  return Boolean(x) && !isConstraintText(x) && !isDescriptionText(x)
+}
+export function filterOverlay(list: string[]): string[] {
   const out: string[] = []
-  for (const m of (text || '').matchAll(/『([^』]+)』/g)) out.push(m[1].trim())
-  for (const clause of (text || '').split(/[，。；;！!？?\n]/)) {
-    const c = clause.replace(/『[^』]*』/g, (m) => m).trim()
-    if (c && UI_RE.test(c) && !out.includes(c)) out.push(c)
+  for (const raw of list) {
+    const x = (raw || '').trim()
+    if (isOverlayText(x) && !out.includes(x)) out.push(x)
   }
-  return out.filter(Boolean)
+  return out
 }
 
-/** Replace explicit UI rendering descriptions in a prompt with one indirect light/expression cue. */
-export function indirectUiCue(prompt: string, cue = INDIRECT_UI_CUE): string {
-  let used = false
-  const hadQuote = /『[^』]*』/.test(prompt || '')
-  const stripped = (prompt || '').replace(/[，,]?\s*(?:显示|写着|浮现|出现)?\s*『[^』]*』/g, '')
-  const parts = (hadQuote && !UI_RE.test(stripped) ? `${INDIRECT_UI_CUE}，${stripped}` : stripped).split(/([，。；;\n])/)
+/** Pull literal UI text out of a free-text field (visual / prompt / action). Descriptions and constraints are ignored. */
+export function extractOverlay(text: string): string[] {
+  const t = text || ''
   const out: string[] = []
+  for (const m of t.matchAll(/『([^』]+)』/g)) out.push(m[1].trim())
+  // 「」“” only when the clause before it names a UI surface
+  for (const m of t.matchAll(/([^，。；;！!？?\n「“]{0,24})[「“]([^」”]+)[」”]/g)) if (UI_KEY.test(m[1])) out.push(m[2].trim())
+  for (const m of t.matchAll(UI_LABEL)) {
+    const v = m[2].trim().replace(/^[『「“"]|[』」”"]$/g, '')
+    if (v) out.push(v)
+  }
+  return filterOverlay(out)
+}
+
+/**
+ * Strip explicit UI rendering (『…』 quotes, 系统视窗/弹窗… clauses) from a prompt.
+ * Constraint clauses (限制：不出现文字与界面…) are kept untouched. `removed` tells whether anything UI was taken out.
+ */
+export function stripUiFromPrompt(prompt: string): { text: string; removed: boolean } {
+  let removed = false
+  let quoted = false
+  let p = (prompt || '').replace(/[，,]?\s*(?:显示|写着|浮现|出现)?\s*『[^』]*』/g, () => {
+    quoted = true
+    return ''
+  })
+  const parts = p.split(/([，。；;\n])/)
+  const out: string[] = []
+  let inConstraint = false
   for (let i = 0; i < parts.length; i += 2) {
     const clause = parts[i]
     const sep = parts[i + 1] ?? ''
-    if (UI_RE.test(clause) && !clause.includes(cue) && !/^(限制|风格)[：:]/.test(clause.trim())) {
-      // keep a field label like 主体： / 画面：
+    const c = clause.trim()
+    if (/^(限制|风格)\s*[：:]/.test(c)) inConstraint = true
+    else if (FIELD_LABEL.test(c)) inConstraint = false
+    if (!inConstraint && UI_RE.test(clause) && !isConstraintText(clause) && !clause.includes(INDIRECT_UI_CUE.split('，')[0])) {
       const label = clause.match(/^\s*([^：:]{1,6}[：:])/)?.[1] ?? ''
-      if (!used) {
-        out.push(label + cue + sep)
-        used = true
-      } else if (label) out.push(label + sep)
+      out.push(label + (removed ? '' : '\u0000') + (label || !removed ? sep : ''))
+      removed = true
       continue
     }
     out.push(clause + sep)
+    if (sep === '。' || sep === '\n') inConstraint = false
   }
-  return out.join('').replace(/[，、]{2,}/g, '，').replace(/，。/g, '。')
+  p = out.join('')
+  return { text: p, removed: removed || quoted }
+}
+
+/** Insert the indirect cue once (at the first removed UI spot, else after the 主体 sentence / at the start). */
+function insertCue(text: string, cue: string): string {
+  if (text.includes('\u0000')) {
+    let first = true
+    return text.replace(/\u0000/g, () => (first ? ((first = false), cue) : ''))
+  }
+  const m = text.match(/^([\s\S]*?主体[：:][^。]*)(。)/)
+  if (m) return `${m[1]}，${cue}${m[2]}${text.slice(m[0].length)}`
+  return `${cue}，${text}`
+}
+function tidy(p: string): string {
+  return p.replace(/\u0000/g, '').replace(/[，、]{2,}/g, '，').replace(/，。/g, '。').replace(/：，/g, '：').replace(/^[，\s]+/, '').trim()
+}
+
+/** Replace explicit UI rendering descriptions in a prompt with one indirect light/expression cue (helper; always adds cue when UI was found). */
+export function indirectUiCue(prompt: string, cue = INDIRECT_UI_CUE): string {
+  const { text, removed } = stripUiFromPrompt(prompt)
+  return tidy(removed ? insertCue(text, cue) : text)
 }
 
 const ACTION_SPLIT = /\s*[，,。；;]?\s*(?:紧接着|随后|然后|接着|同时)\s*[，,]?\s*/
@@ -222,6 +290,12 @@ export function splitDialogueChunks(text: string, maxSec: number): string[] {
 
 // ---------------- speaker resolution ----------------
 
+/** System character: name/role/tags mention 系统 or tag system. Their lines are overlay-only. */
+export function isSystemCharacter(c: Character | undefined): boolean {
+  if (!c) return false
+  return /系统/.test(c.name) || /系统/.test(c.baseName || '') || /系统/.test(c.role || '') || (c.tags || []).some((t) => /^(system|系统)$/i.test(t))
+}
+
 function displayName(c: Character): string {
   return c.baseName?.trim() || c.name
 }
@@ -264,6 +338,8 @@ interface Seg {
   actionSplit: boolean
   dialogue: string
   speaker: string | null
+  /** subtitle name for off-list bit-part speakers (speaker null) */
+  offName: string | null
   narration: boolean
   onscreen: string[]
   voice: string[]
@@ -344,12 +420,19 @@ function buildShotSegs(
   const shotVoice = mapNamesToIds(s.voiceOnly, chars)
   const actionX = extractSfx(cleanField(s.action))
   const actions = splitActions(actionX.text)
-  const overlay: string[] = [...(s.overlayText || []).map((x) => x.trim()).filter(Boolean)]
+  const sysIds = new Set(chars.filter(isSystemCharacter).map((c) => c.id))
+  const sysNames = chars.filter(isSystemCharacter).flatMap((c) => [c.name, c.baseName || ''].filter(Boolean))
+  // explicit overlayText entries: strip `系统小转：` prefix, then keep literal UI text only
+  const stripSys = (x: string) => {
+    const m = x.match(/^([^：:]{1,12})\s*[：:]\s*([\s\S]+)$/)
+    return m && (SYSTEM.test(m[1]) || sysNames.includes(m[1])) ? m[2].trim().replace(/^[「“"]([\s\S]*)[」”"]$/, '$1') : x
+  }
+  const overlay: string[] = filterOverlay((s.overlayText || []).map((x) => stripSys(x.trim())))
   for (const o of [...extractOverlay(cleanField(s.visual)), ...extractOverlay(s.seedancePrompt || '')]) if (!overlay.includes(o)) overlay.push(o)
   const shotSfx = uniq([...(s.sfx || []).map((x) => x.trim()).filter(Boolean), ...actionX.sfx])
 
   // dialogue → groups of consecutive lines with the same speaker
-  type Group = { speaker: string | null; narration: boolean; voice: boolean; inner: boolean; lines: string[]; sfx: string[] }
+  type Group = { speaker: string | null; offName: string | null; narration: boolean; voice: boolean; inner: boolean; lines: string[]; sfx: string[] }
   const groups: Group[] = []
   const dx = extractSfx((s.dialogue || '').replace(/\r/g, ''))
   const dsfx = dx.sfx
@@ -357,33 +440,38 @@ function buildShotSegs(
     const lx = extractSfx(line.text)
     dsfx.push(...lx.sfx)
     if (!lx.text) continue
-    if (line.name && SYSTEM.test(line.name)) {
-      overlay.push(lx.text)
+    const sysHit =
+      line.name &&
+      (SYSTEM.test(line.name) || isSystemCharacter(chars.find((c) => c.id === resolveSpeaker(line.name!, line.tag, chars, onscreen0, current))))
+    if (sysHit || (!line.name && onscreen0.length === 1 && sysIds.has(onscreen0[0]))) {
+      if (isOverlayText(lx.text) && !overlay.includes(lx.text)) overlay.push(lx.text)
       continue
     }
     for (const o of extractOverlay(lx.text)) if (!overlay.includes(o) && /『/.test(lx.text)) overlay.push(o)
     let speaker: string | null = null
+    let offName: string | null = null
     let narration = false
     let voice = false
     let inner = false
     if (line.name && NARRATOR.test(line.name) && !line.tag) narration = true
     else if (line.name) {
       speaker = resolveSpeaker(line.name, line.tag, chars, [...onscreen0, ...shotVoice], current) ?? null
+      if (!speaker) offName = line.name
       voice = Boolean(line.tag && VOICE_TAG.test(line.tag))
       inner = Boolean(line.tag && INNER_TAG.test(line.tag))
       if (speaker) current.set(displayName(chars.find((c) => c.id === speaker)!), speaker)
     } else {
-      const cands = uniq([...onscreen0, ...shotVoice])
+      const cands = uniq([...onscreen0, ...shotVoice]).filter((id) => !sysIds.has(id))
       if (cands.length === 1) speaker = cands[0]
     }
     const last = groups[groups.length - 1]
-    if (last && last.speaker === speaker && last.narration === narration && last.voice === voice && last.inner === inner) last.lines.push(lx.text)
-    else groups.push({ speaker, narration, voice, inner, lines: [lx.text], sfx: [] })
+    if (last && last.speaker === speaker && last.offName === offName && last.narration === narration && last.voice === voice && last.inner === inner) last.lines.push(lx.text)
+    else groups.push({ speaker, offName, narration, voice, inner, lines: [lx.text], sfx: [] })
     groups[groups.length - 1].sfx.push(...lx.sfx)
   }
 
   const voiceIds = uniq([
-    ...shotVoice,
+    ...shotVoice.filter((id) => !sysIds.has(id)),
     ...groups.filter((g) => g.speaker && (g.voice || !onscreen0.includes(g.speaker))).map((g) => g.speaker!),
   ])
   // OS/画外/V.O./电话/广播 → remove from characterIds; 内心/心声/心想 keep onscreen if originally present
@@ -407,6 +495,7 @@ function buildShotSegs(
       actionSplit: actions.length > 1,
       dialogue: g ? g.lines.join('\n') : '',
       speaker: g ? g.speaker : null,
+      offName: g ? g.offName : null,
       narration: g ? g.narration : false,
       onscreen,
       voice,
@@ -422,7 +511,7 @@ function buildShotSegs(
   const k = Math.max(segs.length, Math.ceil(total / toUnits(10)))
   while (segs.length < k) {
     const last = segs[segs.length - 1]
-    segs.push({ ...last, dialogue: '', speaker: null, narration: false, sfx: [], overlay: [], need: 0 })
+    segs.push({ ...last, dialogue: '', speaker: null, offName: null, narration: false, sfx: [], overlay: [], need: 0 })
   }
   const us = splitUnits(Math.max(total, 1), segs.map((x) => Math.max(x.need, MIN_UNITS)))
   segs.forEach((x, i) => (x.u = total ? us[i] : 0))
@@ -437,7 +526,9 @@ function partPrompt(base: string, origAction: string, sg: Seg, changedTime: bool
     else p = `${p}${p && !/[。.]$/.test(p) ? '。' : ''}动作：${sg.action}。`
   }
   if (changedTime) p = p.replace(/时间轴[：:][^。]*。/g, '')
-  return indirectUiCue(p).trim()
+  const { text, removed } = stripUiFromPrompt(p)
+  // cue only for segments that really carry UI (overlay text) or had a UI description removed
+  return tidy(removed || sg.overlay.length ? insertCue(text, INDIRECT_UI_CUE) : text)
 }
 
 export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOptions = {}): VideoPipelineExport {
@@ -541,7 +632,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         durationSec,
         dialogue: sg.dialogue,
         speaker: sg.dialogue ? sg.speaker : null,
-        speakerName: sg.dialogue && sp ? displayName(sp) : null,
+        speakerName: sg.dialogue ? (sp ? displayName(sp) : sg.offName) : null,
         voiceOnly: [...sg.voice],
         sfx: [...sg.sfx],
         overlayText: [...sg.overlay],
@@ -560,7 +651,11 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         })
       if (sg.u < MIN_UNITS || sg.u > max)
         warnings.push({ episode: ep, shotId: id, code: 'segment_duration', message: `段时长 ${durationSec}s 超出 ${MIN_SEG_SEC}–${maxSec}s` })
-      if (sg.dialogue && !sg.speaker && !sg.narration)
+      if (sg.onscreen.length >= 2)
+        warnings.push({ episode: ep, shotId: id, code: 'multi_character_shot', message: `同框 ${sg.onscreen.length} 个角色（建议单人镜头 / 过肩 / 正反打）` })
+      if (sg.dialogue && !sg.speaker && sg.offName)
+        warnings.push({ episode: ep, shotId: id, code: 'speaker_offlist', message: `说话人「${sg.offName}」不在角色表（仅字幕名）` })
+      else if (sg.dialogue && !sg.speaker && !sg.narration)
         warnings.push({ episode: ep, shotId: id, code: 'speaker_unresolved', message: `台词无法确定说话人：${sg.dialogue.slice(0, 20)}` })
     }
   }

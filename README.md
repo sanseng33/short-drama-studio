@@ -127,10 +127,11 @@
 3. **单说话人**：解析 `名字：` / `名字（情绪）：` / `名字(OS)：`，多说话人拆段。无前缀时若 characterIds ∪ voiceOnly 只有一个候选则取之；`旁白：` 为 null；其余 null 记 `speaker_unresolved` 警告。前缀同时匹配 `baseName`，存在造型变体时优先取本镜 characterIds 中的变体，其次本集最近出现的变体。
 4. **dialogue/sfx**：`无`/`无台词`/`—` → ""；`音效：砰`、`【音效】砰`、`【音效：砰】`、`(SFX)砰` 从 dialogue/action/prompt 中移出到 `sfx`。
 5. **characterIds** 仅画面内角色；OS/画外音/画外/V.O./电话里/广播 标记的说话人、或不在 characterIds 中的说话人、以及分镜 `voiceOnly` 字段进入 `voiceOnly`（并从 characterIds 移除）。**内心/心声/心想**：若该角色本就在 characterIds（在画面内），则保留在 characterIds，同时加入 `voiceOnly`；若不在画面内则仅进 `voiceOnly`。
-6. **overlayText**：系统视窗/系统提示/界面/转盘/弹窗/屏幕文字/『…』等描述及 `系统：` 台词进入 `overlayText`；`prompt` 中的 UI 渲染描述由 `indirectUiCue()` 替换为间接线索（默认「蓝光映在角色脸上，神情专注」）。
-7. **单动作**：action 含 随后/然后/接着/紧接着/同时 时拆成顺序段，prompt 中的动作文本替换为对应分段动作；时长改变的段会去掉原 `时间轴：…` 片段。
-8. **角色**：导出 costume、signatureProp、可选 baseName；为空时产生 `character_missing_costume` / `character_missing_prop` 警告（episode 为 0）。
+6. **overlayText**：只收需要后期叠加的界面原文——UI 关键词（屏幕/弹窗/显示/消息/系统…）后的『』「」“”引号内容、`系统提示：/界面显示：/弹窗：/屏幕文字：` 后的文字、`系统：` 及系统角色（名字/角色/标签含「系统」，如「系统小转」）的台词。约束句（`限制：…`、不出现…、禁止…、避免…、无字幕无水印）与画面描述（如「眼睛是两个转盘」）一律不进 overlay（约束仍保留在 prompt），去重。系统角色台词：`dialogue=""`、`speaker/speakerName=null`，不进 voiceOnly；其画内状态按原 characterIds 保留。`prompt` 中的 UI 渲染描述被移除，间接线索「蓝光映在角色脸上，神情专注」**只**加在 overlayText 非空或确实移除了 UI 描述的段上。
+7. **warnings 新增**：`multi_character_shot`（段内 characterIds ≥2，提示改单人/过肩/正反打）；`speaker_offlist`（info：`收银员：` 等不在角色表的前缀 → `speaker=null`、`speakerName="收银员"`，不再报 `speaker_unresolved`）。
+8. **单动作**：action 含 随后/然后/接着/紧接着/同时 时拆成顺序段，prompt 中的动作文本替换为对应分段动作；时长改变的段会去掉原 `时间轴：…` 片段。
+9. **角色**：导出 costume、signatureProp、可选 baseName；为空时产生 `character_missing_costume` / `character_missing_prop` 警告（episode 为 0）。
 
 生成侧：分镜 LLM 提示词强制单动作、2–10s、≤4.5 字/秒、单说话人「名字：」前缀、独立 `sfx` / `overlayText` / `voiceOnly` 字段、只写 UI 的间接线索；想法抽取必填 costume/signatureProp，并把外观明显不同的阶段拆成 `白朴（变帅前）` / `白朴（变帅后）`（同 `baseName`）。Shot 新增可选 `sfx` / `overlayText` / `voiceOnly`，分镜卡片可编辑；角色卡可填本名 baseName。模板分镜会从无台词镜头借整秒以满足台词语速。
 
-测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、内心画内保留、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分、durationSec 均为 0.5 倍数）。
+测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、内心画内保留、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分、durationSec 均为 0.5 倍数；约束/描述不进 overlay、引号 UI 保留、提示线索仅限 UI 段、系统角色台词仅 overlay、多人同框警告、龙套 speakerName；并从真实导出《每天变帅一点点》`scripts/fixtures/real-export-meitian.json` 重建项目回归：overlay 27 条、无约束文本）。生成侧提示词要求优先单人镜头（过肩/正反打代替双人同框，最多2人）、龙套写身份前缀。

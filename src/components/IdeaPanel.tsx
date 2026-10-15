@@ -169,7 +169,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
 大纲:${JSON.stringify(o)}
 剧本:${script?.fullText || '(无)'}
 角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(proj.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume, signatureProp: c.signatureProp, baseName: c.baseName })))}
-每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText；每镜单动作、2-10秒、台词≤4.5字/秒且只有一个「名字：」说话人。`
+每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText；每镜单动作、2-10秒、台词≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀如「收银员：」）；优先单人镜头，对话用过肩/正反打/反应镜头，同框最多2人；overlayText 只放界面原文，不放约束或描述。`
               const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user, { signal: ac.signal })
               const s = stripFence(text)
               const raw = JSON.parse(s.slice(s.indexOf('['), s.lastIndexOf(']') + 1)) as Shot[]
