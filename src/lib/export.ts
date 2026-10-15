@@ -1,3 +1,4 @@
+import { cleanField } from './placeholder'
 import type { Project } from '../types'
 
 export function projectToMarkdown(project: Project): string {
@@ -18,7 +19,7 @@ export function projectToMarkdown(project: Project): string {
   for (const c of project.characters) {
     lines.push(
       `### ${c.name}（${c.role}）`,
-      `- 视觉锁定：${c.visualLock}`,
+      `- 视觉锁定：${cleanField(c.visualLock) || '（未填写）'}`,
       `- 服装：${c.costume}`,
       `- 标志道具：${c.signatureProp}`,
       '',

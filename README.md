@@ -106,3 +106,7 @@
 ```
 
 每个镜头的 `characterIds`：模板生成取该镜已解析的出场角色；LLM 生成要求每镜返回 `characters` 角色名并映射为 id；兜底（含旧项目）按画面/动作/台词中出现的角色名自动识别。分镜卡片可点选角色芯片手动修正。示例：`samples/video-pipeline.sample.json`（由 `npx tsx scripts/gen-video-sample.ts` 生成）。
+
+**占位符过滤**：模板 / 想法兜底生成的占位文字（如「待补充外貌与气质」「待补充服装」「请描述主角外貌」「待定」「TODO」）不会进入导出：`prompt`、`visual`、`action` 与 `characters[].visualLock/costume/signatureProp` 中的占位内容被清除（仅为占位时导出空字符串），不会出现空的「（视觉锁定：）」片段。模板分镜生成本身也会跳过空/占位的视觉锁定（`src/lib/placeholder.ts`）。
+
+**长镜头拆分**：`buildVideoPipelineExport(project, { maxShotSec = 10 })`。`durationSec > maxShotSec` 的镜头拆成 `ceil(d / maxShotSec)` 段，时长近似均分（每段 ≤ maxShotSec，总和不变），id 为 `<id>-a`、`<id>-b`…，并附 `segment: { index, total, parentId }`（index 从 0 开始）；`dialogue`/`speaker` 仅保留在第一段，`prompt`/`characterIds` 各段相同。未拆分的镜头没有 `segment` 字段。schema 版本不变（仍为 video-pipeline@1，`segment` 为可选新增字段）。模板分镜的时长现均摊到各镜（单镜目标 ≤10s），不再把剩余时长全部堆到最后一镜。

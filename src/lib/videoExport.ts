@@ -1,6 +1,7 @@
 /** 导出给视频流水线：pure builder for short-drama-studio/video-pipeline@1 */
 import type { Project } from '../types'
 import { shotCharacterIds, speakerId } from './shotCast'
+import { cleanField, cleanPrompt } from './placeholder'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
 
@@ -19,6 +20,13 @@ export interface VideoPipelineShot {
   size: string
   emotion: string
   refImage: string | null
+  /** present only when a long shot was split into ≤maxShotSec segments */
+  segment?: { index: number; total: number; parentId: string }
+}
+
+export interface VideoPipelineOptions {
+  /** split shots longer than this into near-equal segments (default 10) */
+  maxShotSec?: number
 }
 
 export interface VideoPipelineExport {
@@ -36,7 +44,11 @@ export interface VideoPipelineExport {
   shots: VideoPipelineShot[]
 }
 
-export function buildVideoPipelineExport(project: Project): VideoPipelineExport {
+export function buildVideoPipelineExport(
+  project: Project,
+  opts: VideoPipelineOptions = {},
+): VideoPipelineExport {
+  const maxShotSec = Math.max(1, opts.maxShotSec ?? 10)
   const chars = project.characters
   const eps = Object.keys(project.storyboards || {})
     .map(Number)
@@ -46,16 +58,18 @@ export function buildVideoPipelineExport(project: Project): VideoPipelineExport 
   for (const ep of eps) {
     const list = [...project.storyboards[ep]].sort((a, b) => a.shotNo - b.shotNo)
     for (const s of list) {
-      const prompt = s.seedancePrompt?.trim() || [s.visual, s.action].filter(Boolean).join('，')
+      const prompt =
+        cleanPrompt(s.seedancePrompt?.trim() || '') ||
+        [cleanField(s.visual), cleanField(s.action)].filter(Boolean).join('，')
       const speaker = s.dialogue ? speakerId(s.dialogue, chars) : undefined
-      shots.push({
+      const base: VideoPipelineShot = {
         episode: ep,
         shotNo: s.shotNo,
         id: s.id,
         characterIds: shotCharacterIds(s, chars),
         prompt,
-        visual: s.visual || '',
-        action: s.action || '',
+        visual: cleanField(s.visual),
+        action: cleanField(s.action),
         durationSec: s.durationSec,
         dialogue: s.dialogue || '',
         ...(speaker ? { speaker } : {}),
@@ -63,7 +77,27 @@ export function buildVideoPipelineExport(project: Project): VideoPipelineExport 
         size: s.size,
         emotion: s.emotion || '',
         refImage: s.refImage || null,
-      })
+      }
+      const d = Number(s.durationSec) || 0
+      if (d <= maxShotSec) {
+        shots.push(base)
+        continue
+      }
+      const total = Math.ceil(d / maxShotSec)
+      // near-equal split in 0.1s units, sums exactly to d
+      const units = Math.round(d * 10)
+      for (let i = 0; i < total; i++) {
+        const u = Math.floor(units / total) + (i < units % total ? 1 : 0)
+        const { speaker: _sp, ...rest } = base
+        shots.push({
+          ...(i === 0 ? base : rest),
+          id: `${s.id}-${String.fromCharCode(97 + i)}`,
+          characterIds: [...base.characterIds],
+          durationSec: u / 10,
+          dialogue: i === 0 ? base.dialogue : '',
+          segment: { index: i, total, parentId: s.id },
+        })
+      }
     }
   }
   return {
@@ -80,9 +114,9 @@ export function buildVideoPipelineExport(project: Project): VideoPipelineExport 
       name: c.name,
       role: c.role,
       tags: c.tags || [],
-      visualLock: c.visualLock,
-      costume: c.costume,
-      signatureProp: c.signatureProp,
+      visualLock: cleanField(c.visualLock),
+      costume: cleanField(c.costume),
+      signatureProp: cleanField(c.signatureProp),
     })),
     shots,
   }

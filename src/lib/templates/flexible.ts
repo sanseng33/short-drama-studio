@@ -1,4 +1,5 @@
 /** Flexible script / storyboard builders — cast-size aware, never invents missing roles. */
+import { cleanField } from '../placeholder'
 import type {
   ArtStyle,
   Character,
@@ -36,8 +37,9 @@ function seedance(
     duration > 5
       ? `时间轴：0-${Math.min(2, duration)}s起幅定场；${Math.min(2, duration)}-${duration}s${action}。`
       : ''
+  const lockText = cleanField(lock)
   return [
-    `竖屏9:16。主体：${subject}（视觉锁定：${lock}）。`,
+    `竖屏9:16。主体：${subject}${lockText ? `（视觉锁定：${lockText}）` : ''}。`,
     `动作：${action}（单主动作，手脚清晰克制）。`,
     `镜头：${camera}。`,
     `风格：${styleTag(style, tone)}，电影级光影，高清。`,
@@ -346,8 +348,34 @@ export function buildFlexibleShots(
   }
 
   const used = chosen.reduce((s, p) => s + p.durationSec, 0)
-  const last = chosen[chosen.length - 1]
-  last.durationSec = Math.max(3, last.durationSec + (seconds - used))
+  // Spread remaining time across all shots (≤ MAX_SHOT_SEC each) instead of
+  // dumping it all on the last shot (which produced 58s shots at 75s/ep).
+  const MAX_SHOT_SEC = 10
+  let remaining = seconds - used
+  while (remaining > 0 && chosen.some((p) => p.durationSec < MAX_SHOT_SEC)) {
+    for (const p of chosen) {
+      if (remaining <= 0) break
+      if (p.durationSec < MAX_SHOT_SEC) {
+        p.durationSec += 1
+        remaining -= 1
+      }
+    }
+  }
+  // Not enough shots to hold the episode at ≤MAX_SHOT_SEC: spread the rest
+  // evenly (the video-pipeline export splits >maxShotSec shots into segments).
+  for (let i = 0; remaining > 0; i = (i + 1) % chosen.length) {
+    chosen[i].durationSec += 1
+    remaining -= 1
+  }
+  while (remaining < 0 && chosen.some((p) => p.durationSec > 2)) {
+    for (const p of [...chosen].reverse()) {
+      if (remaining >= 0) break
+      if (p.durationSec > 2) {
+        p.durationSec -= 1
+        remaining += 1
+      }
+    }
+  }
 
   return chosen.map((p, i) => {
     const { subject, lock, cast: who, ...rest } = p
