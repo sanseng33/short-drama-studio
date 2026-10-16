@@ -1,6 +1,8 @@
 /** LLM user-prompt builders (pure) — inject setting facts / backgrounds / ages / scene time as hard constraints. */
 import type { Character, EpisodeOutline, Project } from '../types'
 
+/** 平台内容 + 跨集去重规则（随机副作用/惩罚/技能等） */
+export const CONTENT_RULES = '【内容规则】每集随机抽到的副作用/惩罚/代价/技能必须各不相同，全剧不得重复；写之前对照前面各集已用过的，不能换个说法再用一次。副作用只能是滑稽、无害、可当天解除的效果（如口音、打嗝、走路自带BGM、说话押韵、见猫就鞠躬），禁止以性取向、性别认同、种族/地域歧视、残障、疾病、宗教、自残或色情暗示作为惩罚或笑点。'
 export const FACTS_HEADER = '设定事实，必须遵守，不得与之矛盾'
 
 /** Genre label for prompts. Idea-pipeline projects never get trope labels like 逆袭 (they inject 底层/落魄 tropes). */
@@ -31,8 +33,8 @@ export function constraintBlock(p: Pick<Project, 'settingFacts' | 'characters' |
     const bits = [c.age ? `${c.age}岁` : '', c.background || ''].filter(Boolean)
     if (bits.length) lines.push(`- ${c.name}：${bits.join('，')}`)
   }
-  if (!lines.length) return ''
-  return `【${FACTS_HEADER}】\n${lines.join('\n')}\n（年龄以上为准，不得另写其他年龄；不要编造设定中没有的年数/时间跨度；场景与服装道具须符合各角色家境）`
+  if (!lines.length) return CONTENT_RULES
+  return `【${FACTS_HEADER}】\n${lines.join('\n')}\n（年龄以上为准，不得另写其他年龄；不要编造设定中没有的年数/时间跨度；场景与服装道具须符合各角色家境）\n${CONTENT_RULES}`
 }
 
 const withFacts = (p: Project, body: string) => {
