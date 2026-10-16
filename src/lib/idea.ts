@@ -297,12 +297,26 @@ export function isLockedCharacter(c: { locked?: boolean; refImage?: string }): b
   return Boolean(c.locked || c.refImage?.trim())
 }
 
-/** Re-generation merge: keep visualLock/costume/signatureProp/refImage of locked characters (matched by name). */
+/** Re-generation merge: keep locked look fields (visualLock/costume/signatureProp/age/background/negative/refImage/…) matched by name. */
 export function mergeLockedCharacters(prev: Character[], next: Character[]): Character[] {
   const locked = prev.filter(isLockedCharacter)
   const out = next.map((n) => {
     const p = locked.find((x) => x.name === n.name)
-    return p ? { ...n, visualLock: p.visualLock, costume: p.costume, signatureProp: p.signatureProp, refImage: p.refImage, locked: p.locked, ...(p.age ? { age: p.age } : {}) } : n
+    if (!p) return n
+    return {
+      ...n,
+      visualLock: p.visualLock,
+      costume: p.costume,
+      signatureProp: p.signatureProp,
+      refImage: p.refImage,
+      locked: p.locked ?? true,
+      ...(p.age != null && p.age !== '' ? { age: p.age } : {}),
+      ...(p.background?.trim() ? { background: p.background } : {}),
+      ...(p.negative?.trim() ? { negative: p.negative } : {}),
+      ...(p.characterKey?.trim() ? { characterKey: p.characterKey } : {}),
+      ...(p.imagesDir?.trim() ? { imagesDir: p.imagesDir } : {}),
+      ...(p.baseName?.trim() ? { baseName: p.baseName } : {}),
+    }
   })
   // locked characters dropped by the new extraction are kept (they carry a 定妆图)
   for (const p of locked) if (!out.some((x) => x.name === p.name)) out.push({ ...p, id: `c${out.length + 1}` })

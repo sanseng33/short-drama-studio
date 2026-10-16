@@ -69,6 +69,11 @@ export interface VideoPipelineExport {
     /** 定妆图文件名/前缀 (receiver resolves shot refs via characterIds); null when unset */
     refImage: string | null
     age?: string
+    /** 定妆负向提示 */
+    negative?: string | null
+    characterKey?: string | null
+    /** GPU folder name from pack images.dir */
+    imagesDir?: string | null
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]
@@ -748,6 +753,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       signatureProp: cleanField(c.signatureProp),
       refImage: c.refImage?.trim() || null,
       ...(c.age?.trim() ? { age: c.age.trim() } : {}),
+      ...(c.negative?.trim() ? { negative: c.negative.trim() } : {}),
+      ...(c.characterKey?.trim() ? { characterKey: c.characterKey.trim() } : {}),
+      ...(c.imagesDir?.trim() ? { imagesDir: c.imagesDir.trim() } : {}),
     })),
     shots,
     warnings,

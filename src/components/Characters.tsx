@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import type { ProjectApi } from '../hooks/useProject'
 import type { Character } from '../types'
 import {
@@ -7,9 +8,26 @@ import {
   buildPresetCast,
   type CastPresetId,
 } from '../lib/templates/cast'
+import {
+  applyCharacterPack,
+  buildMatchRows,
+  parseCharacterPackJson,
+  type CharacterPack,
+  type PackMatchAction,
+  type PackMatchRow,
+} from '../lib/characterPack'
+
+type ImportState = {
+  pack: CharacterPack
+  rows: PackMatchRow[]
+  actions: PackMatchAction[]
+  fileName: string
+}
 
 export function Characters({ api }: { api: ProjectApi }) {
   const { project, setProject, applyGenreDefaults, flash } = api
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [importState, setImportState] = useState<ImportState | null>(null)
 
   const updateChar = (id: string, patch: Partial<Character>) => {
     setProject((p) => ({
@@ -65,6 +83,52 @@ export function Characters({ api }: { api: ProjectApi }) {
 
   const tagsText = (c: Character) => (c.tags || []).join(', ')
 
+  const onPickPack = async (file: File | null) => {
+    if (!file) return
+    try {
+      const text = await file.text()
+      const pack = parseCharacterPackJson(text)
+      const rows = buildMatchRows(pack, project.characters)
+      setImportState({
+        pack,
+        rows,
+        actions: rows.map((r) => r.suggested),
+        fileName: file.name,
+      })
+    } catch (e) {
+      flash(e instanceof Error ? e.message : '定妆包读取失败')
+    } finally {
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const setAction = (index: number, action: PackMatchAction) => {
+    setImportState((s) => {
+      if (!s) return s
+      const actions = [...s.actions]
+      actions[index] = action
+      return { ...s, actions }
+    })
+  }
+
+  const confirmImport = () => {
+    if (!importState) return
+    try {
+      const result = applyCharacterPack(project.characters, importState.pack, importState.actions)
+      setProject((p) => ({ ...p, characters: result.characters }))
+      setImportState(null)
+      flash(`定妆包已导入：更新 ${result.updated} · 新建 ${result.created} · 跳过 ${result.skipped}`)
+    } catch (e) {
+      flash(e instanceof Error ? e.message : '导入失败')
+    }
+  }
+
+  const actionSelectValue = (a: PackMatchAction): string => {
+    if (a.kind === 'skip') return 'skip'
+    if (a.kind === 'create') return 'create'
+    return `apply:${a.targetId}`
+  }
+
   return (
     <div className="space-y-5">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -80,11 +144,91 @@ export function Characters({ api }: { api: ProjectApi }) {
           <button type="button" className="btn-ghost" onClick={applyGenreDefaults}>
             应用题材预设（可再改）
           </button>
+          <button type="button" className="btn-ghost" onClick={() => fileRef.current?.click()}>
+            导入定妆包
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => onPickPack(e.target.files?.[0] ?? null)}
+          />
           <button type="button" className="btn-primary" onClick={addChar}>
             添加角色
           </button>
         </div>
       </header>
+
+      {importState && (
+        <div className="panel border-accent/40 p-4 space-y-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-accent-soft">确认导入定妆包</h3>
+              <p className="mt-0.5 text-xs text-ink-muted">
+                {importState.fileName}
+                {importState.pack.project ? ` · 项目「${importState.pack.project}」` : ''}
+                · {importState.pack.characters.length} 个定妆角色
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" className="btn-ghost !py-1 text-xs" onClick={() => setImportState(null)}>
+                取消
+              </button>
+              <button type="button" className="btn-primary !py-1 text-xs" onClick={confirmImport}>
+                确认导入
+              </button>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {importState.rows.map((row, i) => {
+              const a = importState.actions[i]
+              const claimed = new Set(
+                importState.actions
+                  .map((x, j) => (j !== i && x.kind === 'apply' ? x.targetId : null))
+                  .filter(Boolean) as string[],
+              )
+              return (
+                <div
+                  key={row.packIndex}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-surface-700 bg-surface-850/60 px-3 py-2 text-sm"
+                >
+                  <div className="min-w-[10rem] flex-1">
+                    <div className="font-medium">{row.pack.displayName}</div>
+                    <div className="text-xs text-ink-muted">
+                      refImage: {row.pack.refImage}
+                      {row.pack.characterKey ? ` · key: ${row.pack.characterKey}` : ''}
+                      {row.pack.images?.dir ? ` · dir: ${row.pack.images.dir}` : ''}
+                    </div>
+                  </div>
+                  <span className="text-xs text-ink-faint">→</span>
+                  <select
+                    className="field !w-auto min-w-[12rem] !py-1 text-xs"
+                    value={actionSelectValue(a)}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      if (v === 'skip') setAction(i, { kind: 'skip' })
+                      else if (v === 'create') setAction(i, { kind: 'create' })
+                      else if (v.startsWith('apply:')) setAction(i, { kind: 'apply', targetId: v.slice(6) })
+                    }}
+                  >
+                    <option value="skip">跳过</option>
+                    <option value="create">新建角色</option>
+                    {project.characters.map((c) => (
+                      <option key={c.id} value={`apply:${c.id}`} disabled={claimed.has(c.id)}>
+                        应用到：{c.name}（{c.id}）
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })}
+          </div>
+          <p className="text-xs text-ink-muted">
+            默认按显示名 / refImage / 本名变体自动匹配。确认后写入外观、服装、定妆图并锁定；不会自动扩容阵容（除非选择「新建角色」）。
+          </p>
+        </div>
+      )}
 
       <div className="panel p-3">
         <div className="mb-2 text-xs font-medium text-ink-muted">阵容预设（可选）</div>
@@ -172,6 +316,33 @@ export function Characters({ api }: { api: ProjectApi }) {
                   title="定妆图文件名/前缀；填写后视觉锁定/服装视为权威，重新生成不会覆盖"
                   onChange={(e) => updateChar(c.id, { refImage: e.target.value || undefined })}
                   placeholder="定妆图文件名/前缀，如 bai_pu_plain"
+                />
+              </div>
+              <div>
+                <label className="label">负向 negative（可选）</label>
+                <input
+                  className="field"
+                  value={c.negative || ''}
+                  onChange={(e) => updateChar(c.id, { negative: e.target.value || undefined })}
+                  placeholder="定妆负向提示"
+                />
+              </div>
+              <div>
+                <label className="label">characterKey（可选）</label>
+                <input
+                  className="field"
+                  value={c.characterKey || ''}
+                  onChange={(e) => updateChar(c.id, { characterKey: e.target.value || undefined })}
+                  placeholder="如 bai_pu"
+                />
+              </div>
+              <div>
+                <label className="label">imagesDir（可选）</label>
+                <input
+                  className="field"
+                  value={c.imagesDir || ''}
+                  onChange={(e) => updateChar(c.id, { imagesDir: e.target.value || undefined })}
+                  placeholder="GPU 定妆目录名"
                 />
               </div>
               <div className="flex items-end">

@@ -41,6 +41,12 @@ export interface Character {
   refImage?: string
   /** visualLock/costume are authoritative (also implied by refImage): regeneration must not overwrite */
   locked?: boolean
+  /** 定妆负向提示（导入定妆包） */
+  negative?: string
+  /** 定妆包角色键，同人多造型共用，e.g. bai_pu */
+  characterKey?: string
+  /** GPU 定妆图目录名 images.dir（导入定妆包；导出为 characters[].imagesDir） */
+  imagesDir?: string
 }
 
 export interface EpisodeOutline {

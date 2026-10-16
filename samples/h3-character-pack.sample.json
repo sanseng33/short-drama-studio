@@ -1,0 +1,71 @@
+{
+  "schema": "h3-character-pack@1",
+  "project": "每天只能变帅一次",
+  "generatedAt": "2026-10-16T14:35:00+08:00",
+  "assetRoot": "D:/comfy/ComfyUI.V7/ComfyUI.V7/ComfyUI/output/CharacterSheet",
+  "characters": [
+    {
+      "refImage": "bai_pu_plain",
+      "characterKey": "bai_pu",
+      "displayName": "白朴（变帅前）",
+      "age": 17,
+      "background": "富三代，刻意低调，怕被人知道家里有钱",
+      "appearance": "东亚少年，短黑发略乱未打理，五官普通偏柔和，下颌线较软，眼神温和略疲惫",
+      "costume": "米白色宽松连帽卫衣（胸口小刺绣标），浅蓝水洗直筒牛仔裤，白色运动鞋，整体干净朴素",
+      "props": [],
+      "negative": "破旧衣服, 补丁, 开胶旧鞋, 裂屏手机, 脏污, 廉价配饰",
+      "sourcePrompt": "young East Asian male lead, ordinary everyday looks, plain handsome-average face, slightly soft jawline, unstyled short black hair, tired but kind eyes, light acne or uneven skin texture ok, casual campus/office clothes (simple hoodie or plain shirt and jeans), understated, not glamorous, not idol-like",
+      "images": {
+        "dir": "bai_piao_plain_20261016_115346",
+        "front": "00_000.png",
+        "sideA": "01_090.png",
+        "back": "02_180.png",
+        "sideB": "03_270.png",
+        "halfBody": "zz_half_body.png",
+        "orbit": "orbit.mp4"
+      }
+    },
+    {
+      "refImage": "bai_pu_glowup",
+      "characterKey": "bai_pu",
+      "displayName": "白朴（变帅后）",
+      "age": 17,
+      "background": "富三代，刻意低调；被系统改造后外貌明显变帅，仍是同一个人",
+      "appearance": "同一张脸的升级版：下颌线清晰，皮肤干净，眼神深邃自信，短黑发整齐上梳造型，身形修长匀称",
+      "costume": "米白色翻领拉链短夹克，白色圆领T恤，黑色修身直筒长裤，白色运动鞋",
+      "props": [],
+      "negative": "破旧衣服, 旧球鞋, 裂屏手机, 牛仔外套, 换成另一个演员的脸",
+      "sourcePrompt": "same young East Asian male lead as the ordinary version but transformed: sharper jawline, clearer skin, deeper eyes, neat styled short black hair, confident calm expression, proportional athletic-slim build, well-fitted modern casual outfit (clean shirt or light jacket), polished but still the same person identity, idol-adjacent handsomeness, not a different actor",
+      "images": {
+        "dir": "bai_piao_glowup_20261016_115901",
+        "front": "00_000.png",
+        "sideA": "01_090.png",
+        "back": "02_180.png",
+        "sideB": "03_270.png",
+        "halfBody": "zz_half_body.png",
+        "orbit": "orbit.mp4"
+      }
+    },
+    {
+      "refImage": "wu_nai",
+      "characterKey": "wu_nai",
+      "displayName": "吴耐",
+      "age": 17,
+      "background": "贫困家庭出身的校草，校服偏旧偏小，和白朴是对窗邻居",
+      "appearance": "东亚少年，窄脸，深色中长刘海略乱遮眉，神情冷静略带倔强，高瘦，和白朴明显不是同一张脸",
+      "costume": "蓝白配色高中运动校服：白色拉链外套配蓝色插肩袖与双白条、左胸校徽；蓝色运动裤外侧双白条；白色旧帆布鞋，鞋头有磨损；袖口略短",
+      "props": [],
+      "negative": "名牌西装, 高领毛衣, 皮鞋, 金表, 昂贵配饰, 崭新名牌运动鞋, 白朴同款脸",
+      "sourcePrompt": "17-year-old East Asian male second lead, poor-family school heartthrob, strikingly handsome natural face clearly different from the protagonist: narrower face, slightly longer messy fringe falling over the brows, calm cool slightly defiant gaze, tall lean build, wearing a faded and slightly too-small Chinese high school tracksuit uniform (blue-white zip jacket and matching track pants), sleeves a bit short at the wrist, fabric washed-out and pilled but clean and neatly worn, old canvas sneakers with worn toes, no jewelry, no accessories, empty hands",
+      "images": {
+        "dir": "wu_nai_20261016_142838",
+        "front": "00_000.png",
+        "sideA": "01_090.png",
+        "back": "02_180.png",
+        "sideB": "03_270.png",
+        "halfBody": "zz_half_body.png",
+        "orbit": "orbit.mp4"
+      }
+    }
+  ]
+}
