@@ -45,7 +45,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch'
   message: string
 }
 
@@ -56,7 +56,7 @@ export interface VideoPipelineOptions {
 
 export interface VideoPipelineExport {
   schema: typeof VIDEO_PIPELINE_SCHEMA
-  project: { id: string; title: string; style: string; platform: string; secondsPerEp: number }
+  project: { id: string; title: string; style: string; platform: string; secondsPerEp: number; settingFacts: string[] }
   characters: {
     id: string
     name: string
@@ -69,6 +69,7 @@ export interface VideoPipelineExport {
     /** 定妆图文件名/前缀 (receiver resolves shot refs via characterIds); null when unset */
     refImage: string | null
     age?: string
+    background?: string
     /** 定妆负向提示 */
     negative?: string | null
     characterKey?: string | null
@@ -733,6 +734,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     if (!cleanField(c.signatureProp))
       warnings.push({ episode: 0, characterId: c.id, code: 'character_missing_prop', message: `角色「${c.name}」缺少标志道具 signatureProp` })
   }
+  if (chars.some((c) => c.refImage?.trim()) && !/真人/.test(project.style || '')) {
+    warnings.unshift({ episode: 0, code: 'style_mismatch', message: `画风为「${project.style}」，但角色定妆是真人参考图；请改为真人都市后重新生成分镜` })
+  }
   return {
     schema: VIDEO_PIPELINE_SCHEMA,
     project: {
@@ -741,6 +745,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       style: project.style,
       platform: project.platform,
       secondsPerEp: project.secondsPerEp,
+      settingFacts: (project.settingFacts || []).map((f) => f.trim()).filter(Boolean),
     },
     characters: chars.map((c) => ({
       id: c.id,
@@ -753,6 +758,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       signatureProp: cleanField(c.signatureProp),
       refImage: c.refImage?.trim() || null,
       ...(c.age?.trim() ? { age: c.age.trim() } : {}),
+      ...(c.background?.trim() ? { background: c.background.trim() } : {}),
       ...(c.negative?.trim() ? { negative: c.negative.trim() } : {}),
       ...(c.characterKey?.trim() ? { characterKey: c.characterKey.trim() } : {}),
       ...(c.imagesDir?.trim() ? { imagesDir: c.imagesDir.trim() } : {}),
