@@ -14,6 +14,8 @@ import {
 } from '../lib/templates'
 import { loadLlm, loadProject, saveLlm, saveProject } from '../lib/storage'
 import { normalizeLlmShots } from '../lib/shotCast'
+import { mergeLockedCharacters } from '../lib/idea'
+import { outlineUser, scriptUser, storyboardUser } from '../lib/prompts'
 import { chatCompletion, OUTLINE_SYSTEM, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
 import type { EpisodeOutline, Shot } from '../types'
 
@@ -76,7 +78,7 @@ export function useProject() {
         title,
         style: defaultStyleForGenre(p.genre),
         // Genre default cast is a named preset seed — user can add/remove freely afterward
-        characters: defaultCharacters(p.genre),
+        characters: mergeLockedCharacters(p.characters, defaultCharacters(p.genre)),
         logline: p.logline.trim() ? p.logline : defaultLogline(p.genre, title),
       }
     })
@@ -102,9 +104,7 @@ export function useProject() {
     setError('')
     try {
       const p = project
-      const user = `题材:${p.genre} 标题:${p.title} 集数:${p.episodeCount} 每集${p.secondsPerEp}秒 画风:${p.style} logline:${p.logline}
-角色:${JSON.stringify(p.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [] })))}
-请生成全部${p.episodeCount}集大纲JSON数组。`
+      const user = outlineUser(p)
       const text = await chatCompletion(llm, OUTLINE_SYSTEM, user)
       const json = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim()) as EpisodeOutline[]
       setProject((prev) => ({ ...prev, outline: json }))
@@ -141,7 +141,7 @@ export function useProject() {
       const p = project
       const outline = p.outline.find((o) => o.episode === p.selectedEpisode)
       if (!outline) throw new Error('请先生成大纲')
-      const user = `写第${p.selectedEpisode}集剧本。大纲:${JSON.stringify(outline)} 角色:${JSON.stringify(p.characters)} 时长${p.secondsPerEp}秒 题材${p.genre}`
+      const user = scriptUser(p, outline)
       const text = await chatCompletion(llm, SCRIPT_SYSTEM, user)
       setProject((prev) => ({
         ...prev,
@@ -201,11 +201,7 @@ export function useProject() {
       const outline = p.outline.find((o) => o.episode === p.selectedEpisode)
       const script = p.scripts[p.selectedEpisode]
       if (!outline) throw new Error('请先生成大纲')
-      const user = `为第${p.selectedEpisode}集做分镜。画风${p.style} 时长${p.secondsPerEp}s
-大纲:${JSON.stringify(outline)}
-剧本:${script?.fullText || '(无)'}
-角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume, signatureProp: c.signatureProp, baseName: c.baseName })))}
-每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText；每镜单动作、2-10秒、台词≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀如「收银员：」）；优先单人镜头，对话用过肩/正反打/反应镜头，同框最多2人；overlayText 只放界面原文，不放约束或描述。`
+      const user = storyboardUser(p, outline, script?.fullText || '')
       const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user)
       const raw = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim()) as Shot[]
       const shots = normalizeLlmShots(raw, p.selectedEpisode, p.characters)

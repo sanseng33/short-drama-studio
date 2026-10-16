@@ -135,3 +135,10 @@
 生成侧：分镜 LLM 提示词强制单动作、2–10s、≤4.5 字/秒、单说话人「名字：」前缀、独立 `sfx` / `overlayText` / `voiceOnly` 字段、只写 UI 的间接线索；想法抽取必填 costume/signatureProp，并把外观明显不同的阶段拆成 `白朴（变帅前）` / `白朴（变帅后）`（同 `baseName`）。Shot 新增可选 `sfx` / `overlayText` / `voiceOnly`，分镜卡片可编辑；角色卡可填本名 baseName。模板分镜会从无台词镜头借整秒以满足台词语速。
 
 测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、内心画内保留、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分、durationSec 均为 0.5 倍数；约束/描述不进 overlay、引号 UI 保留、提示线索仅限 UI 段、系统角色台词仅 overlay、多人同框警告、龙套 speakerName；并从真实导出《每天变帅一点点》`scripts/fixtures/real-export-meitian.json` 重建项目回归：overlay 27 条、无约束文本）。生成侧提示词要求优先单人镜头（过肩/正反打代替双人同框，最多2人）、龙套写身份前缀。
+
+### 设定事实 / 家境 / 年龄 / 定妆图（v7）
+
+- 从想法一键生成会抽取 **settingFacts**（关键设定事实，项目设定页可逐行编辑）以及每个角色的 **age / background（家境·住处）**；它们以「设定事实，必须遵守，不得与之矛盾」硬约束注入大纲 / 剧本 / 分镜提示词。想法项目（`source: 'idea'`）不再把「都市逆袭」之类题材标签与「压抑-开挂-打脸」套路塞进提示词。
+- 剧本每场标注「地点 · 时间」，分镜每镜带 `timeOfDay`，不默认夜戏；导出时剧情时间（如「早上七点」）与提示词夜景冲突会给 `time_conflict` 警告。
+- 角色卡新增 **定妆图 refImage**（文件名/前缀，如 `bai_pu_plain`）与 **锁定外观**：设置了 refImage 或勾选锁定的角色，其视觉锁定/服装/道具在重新一键生成或应用题材预设时不会被覆盖。导出 `characters[].refImage`；`shots[].refImage` 只保留分镜自己的值，否则为 null（接收端按 characterIds 取角色定妆图）。
+- 导出：间接 UI 线索「蓝光映在角色脸上，神情专注」只出现在有 overlayText、画面内有人物、且为屏幕/系统时刻的段落，已有的旧线索会被剥离；`白朴（变帅前）（小声）：` 这类变体名+情绪前缀正确解析；误放进 overlayText 的人物台词会移回 dialogue；角色定位里仅提到「系统」的主角不再被当作系统角色。

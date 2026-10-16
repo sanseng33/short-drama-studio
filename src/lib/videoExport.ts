@@ -35,6 +35,8 @@ export interface VideoPipelineShot {
   size: string
   emotion: string
   refImage: string | null
+  /** scene time of day (from storyboard), when known */
+  timeOfDay?: string
   /** present only when an original shot became several segments */
   segment?: { index: number; total: number; parentId: string }
 }
@@ -43,7 +45,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict'
   message: string
 }
 
@@ -64,6 +66,9 @@ export interface VideoPipelineExport {
     visualLock: string
     costume: string
     signatureProp: string
+    /** 定妆图文件名/前缀 (receiver resolves shot refs via characterIds); null when unset */
+    refImage: string | null
+    age?: string
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]
@@ -196,7 +201,10 @@ function insertCue(text: string, cue: string): string {
   }
   const m = text.match(/^([\s\S]*?主体[：:][^。]*)(。)/)
   if (m) return `${m[1]}，${cue}${m[2]}${text.slice(m[0].length)}`
-  return `${cue}，${text}`
+  // after the first subject sentence (never as a stock opener)
+  const k = text.search(/[；;。]/)
+  if (k > 0) return `${text.slice(0, k)}，${cue}${text.slice(k)}`
+  return `${text}${text ? '，' : ''}${cue}`
 }
 function tidy(p: string): string {
   return p.replace(/\u0000/g, '').replace(/[，、]{2,}/g, '，').replace(/，。/g, '。').replace(/：，/g, '：').replace(/^[，\s]+/, '').trim()
@@ -226,19 +234,29 @@ export interface DialogueLine {
   text: string
 }
 /** Split dialogue into lines and parse `名字：` / `名字（情绪）：` / `名字(OS)：` prefixes. */
-export function parseDialogue(dialogue: string): DialogueLine[] {
+export function parseDialogue(dialogue: string, chars: Character[] = []): DialogueLine[] {
   if (isNoDialogue(dialogue)) return []
-  const PREFIX = '[^\\s：:（()）「」“”，。！？!?、]{1,12}(?:\\s*[（(][^）)]{0,12}[）)])?\\s*[：:]'
+  const PREFIX = '[^\\s：:（()）「」“”，。！？!?、]{1,12}(?:\\s*[（(][^）)]{0,12}[）)]){0,2}\\s*[：:]'
   const broken = dialogue.replace(new RegExp(`([」”。！？!?…~])\\s*(?=${PREFIX})`, 'g'), '$1\n')
   const lines: DialogueLine[] = []
   for (const raw of broken.split(/\n+/)) {
     const l = raw.trim()
     if (!l || isNoDialogue(l)) continue
-    const m = l.match(/^([^\s：:（()）「」“”，。！？!?、]{1,12})\s*(?:[（(]([^）)]{0,12})[）)])?\s*[：:]\s*([\s\S]*)$/)
+    const m = l.match(/^([^\s：:（()）「」“”，。！？!?、]{1,12})\s*(?:[（(]([^）)]{0,12})[）)])?\s*(?:[（(]([^）)]{0,12})[）)])?\s*[：:]\s*([\s\S]*)$/)
     const unq = (s: string) => s.trim().replace(/^[「“"]([\s\S]*)[」”"]$/, '$1').trim()
     if (m) {
-      const text = unq(m[3])
-      if (!isNoDialogue(text)) lines.push({ name: m[1], tag: m[2]?.trim() || null, text })
+      const text = unq(m[4])
+      let name = m[1]
+      const p1 = m[2]?.trim() || ''
+      const p2 = m[3]?.trim() || ''
+      let tag: string | null = p1 || null
+      // variant names contain parentheses: 白朴（变帅前）（小声）→ name 白朴（变帅前）, tag 小声
+      const variant = p1 && chars.find((c) => c.name.replace(/\(/g, '（').replace(/\)/g, '）') === `${name}（${p1}）`)
+      if (variant) {
+        name = variant.name
+        tag = p2 || null
+      } else if (p2) tag = VOICE_TAG.test(p2) && !VOICE_TAG.test(p1) ? p2 : p1
+      if (!isNoDialogue(text)) lines.push({ name, tag, text })
     } else lines.push({ name: null, tag: null, text: unq(l) })
   }
   return lines
@@ -293,7 +311,14 @@ export function splitDialogueChunks(text: string, maxSec: number): string[] {
 /** System character: name/role/tags mention 系统 or tag system. Their lines are overlay-only. */
 export function isSystemCharacter(c: Character | undefined): boolean {
   if (!c) return false
-  return /系统/.test(c.name) || /系统/.test(c.baseName || '') || /系统/.test(c.role || '') || (c.tags || []).some((t) => /^(system|系统)$/i.test(t))
+  if ((c.tags || []).includes('protagonist')) return false
+  // role must *be* the system (系统化身 / 系统界面 …), not merely mention it (主角·系统生效后的样子)
+  return (
+    /系统/.test(c.name) ||
+    /系统/.test(c.baseName || '') ||
+    /(^|[·・/\s])系统($|化身|本体|精灵|界面|声音|意识|[·・/\s])/.test(c.role || '') ||
+    (c.tags || []).some((t) => /^(system|系统)$/i.test(t))
+  )
 }
 
 function displayName(c: Character): string {
@@ -427,16 +452,26 @@ function buildShotSegs(
     const m = x.match(/^([^：:]{1,12})\s*[：:]\s*([\s\S]+)$/)
     return m && (SYSTEM.test(m[1]) || sysNames.includes(m[1])) ? m[2].trim().replace(/^[「“"]([\s\S]*)[」”"]$/, '$1') : x
   }
-  const overlay: string[] = filterOverlay((s.overlayText || []).map((x) => stripSys(x.trim())))
+  // overlay entries that are really a human character's line (「白朴（变帅后）（轻声）：……行。」) → dialogue
+  const movedLines: string[] = []
+  const overlayIn: string[] = []
+  for (const raw of s.overlayText || []) {
+    const x = stripSys(raw.trim())
+    const pl = x === raw.trim() ? parseDialogue(x, chars) : []
+    const sid = pl.length === 1 && pl[0].name ? resolveSpeaker(pl[0].name, pl[0].tag, chars, onscreen0, current) : undefined
+    if (sid && !isSystemCharacter(chars.find((c) => c.id === sid))) movedLines.push(x)
+    else overlayIn.push(x)
+  }
+  const overlay: string[] = filterOverlay(overlayIn)
   for (const o of [...extractOverlay(cleanField(s.visual)), ...extractOverlay(s.seedancePrompt || '')]) if (!overlay.includes(o)) overlay.push(o)
   const shotSfx = uniq([...(s.sfx || []).map((x) => x.trim()).filter(Boolean), ...actionX.sfx])
 
   // dialogue → groups of consecutive lines with the same speaker
   type Group = { speaker: string | null; offName: string | null; narration: boolean; voice: boolean; inner: boolean; lines: string[]; sfx: string[] }
   const groups: Group[] = []
-  const dx = extractSfx((s.dialogue || '').replace(/\r/g, ''))
+  const dx = extractSfx([isNoDialogue(s.dialogue) ? '' : s.dialogue || '', ...movedLines].filter(Boolean).join('\n').replace(/\r/g, ''))
   const dsfx = dx.sfx
-  for (const line of parseDialogue(dx.text)) {
+  for (const line of parseDialogue(dx.text, chars)) {
     const lx = extractSfx(line.text)
     dsfx.push(...lx.sfx)
     if (!lx.text) continue
@@ -518,8 +553,20 @@ function buildShotSegs(
   return segs
 }
 
+/** Remove any stock indirect cue already present (LLMs copy it from examples). */
+export function stripCue(p: string): string {
+  return (p || '')
+    .replace(/[，,；;]?\s*蓝光映在(?:角色|他|她)?脸上[，,]\s*神情专注\s*([，,；;。]?)/g, (_m, sep) => sep || '')
+    .replace(/^[，,；;\s]+/, '')
+}
+/** Prompt / visual mentions a screen, phone, panel or its light (constraint clauses ignored). */
+const UI_CONTEXT = /(系统|屏幕|手机|面板|转盘|蓝光|幽蓝|全息|弹窗|界面|消息|通知|短信|余额|光幕|提示|电脑|平板|腕表|手表)/
+export function hasUiContext(...texts: string[]): boolean {
+  return texts.some((t) => (t || '').split(/[，。；;\n]/).some((c) => !isConstraintText(c) && UI_CONTEXT.test(c)))
+}
+
 function partPrompt(base: string, origAction: string, sg: Seg, changedTime: boolean): string {
-  let p = extractSfx(base).text
+  let p = stripCue(extractSfx(base).text)
   if (sg.actionSplit) {
     if (origAction && p.includes(origAction)) p = p.split(origAction).join(sg.action)
     else if (/动作[：:][^。]*。/.test(p)) p = p.replace(/动作[：:][^。]*。/, `动作：${sg.action}（单主动作）。`)
@@ -527,9 +574,16 @@ function partPrompt(base: string, origAction: string, sg: Seg, changedTime: bool
   }
   if (changedTime) p = p.replace(/时间轴[：:][^。]*。/g, '')
   const { text, removed } = stripUiFromPrompt(p)
-  // cue only for segments that really carry UI (overlay text) or had a UI description removed
-  return tidy(removed || sg.overlay.length ? insertCue(text, INDIRECT_UI_CUE) : text)
+  // cue only when the segment carries overlay text, has a character on screen to light, and is a UI moment
+  const cue = sg.overlay.length > 0 && sg.onscreen.length > 0 && (removed || hasUiContext(text, cleanField(sg.shot.visual)))
+  // prompt already has its own screen-light cue → don't stack the stock one
+  const own = /(蓝光|幽蓝|屏幕光|冷光|荧光)[^，。；;]{0,8}映/.test(text)
+  return tidy(cue && !own ? insertCue(text, INDIRECT_UI_CUE) : text)
 }
+
+const DAY_MARK = /(清晨|早上|早晨|上午|中午|白天|日间|[六七八九]点|[6-9]点|[6-9]:\d\d)/
+const NIGHT_MARK = /(晚上|深夜|夜里|半夜|今晚|夜晚|夜$|^夜)/
+const NIGHT_PROMPT = /(夜戏|夜景|深夜|夜色|夜空)/
 
 export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOptions = {}): VideoPipelineExport {
   const maxSec = Math.max(MIN_SEG_SEC, opts.maxShotSec ?? 10)
@@ -607,6 +661,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         message: `本集总时长 ${rawTotal}s 不是 ${DURATION_STEP}s 的倍数，余数 ${remainderSec}s 加在最后一段`,
       })
     }
+    let dayState: string | null = null
     const byParent = new Map<string, Seg[]>()
     for (const sg of segs) byParent.set(sg.parentId, [...(byParent.get(sg.parentId) || []), sg])
     for (let si = 0; si < segs.length; si++) {
@@ -640,6 +695,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         size: s.size,
         emotion: s.emotion || '',
         refImage: s.refImage || null,
+        ...(s.timeOfDay ? { timeOfDay: s.timeOfDay } : {}),
         ...(multi ? { segment: { index: idx, total: group.length, parentId: s.id } } : {}),
       })
       if (sg.dialogue && sg.need > sg.u)
@@ -649,6 +705,13 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
           code: 'dialogue_too_long',
           message: `台词需 ${toSec(sg.need).toFixed(1)}s（${pacedChars(sg.dialogue)}字 @${CHARS_PER_SEC}字/秒），仅分配到 ${durationSec}s，无法在本集内借到时长`,
         })
+      // time-of-day consistency: day markers carry forward until a night marker
+      const tx = [s.timeOfDay || '', sg.dialogue, ...sg.overlay].join(' ')
+      if (NIGHT_MARK.test(tx)) dayState = null
+      else if (DAY_MARK.test(tx)) dayState = DAY_MARK.exec(tx)![0]
+      const ptxt = shots[shots.length - 1].prompt
+      if (dayState && NIGHT_PROMPT.test(ptxt))
+        warnings.push({ episode: ep, shotId: id, code: 'time_conflict', message: `剧情时间为「${dayState}」，提示词却写了夜景/夜戏` })
       if (sg.u < MIN_UNITS || sg.u > max)
         warnings.push({ episode: ep, shotId: id, code: 'segment_duration', message: `段时长 ${durationSec}s 超出 ${MIN_SEG_SEC}–${maxSec}s` })
       if (sg.onscreen.length >= 2)
@@ -683,6 +746,8 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       visualLock: cleanField(c.visualLock),
       costume: cleanField(c.costume),
       signatureProp: cleanField(c.signatureProp),
+      refImage: c.refImage?.trim() || null,
+      ...(c.age?.trim() ? { age: c.age.trim() } : {}),
     })),
     shots,
     warnings,

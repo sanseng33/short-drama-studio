@@ -3,6 +3,12 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, extractOverlay } from '../src/lib/videoExport'
 import type { Character, Project, Shot } from '../src/types'
+import { writeFileSync } from 'node:fs'
+import { parseDialogue } from '../src/lib/videoExport'
+import { FACTS_HEADER, outlineUser, scriptUser, storyboardUser } from '../src/lib/prompts'
+import { OUTLINE_SYSTEM, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../src/lib/llm'
+import { IDEA_SYSTEM, mergeLockedCharacters, parseIdeaJson, toCharacters } from '../src/lib/idea'
+import { generateScript, generateStoryboard } from '../src/lib/templates'
 
 const C = (id: string, name: string, extra: Partial<Character> = {}): Character => ({
   id, name, role: '角色', visualLock: '短发', costume: '黑夹克', signatureProp: '芯片', ...extra,
@@ -211,6 +217,82 @@ t('real export: totals + 2–10s + 0.5 steps', () => {
   }
   ro.shots.forEach((s) => assert.ok(s.durationSec >= 2 && s.durationSec <= 10 && Math.abs(s.durationSec % 0.5) < 1e-9, `${s.id} ${s.durationSec}`))
 })
+// ---------- real export #2 《每天只能变帅一次》 (从想法一键生成 + DeepSeek) ----------
+const real2 = JSON.parse(readFileSync('scripts/fixtures/real-export-meitian2.json', 'utf8')) as { project: Project; characters: Character[]; shots: XS[] }
+const r2sb: Project['storyboards'] = {}
+for (const x of real2.shots) {
+  const hasPrefix = /^[^：:「」\n]{1,20}[：:]/.test(x.dialogue)
+  ;(r2sb[x.episode] ||= []).push({
+    id: x.id, shotNo: x.shotNo, size: x.size, camera: x.camera, emotion: x.emotion, visual: x.visual, action: x.action,
+    dialogue: x.dialogue && !hasPrefix && x.speakerName ? `${x.speakerName}：「${x.dialogue}」` : x.dialogue,
+    seedancePrompt: x.prompt, durationSec: x.durationSec, characterIds: x.characterIds, voiceOnly: x.voiceOnly, sfx: x.sfx, overlayText: x.overlayText,
+  } as Shot)
+}
+const r2chars: Character[] = real2.characters.map((c) => (c.id === 'c1' ? { ...c, refImage: 'bai_pu_plain' } : c))
+const r2p: Project = { ...(project as Project), ...real2.project, characters: r2chars, storyboards: r2sb } as Project
+const r2 = buildVideoPipelineExport(r2p)
+const r2s = (id: string) => r2.shots.find((s) => s.id === id)!
+const cueIds = r2.shots.filter((s) => s.prompt.includes(INDIRECT_UI_CUE)).map((s) => s.id)
+t('real2 B: cue only with overlay + onscreen character', () => r2.shots.forEach((s) => {
+  if (s.prompt.includes(INDIRECT_UI_CUE)) { assert.ok(s.overlayText.length, `${s.id} no overlay`); assert.ok(s.characterIds.length, `${s.id} no chars`) }
+}))
+t('real2 B: empty-scene shots s1-5/6/34 stripped', () => ['s1-5', 's1-6', 's1-34'].forEach((id) => assert.ok(!r2s(id).prompt.includes('蓝光映在'), r2s(id).prompt)))
+t('real2 B: daytime mirror s1-24 no cue, cue never as opener', () => {
+  assert.ok(!r2s('s1-24').prompt.includes(INDIRECT_UI_CUE), r2s('s1-24').prompt)
+  r2.shots.forEach((s) => assert.ok(!s.prompt.startsWith('蓝光'), s.id))
+})
+t('real2 D: s1-12 variant name + emotion prefix stripped', () => {
+  const s = r2s('s1-12'); assert.equal(s.dialogue, '让我变帅一点吧……'); assert.equal(s.speaker, 'c1'); assert.equal(s.speakerName, '白朴')
+})
+t('real2 D: s1-33 human line moved overlay → dialogue', () => {
+  const s = r2s('s1-33'); assert.deepEqual(s.overlayText, []); assert.equal(s.dialogue, '……行。'); assert.equal(s.speaker, 'c2')
+})
+t('parseDialogue: variant + extra paren', () => {
+  assert.deepEqual(parseDialogue('白朴（变帅前）（小声）：让我变帅', chars), [{ name: '白朴（变帅前）', tag: '小声', text: '让我变帅' }])
+  assert.deepEqual(parseDialogue('白朴（变帅后）(OS)：嗯', chars)[0].tag, 'OS')
+})
+t('real2 C: 早上七点 then 夜戏 → time_conflict', () => assert.ok(r2.warnings.some((w) => w.code === 'time_conflict' && w.shotId === 's1-14')))
+t('characters[].refImage exported; shot refImage own value or null', () => {
+  assert.equal(r2.characters.find((c) => c.id === 'c1')!.refImage, 'bai_pu_plain'); assert.equal(r2.characters.find((c) => c.id === 'c3')!.refImage, null)
+  r2.shots.forEach((s) => assert.equal(s.refImage, null))
+})
+// ---------- prompt builders (A / C / E) ----------
+const fp: Project = {
+  ...project, source: 'idea', genre: '都市逆袭', settingFacts: ['白朴是富三代，家住高档小区', '吴耐家境贫寒，住老楼', '系统每天早上7点出现'],
+  characters: [C('c1', '白朴（变帅前）', { baseName: '白朴', tags: ['protagonist'], role: '主角·富三代', age: '17', background: '富三代，住高档小区' }), C('c2', '吴耐', { age: '17', background: '家境贫寒' })],
+  outline: [{ episode: 1, title: '小黄鸭', hook: '早上7点', summary: '系统出现', cliffhanger: '' }],
+}
+t('prompts include settingFacts + age/background as hard constraints', () => {
+  for (const u of [outlineUser(fp), scriptUser(fp, fp.outline[0]), storyboardUser(fp, fp.outline[0], '场1 白朴卧室 · 早上')]) {
+    assert.ok(u.includes(FACTS_HEADER)); assert.ok(u.includes('白朴是富三代，家住高档小区')); assert.ok(u.includes('17岁')); assert.ok(!/逆袭/.test(u), u)
+  }
+  assert.ok(storyboardUser(fp, fp.outline[0], '').includes('timeOfDay'))
+})
+t('system prompts: no stock cue example, no 夜戏 default, facts rule', () => {
+  assert.ok(!STORYBOARD_SYSTEM.includes(INDIRECT_UI_CUE)); assert.ok(STORYBOARD_SYSTEM.includes('timeOfDay'))
+  assert.ok(SCRIPT_SYSTEM.includes('不得与之矛盾')); assert.ok(!/压抑-开挂-打脸/.test(OUTLINE_SYSTEM)); assert.ok(!/旧手机|外卖箱/.test(IDEA_SYSTEM))
+})
+t('templates: 富三代 protagonist gets no 老旧居民楼 / 夜戏 defaults', () => {
+  const sc = generateScript(fp.genre, 1, fp.outline[0], fp.characters, 60)
+  const sb = generateStoryboard(fp.genre, 1, fp.outline[0], sc, fp.characters, '真人都市', 60)
+  const all = sb.map((x) => `${x.visual}${x.seedancePrompt}`).join('\n') + sc.fullText
+  assert.ok(!/老旧|居民楼|出租屋|旧窗|旧书桌|夜戏|夜景/.test(all), all.match(/.{0,20}(老旧|居民楼|出租屋|夜戏|夜景).{0,20}/)?.[0])
+})
+t('idea normalize: settingFacts / age / background', () => {
+  const r = parseIdeaJson(JSON.stringify({ title: 'x', settingFacts: ['白朴是富三代'], characters: [{ name: '白朴', age: 17, background: '富三代' }], episodes: [{ title: 'a' }] }))
+  assert.deepEqual(r.settingFacts, ['白朴是富三代']); assert.equal(r.characters[0].age, '17')
+  assert.equal(toCharacters(r.characters)[0].background, '富三代')
+})
+t('locked / refImage characters survive regeneration', () => {
+  const prev = [C('c1', '白朴（变帅前）', { refImage: 'bai_pu_plain', visualLock: 'LOCK', costume: 'COS' }), C('c2', '吴耐', { visualLock: 'old' })]
+  const next = [C('c1', '白朴（变帅前）', { visualLock: 'new', costume: 'new' }), C('c2', '吴耐', { visualLock: 'new2' })]
+  const m = mergeLockedCharacters(prev, next)
+  assert.equal(m[0].visualLock, 'LOCK'); assert.equal(m[0].costume, 'COS'); assert.equal(m[0].refImage, 'bai_pu_plain'); assert.equal(m[1].visualLock, 'new2')
+})
+console.log('real2 stats', JSON.stringify({ segments: r2.shots.length, cueCount: cueIds.length, cueIds, overlayCount: r2.shots.flatMap((s) => s.overlayText).length,
+  s1_12: { dialogue: r2s('s1-12').dialogue, speaker: r2s('s1-12').speaker }, s1_33: { dialogue: r2s('s1-33').dialogue, speaker: r2s('s1-33').speaker, overlay: r2s('s1-33').overlayText },
+  timeConflicts: r2.warnings.filter((w) => w.code === 'time_conflict').map((w) => w.shotId) }))
+if (process.env.REEXPORT) writeFileSync(process.env.REEXPORT, JSON.stringify(r2, null, 2))
 console.log('real-export stats', JSON.stringify(stats))
 console.log('real overlay:', JSON.stringify(allOv))
 console.log(`\n${pass} tests passed; ${out.shots.length} segments from ${ep1.length} shots; warnings: ${out.warnings.length}`)

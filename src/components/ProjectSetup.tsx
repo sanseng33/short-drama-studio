@@ -120,6 +120,15 @@ export function ProjectSetup({ api }: { api: ProjectApi }) {
             onChange={(e) => update({ worldSetting: e.target.value })}
           />
         </div>
+        <div className="sm:col-span-2">
+          <label className="label">设定事实（每行一条；作为硬约束注入大纲/剧本/分镜提示词）</label>
+          <textarea
+            className="field min-h-[72px]"
+            value={(project.settingFacts || []).join('\n')}
+            onChange={(e) => update({ settingFacts: e.target.value.split('\n') })}
+            placeholder={'如：主角是富三代，家住高档小区\n系统每天早上7点出现'}
+          />
+        </div>
       </div>
 
       <button type="button" className="btn-primary" onClick={applyGenreDefaults}>

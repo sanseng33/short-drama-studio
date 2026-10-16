@@ -33,6 +33,14 @@ export interface Character {
   baseName?: string
   personality?: string
   arc?: string
+  /** Wealth / class / home background stated in the idea, e.g. 富三代，住高档小区独栋 */
+  background?: string
+  /** Age (number or text like 17) — injected into prompts; never invent conflicting ages */
+  age?: string
+  /** 定妆图文件名/前缀, e.g. bai_pu_plain — exported as characters[].refImage */
+  refImage?: string
+  /** visualLock/costume are authoritative (also implied by refImage): regeneration must not overwrite */
+  locked?: boolean
 }
 
 export interface EpisodeOutline {
@@ -97,6 +105,8 @@ export interface Shot {
   overlayText?: string[]
   /** Offscreen voices (names or ids): OS / 画外音 / 电话里 */
   voiceOnly?: string[]
+  /** Scene time of day carried from script, e.g. 清晨 / 白天 / 黄昏 / 夜 */
+  timeOfDay?: string
 }
 
 export interface Project {
@@ -112,6 +122,10 @@ export interface Project {
   customGenre?: string
   /** World / setting text from idea pipeline */
   worldSetting?: string
+  /** Key setting facts (hard constraints for LLM prompts), e.g. 白朴是富三代，住高档小区 */
+  settingFacts?: string[]
+  /** 'idea' when created by 从想法一键生成 — genre template tropes are not injected */
+  source?: 'idea'
   characters: Character[]
   outline: EpisodeOutline[]
   scripts: Record<number, EpisodeScript>

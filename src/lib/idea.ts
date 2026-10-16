@@ -24,6 +24,9 @@ export interface IdeaCharacter {
   signatureProp: string
   /** shared real name when this entry is a look variant */
   baseName?: string
+  /** wealth / class / home stated or implied in the idea */
+  background: string
+  age: string
 }
 
 export interface IdeaEpisode {
@@ -38,6 +41,8 @@ export interface IdeaResult {
   artStyle: string
   logline: string
   world: string
+  /** key facts from the idea that all later steps must obey */
+  settingFacts: string[]
   characters: IdeaCharacter[]
   episodes: IdeaEpisode[]
 }
@@ -49,10 +54,11 @@ export const IDEA_SYSTEM = `你是资深AI短剧/漫剧策划。用户会给出�
  "artStyle": "必须是 ${KNOWN_STYLES.join(' / ')} 之一",
  "logline": "一句话故事",
  "world": "世界观/背景设定，2-4句",
- "characters": [{"name":"","role":"自由定位，如主角/对手/导师","tags":["protagonist|antagonist|support|mentor|romantic|deuteragonist 中选"],"baseName":"本名（仅造型变体需要，如 白朴）","appearance":"外貌视觉锁定（脸型/发型/体型/年龄），适合AI绘图","costume":"服装（必填，具体到颜色款式）","signatureProp":"标志道具（必填，如 旧手机/玉佩/外卖箱）","personality":"性格","arc":"人物弧光"}],
+ "settingFacts": ["想法中明确给出的关键设定事实，每条一句，如「主角是富二代，家住江景别墅」「对手家境贫寒，住城中村」「系统每天早上7点出现」「全剧只有两个主要角色」；3-10条"],
+ "characters": [{"name":"","role":"自由定位，如主角/对手/导师","tags":["protagonist|antagonist|support|mentor|romantic|deuteragonist 中选"],"baseName":"本名（仅造型变体需要，如 白朴）","age":"年龄（想法给出就照抄，未给出按身份合理推断，同一人各变体一致）","background":"家境/阶层/住处（严格按想法，如 富三代·住高档小区；家境贫寒·住老楼）","appearance":"外貌视觉锁定（脸型/发型/体型/年龄），适合AI绘图","costume":"服装（必填，具体到颜色款式，必须与 background 一致：富裕角色不写旧/破/洗得发白，贫寒角色不写名牌）","signatureProp":"标志道具（必填，与身份家境一致）","personality":"性格","arc":"人物弧光"}],
  "episodes": [{"title":"","summary":"本集剧情2-3句","hook":"开场3秒钩子或结尾悬念"}]
 }
-规则：角色 1-8 个（变体单独计数），每个角色必须填写 costume 与 signatureProp，不能留空。若某角色在故事中有明显不同的外观（如变帅前/变帅后、伪装、变身、易容、长大），拆成多个角色条目，name 写成「白朴（变帅前）」「白朴（变帅后）」，baseName 都写「白朴」，各自 appearance/costume 明显不同。只写想法中明确出现或强烈暗示的角色，不要强行补齐男主/女主/反派。集数按想法体量合理决定（通常 3-12 集，想法很短时 3-5 集）。全部中文。`
+规则：角色 1-8 个（变体单独计数），每个角色必须填写 costume 与 signatureProp，不能留空。若某角色在故事中有明显不同的外观（如变帅前/变帅后、伪装、变身、易容、长大），拆成多个角色条目，name 写成「白朴（变帅前）」「白朴（变帅后）」，baseName 都写「白朴」，各自 appearance/costume 明显不同。只写想法中明确出现或强烈暗示的角色，不要强行补齐男主/女主/反派。想法中写明的身份、家境、住处、时间点、年龄必须原样保留，不得套用题材套路（如「逆袭/底层/落魄」）改写。集数按想法体量合理决定（通常 3-12 集，想法很短时 3-5 集）。全部中文。`
 
 /** Strip code fences / leading prose and parse the first JSON object. */
 export function parseIdeaJson(text: string): IdeaResult {
@@ -80,6 +86,8 @@ export function normalizeIdea(raw: Partial<IdeaResult>): IdeaResult {
       arc: str(c?.arc),
       costume: str(c?.costume),
       signatureProp: str(c?.signatureProp),
+      background: str(c?.background),
+      age: str((c as { age?: unknown })?.age),
       baseName: str(c?.baseName) || str(c?.name).match(/^(.+?)[（(][^）)]+[）)]$/)?.[1] || undefined,
     }))
     .filter((c) => c.name)
@@ -92,13 +100,15 @@ export function normalizeIdea(raw: Partial<IdeaResult>): IdeaResult {
     }))
     .slice(0, 30)
   if (!eps.length) throw new Error('JSON 中缺少 episodes')
-  if (!chars.length) chars.push({ name: '主角', role: '主角', tags: ['protagonist'], appearance: '', personality: '', arc: '', costume: '', signatureProp: '' })
+  if (!chars.length) chars.push({ name: '主角', role: '主角', tags: ['protagonist'], appearance: '', personality: '', arc: '', costume: '', signatureProp: '', background: '', age: '' })
   return {
     title: str(raw.title, '未命名短剧') || '未命名短剧',
     genre: str(raw.genre),
     artStyle: str(raw.artStyle),
     logline: str(raw.logline),
     world: str(raw.world),
+    settingFacts: (Array.isArray(raw.settingFacts) ? raw.settingFacts : typeof raw.settingFacts === 'string' ? String(raw.settingFacts).split(/[\n；;]/) : [])
+      .map((x) => str(x)).filter(Boolean).slice(0, 20),
     characters: chars,
     episodes: eps,
   }
@@ -164,6 +174,8 @@ export function toCharacters(list: IdeaCharacter[]): Character[] {
       ...(c.baseName ? { baseName: c.baseName } : {}),
       personality: c.personality,
       arc: c.arc,
+      ...(c.background ? { background: c.background } : {}),
+      ...(c.age ? { age: c.age } : {}),
     }
   })
 }
@@ -240,7 +252,9 @@ export function heuristicIdea(idea: string): IdeaResult {
       role = '导师'
       tags = ['mentor']
     }
-    return { name: n, role, tags, appearance: '', personality: '', arc: '', costume: '', signatureProp: '' }
+    const age = ctx.match(/(\d{1,2})\s*岁/)?.[1] || ''
+    const background = /(富[一二三四]代|豪门|有钱|首富|千金|少爷)/.test(ctx) ? ctx.match(/[^，。]*(富[一二三四]代|豪门|有钱|首富|千金|少爷)[^，。]*/)?.[0] || '' : /(穷|贫|拮据|没钱)/.test(ctx) ? ctx.match(/[^，。]*(穷|贫|拮据|没钱)[^，。]*/)?.[0] || '' : ''
+    return { name: n, role, tags, appearance: '', personality: '', arc: '', costume: '', signatureProp: '', background, age }
   })
 
   const sentences = text.split(/(?<=[。！？!?\n])/).map((s) => s.trim()).filter(Boolean)
@@ -262,7 +276,35 @@ export function heuristicIdea(idea: string): IdeaResult {
     artStyle: '',
     logline: firstSentence.slice(0, 60),
     world: '',
+    settingFacts: heuristicFacts(text),
     characters,
     episodes,
   }
+}
+
+/** Heuristic key facts: sentences/clauses stating identity, wealth, home, time, cast limits. */
+export function heuristicFacts(text: string): string[] {
+  const out: string[] = []
+  for (const c of text.split(/[。！？!?\n；;…]+/).map((x) => x.trim()).filter(Boolean)) {
+    if (/(富[一二三四]代|豪门|有钱|穷|贫|住|家里|别墅|小区|老楼|\d+\s*点|早上|晚上|每天|只有|岁|全剧|外貌)/.test(c) && c.length <= 80) out.push(c)
+    if (out.length >= 10) break
+  }
+  return out
+}
+
+/** Character is locked when flagged or when a 定妆图 refImage is set — visualLock/costume are authoritative. */
+export function isLockedCharacter(c: { locked?: boolean; refImage?: string }): boolean {
+  return Boolean(c.locked || c.refImage?.trim())
+}
+
+/** Re-generation merge: keep visualLock/costume/signatureProp/refImage of locked characters (matched by name). */
+export function mergeLockedCharacters(prev: Character[], next: Character[]): Character[] {
+  const locked = prev.filter(isLockedCharacter)
+  const out = next.map((n) => {
+    const p = locked.find((x) => x.name === n.name)
+    return p ? { ...n, visualLock: p.visualLock, costume: p.costume, signatureProp: p.signatureProp, refImage: p.refImage, locked: p.locked, ...(p.age ? { age: p.age } : {}) } : n
+  })
+  // locked characters dropped by the new extraction are kept (they carry a 定妆图)
+  for (const p of locked) if (!out.some((x) => x.name === p.name)) out.push({ ...p, id: `c${out.length + 1}` })
+  return out
 }

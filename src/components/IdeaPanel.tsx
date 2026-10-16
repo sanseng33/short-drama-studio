@@ -10,10 +10,12 @@ import {
   mapStyle,
   toCharacters,
   toOutline,
+  mergeLockedCharacters,
   type IdeaResult,
 } from '../lib/idea'
 import { normalizeLlmShots } from '../lib/shotCast'
 import { chatCompletion, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
+import { scriptUser, storyboardUser } from '../lib/prompts'
 import { generateScript, generateStoryboard } from '../lib/templates'
 
 type StepState = 'pending' | 'running' | 'done' | 'error' | 'skipped'
@@ -34,7 +36,7 @@ function stripFence(t: string): string {
 }
 
 export function IdeaPanel({ api }: { api: ProjectApi }) {
-  const { llm, setProject, setStep, flash } = api
+  const { llm, setProject, setStep, flash, project: prevProject } = api
   const [idea, setIdea] = useState(() => localStorage.getItem(IDEA_DRAFT_KEY) || '')
   const [scope, setScope] = useState<Scope>('all')
   const [steps, setSteps] = useState<PipeStep[]>([])
@@ -101,7 +103,8 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
       patchStep('fill', { state: 'running' })
       const { genre, custom } = mapGenre(result.genre, idea)
       const style = mapStyle(result.artStyle, genre)
-      const characters = toCharacters(result.characters)
+      // keep 定妆图 / locked looks from the current project (visualLock/costume authoritative)
+      const characters = mergeLockedCharacters(prevProject.characters, toCharacters(result.characters))
       const outline = toOutline(result.episodes)
       let proj: Project = {
         id: `p_${Date.now()}`,
@@ -114,6 +117,8 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
         style,
         logline: result.logline,
         worldSetting: result.world,
+        settingFacts: result.settingFacts,
+        source: 'idea',
         characters,
         outline,
         scripts: {},
@@ -139,7 +144,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
           let script: EpisodeScript | null = null
           if (useLlm) {
             try {
-              const user = `写第${o.episode}集剧本。大纲:${JSON.stringify(o)} 角色:${JSON.stringify(proj.characters)} 时长${proj.secondsPerEp}秒 题材${custom || genre} 世界观:${proj.worldSetting || ''}`
+              const user = scriptUser(proj, o)
               const text = await chatCompletion(llm, SCRIPT_SYSTEM, user, { signal: ac.signal })
               script = { episode: o.episode, title: o.title, beats: [{ label: '全文', content: text }], fullText: text }
             } catch (e) {
@@ -165,11 +170,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
           let shots: Shot[] | null = null
           if (useLlm) {
             try {
-              const user = `为第${o.episode}集做分镜。画风${style} 时长${proj.secondsPerEp}s
-大纲:${JSON.stringify(o)}
-剧本:${script?.fullText || '(无)'}
-角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(proj.characters.map((c) => ({ name: c.name, role: c.role, tags: c.tags || [], visualLock: c.visualLock, costume: c.costume, signatureProp: c.signatureProp, baseName: c.baseName })))}
-每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText；每镜单动作、2-10秒、台词≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀如「收银员：」）；优先单人镜头，对话用过肩/正反打/反应镜头，同框最多2人；overlayText 只放界面原文，不放约束或描述。`
+              const user = storyboardUser(proj, o, script?.fullText || '')
               const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user, { signal: ac.signal })
               const s = stripFence(text)
               const raw = JSON.parse(s.slice(s.indexOf('['), s.lastIndexOf(']') + 1)) as Shot[]

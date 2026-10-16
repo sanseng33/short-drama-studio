@@ -1,0 +1,872 @@
+{
+  "schema": "short-drama-studio/video-pipeline@1",
+  "project": {
+    "id": "p_1792129275994",
+    "title": "每天只能变帅一次",
+    "style": "真人都市",
+    "platform": "红果",
+    "secondsPerEp": 75
+  },
+  "characters": [
+    {
+      "id": "c1",
+      "name": "白朴（变帅前）",
+      "baseName": "白朴",
+      "role": "主角·富三代，被砸了十年的老实人",
+      "tags": [
+        "protagonist"
+      ],
+      "visualLock": "17岁少年，身高175cm，圆脸软下巴，塌鼻梁，单眼皮小眼睛，脸颊微肉，平头略炸毛，皮肤普通，标准路人脸",
+      "costume": "宽松的浅灰色连帽卫衣，外罩深蓝色校服外套，黑色束脚运动裤，踩塌后跟的白色旧球鞋",
+      "signatureProp": "屏幕右上角裂了一道的旧手机"
+    },
+    {
+      "id": "c2",
+      "name": "白朴（变帅后）",
+      "baseName": "白朴",
+      "role": "主角·系统生效后的样子",
+      "tags": [
+        "protagonist"
+      ],
+      "visualLock": "同一个人但脸型收窄，下颌线清晰，眼型拉长成微挑的双眼皮，鼻梁挺直，皮肤干净发亮，视觉身高拉长至180cm，黑色短碎发尾部微卷",
+      "costume": "干净挺括的白衬衫，外搭浅蓝色牛仔外套，黑色直筒长裤，同一双洗得发白的白色球鞋",
+      "signatureProp": "屏幕右上角裂了一道的旧手机（余额界面显示 0.01 元）"
+    },
+    {
+      "id": "c3",
+      "name": "吴耐",
+      "baseName": "吴耐",
+      "role": "对手，后转为死党；隔着窗户投掷的人",
+      "tags": [
+        "antagonist",
+        "support"
+      ],
+      "visualLock": "18岁少年，身高183cm，瘦高肩宽，剑眉星目，高鼻梁薄唇，黑色半长刘海遮住眉尾，手指关节有冻疮和洗衣粉浸泡的白痕",
+      "costume": "洗到发白但永远干净的蓝白校服，袖口起毛球，外披一件廉价黑色夹克，脚上是不合码的灰色帆布鞋",
+      "signatureProp": "一只被捏得有点变形的黄色橡皮小黄鸭"
+    },
+    {
+      "id": "c4",
+      "name": "系统",
+      "role": "每天七点的抽奖界面，只存在于白朴脑内",
+      "tags": [
+        "support"
+      ],
+      "visualLock": "无实体，半透明蓝色全息面板悬浮视野下缘，中央一枚发光转盘，边缘有像素噪点和流动光点，人脸不可见",
+      "costume": "无实体服装，界面由靛蓝色全息光构成，边框亮青色，命中区域闪暖黄色",
+      "signatureProp": "每日选择框与幸运大转盘（正向仅「变帅」，负向随机）"
+    }
+  ],
+  "shots": [
+    {
+      "episode": 1,
+      "shotNo": 1,
+      "id": "s1-1",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，深夜两栋老式居民楼之间的狭窄缝隙，画面近乎全黑，仅对面一扇旧窗透出昏黄灯光；17岁少年白朴圆脸软下巴、塌鼻梁、单眼皮小眼睛、平头略炸毛，穿浅灰色连帽卫衣仰躺在床上，一只黄色橡胶小黄鸭从画面上方斜飞而下砸中他额头弹开滚落枕边，他猛然睁眼；固定机位仰拍微下摇，撞击瞬间轻震，写实都市夜景，冷蓝黑调，轻微手持晃动；不出现文字、界面、水印，不出现第二个人物。",
+      "visual": "深夜，两栋老楼之间的窄缝几乎全黑，只有对面一扇旧窗漏出昏黄灯光。一只黄色小黄鸭拖着残影划破夜空，正中仰躺少年的额头，弹开，滚落在枕边。少年额头红了一块，猛地睁眼。",
+      "action": "小黄鸭划破夜空，砸中白朴的额头后弹开滚落。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "嗖",
+        "啪"
+      ],
+      "overlayText": [],
+      "camera": "固定机位仰拍，随鸭子下坠轻微下摇，撞击瞬间微震",
+      "size": "特写",
+      "emotion": "突兀的痛感",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 2,
+      "id": "s1-2",
+      "characterIds": [],
+      "prompt": "竖屏9:16，深夜老旧居民楼外立面，一扇窗“啪”地合拢，玻璃映着路灯的昏黄光斑，窗内瞬间陷入黑暗；固定机位远景，长焦压缩，写实都市夜景，冷灰蓝色调，轻微颗粒感；不出现文字、界面、人物。",
+      "visual": "对面那扇窗“啪”地合拢，玻璃映着路灯的黄光，窗内瞬间黑下去。",
+      "action": "对面的窗户被猛地合拢。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "窗框哐当合上"
+      ],
+      "overlayText": [],
+      "camera": "固定机位远景，长焦压缩出隔街对望的距离感",
+      "size": "中景",
+      "emotion": "习以为常的沉默",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 3,
+      "id": "s1-3",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，17岁少年白朴圆脸软下巴、塌鼻梁、单眼皮小眼睛、平头略炸毛，穿浅灰色连帽卫衣外罩深蓝校服外套，坐在床边把小黄鸭放到窗台上，与石子、干蛋壳、卷角杂志并排；中近景略俯，手部为焦点，写实都市夜戏，暖黄台灯与窗外冷光交界；不出现文字、界面。",
+      "visual": "白朴坐起身，把小黄鸭轻轻放到窗台上，摆进一排旧物里：石子、干掉的蛋壳、一本卷了角的写真杂志。",
+      "action": "白朴把小黄鸭放到窗台上，摆进那排旧物里。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "橡胶轻响"
+      ],
+      "overlayText": [],
+      "camera": "中近景略俯，手部动作为画面焦点",
+      "size": "中近景",
+      "emotion": "麻木的平静",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 4,
+      "id": "s1-4",
+      "characterIds": [],
+      "prompt": "竖屏9:16，老楼窗台上一排旧物特写——几颗石子、两片干蛋壳、一本卷角的写真杂志，最右边是一只黄色橡胶小黄鸭；夜风拂过，杂志纸页轻轻翻动；特写缓慢横移掠过这排旧物，写实电影质感，夜色冷蓝中带路灯暖黄；不出现文字、界面、人物。",
+      "visual": "窗台上一排旧物一字排开：几颗石子、两片干蛋壳、一本卷角杂志，最右边是新放的小黄鸭。夜风把杂志纸页吹得轻轻翻动。",
+      "action": "夜风拂过，卷角杂志的纸页轻轻翻动。",
+      "durationSec": 2.5,
+      "dialogue": "第十年。",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [
+        "c1"
+      ],
+      "sfx": [
+        "夜风"
+      ],
+      "overlayText": [],
+      "camera": "特写缓慢横移，掠过那排旧物",
+      "size": "特写",
+      "emotion": "十年的钝痛",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 5,
+      "id": "s1-5",
+      "characterIds": [],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，老旧居民楼窗玻璃特写，一颗石子砸上去炸出一道白色裂纹，石子滚落窗台；正面固定特写，撞击瞬间轻微震动，写实都市夜戏，冷灰蓝调，明显颗粒感；不出现文字、界面、人物。",
+      "visual": "一颗石子砸在窗玻璃上，玻璃炸出一道白色裂纹，石子滚落窗台。",
+      "action": "石子砸在窗玻璃上炸出裂纹。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "石子击中玻璃"
+      ],
+      "overlayText": [
+        "第一年"
+      ],
+      "camera": "正面固定特写，撞击瞬间轻微震动",
+      "size": "特写",
+      "emotion": "刺耳的日常",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 6,
+      "id": "s1-6",
+      "characterIds": [],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，老旧居民楼窗玻璃特写，一枚鸡蛋在玻璃上炸开，蛋液糊成一片黄，顺着玻璃慢慢往下淌；固定特写，纵向构图，写实都市夜戏，冷调中一抹刺眼暖黄；不出现文字、界面、人物。",
+      "visual": "一枚鸡蛋在窗玻璃上炸开，蛋液糊成一片黄，顺着玻璃慢慢往下淌。",
+      "action": "蛋液顺着玻璃慢慢往下淌。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "啪叽"
+      ],
+      "overlayText": [
+        "第三年"
+      ],
+      "camera": "固定特写，纵向构图跟随蛋液下滑",
+      "size": "特写",
+      "emotion": "被羞辱的沉默",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 7,
+      "id": "s1-7",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，17岁少年白朴圆脸软下巴、塌鼻梁、单眼皮小眼睛、平头略炸毛，穿浅灰色连帽卫衣，蹲在旧书桌前把一本卷了角的杂志塞进抽屉最底层并合上抽屉；中近景略俯，抽屉为焦点，写实都市室内夜景，昏黄台灯；不出现文字、界面。",
+      "visual": "白朴蹲在旧书桌前，把一本卷了角的写真杂志塞进抽屉最底层，合上抽屉。",
+      "action": "白朴把杂志塞进抽屉最底层。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "抽屉合上"
+      ],
+      "overlayText": [
+        "第七年"
+      ],
+      "camera": "中近景略俯，抽屉为画面焦点",
+      "size": "中近景",
+      "emotion": "隐忍",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 8,
+      "id": "s1-8",
+      "characterIds": [],
+      "prompt": "竖屏9:16，老楼窗台上一排旧物——石子、干蛋壳、卷角杂志、黄色橡胶小黄鸭，浸在夜色与对面路灯的黄光里；0-2.5秒：旧物静置，光影不动；2.5-5秒：夜风拂过，卷角杂志的纸页轻轻翻动，小黄鸭轻晃；特写缓慢推近，最后停在小黄鸭上，写实电影质感，冷蓝夜色；不出现文字、界面、人物。",
+      "visual": "窗台上那排旧物：石子、干蛋壳、卷角杂志、小黄鸭，浸在夜色和对面路灯的黄光里；夜风拂过，纸页轻轻翻动，小黄鸭晃了一下。",
+      "action": "夜风吹过，窗台上那排旧物被拂动。",
+      "durationSec": 5,
+      "dialogue": "不是不想还手。是还了手，就要吵。吵起来，就要赔。",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [
+        "c1"
+      ],
+      "sfx": [
+        "夜风",
+        "远处车流"
+      ],
+      "overlayText": [],
+      "camera": "特写缓慢推近，最后停在小黄鸭上",
+      "size": "特写",
+      "emotion": "被压住的火气",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 9,
+      "id": "s1-9",
+      "characterIds": [],
+      "prompt": "竖屏9:16，隔街望过去的一扇旧窗，窗帘拉得死紧，昏黄灯光从缝隙里透出来，光面纹丝不动；固定中景长焦压缩，写实都市夜景，冷蓝调，轻微颗粒；不出现文字、界面、人物。",
+      "visual": "隔街望过去的一扇旧窗，灯还亮着，窗帘拉得死紧，什么也看不见。",
+      "action": "对面窗帘纹丝不动，昏黄灯光静静亮着。",
+      "durationSec": 2.5,
+      "dialogue": "我最怕两件事——麻烦别人",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [
+        "c1"
+      ],
+      "sfx": [
+        "远处车流"
+      ],
+      "overlayText": [],
+      "camera": "中景固定，长焦压缩",
+      "size": "中景",
+      "emotion": "克制",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 10,
+      "id": "s1-10",
+      "characterIds": [],
+      "prompt": "竖屏9:16，一扇旧木门的门缝特写，一线昏黄灯光从门缝下漏出来，光影极轻微地晃动；固定特写浅景深，写实室内夜景，安静压抑；不出现文字、界面、人物。",
+      "visual": "白朴房间那扇旧木门，门缝下透出一线昏黄的灯光，光影极其轻微地晃了一下。",
+      "action": "门缝下的一线灯光轻轻晃动。",
+      "durationSec": 2.5,
+      "dialogue": "和被别人知道我家有钱。",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [
+        "c1"
+      ],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "特写固定，浅景深",
+      "size": "特写",
+      "emotion": "小心翼翼的隐藏",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 11,
+      "id": "s1-11",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，17岁少年白朴圆脸软下巴、塌鼻梁、单眼皮小眼睛、平头略炸毛，穿浅灰色连帽卫衣，仰躺回床上睁眼盯着天花板，额头留着一块红印；正上方俯拍中近景，写实都市夜戏，冷蓝主光加床头暖黄点缀；不出现文字、界面。",
+      "visual": "白朴躺回床上，睁着眼盯着天花板，额头还留着一块红印。",
+      "action": "白朴躺回床上，盯着天花板。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "正上方俯拍",
+      "size": "中近景",
+      "emotion": "疲惫",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 12,
+      "id": "s1-12",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，17岁少年的手攥着黄色橡胶小黄鸭，指节收紧，鸭子被捏得扁了一点；手部特写浅景深，写实夜戏，冷蓝光；不出现文字、界面。",
+      "visual": "白朴的手里攥着那只小黄鸭，指节收紧，鸭子被捏得扁了一点。",
+      "action": "白朴攥紧手里的小黄鸭，把它捏扁了一点。",
+      "durationSec": 3.5,
+      "dialogue": "白朴（变帅前）（小声）：让我变帅一点吧……",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [],
+      "sfx": [
+        "橡胶挤压声"
+      ],
+      "overlayText": [],
+      "camera": "手部特写，浅景深",
+      "size": "特写",
+      "emotion": "半开玩笑的自嘲",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 13,
+      "id": "s1-13",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，17岁少年白朴圆脸软下巴、塌鼻梁、单眼皮小眼睛、平头略炸毛，穿浅灰色连帽卫衣仰躺在床上闭上眼，嘴角留着一点自嘲的笑；近景固定，床头暖黄小灯，写实都市夜戏；不出现文字、界面。",
+      "visual": "白朴闭上眼，嘴角还挂着一点自嘲的笑。",
+      "action": "白朴闭上眼。",
+      "durationSec": 2,
+      "dialogue": "少点钱也行。",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "近景固定，床头小灯侧光",
+      "size": "近景",
+      "emotion": "自嘲后的松弛",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 14,
+      "id": "s1-14",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，17岁少年白朴猛然睁眼，一层幽蓝的光映在他脸上和瞳孔里，神情错愕；脸部特写固定，蓝光从画面上方打下，写实都市夜戏，冷青蓝调；不出现文字、界面、浮空面板。",
+      "visual": "白朴猛地睁眼，一层幽蓝的光映在他脸上和瞳孔里，神情错愕。",
+      "action": "白朴猛地睁眼。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "叮——",
+        "机械音"
+      ],
+      "overlayText": [
+        "早上七点整",
+        "正向选项：变帅"
+      ],
+      "camera": "脸部特写固定，蓝光从画面上方打下来",
+      "size": "特写",
+      "emotion": "错愕",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 15,
+      "id": "s1-15",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，17岁少年白朴半撑起身坐在床上，肩背绷紧，幽蓝的光在他瞳孔里跳动；近景侧拍，写实都市夜戏，冷青蓝主光；不出现文字、界面、浮空面板。",
+      "visual": "白朴半撑起身坐在床上，肩背绷紧，蓝光在他瞳孔里跳动。",
+      "action": "白朴半撑起身。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [
+        "负向选项：转盘随机"
+      ],
+      "camera": "近景侧拍",
+      "size": "近景",
+      "emotion": "警觉",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 16,
+      "id": "s1-16",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，17岁少年白朴张着嘴，脸色一点点白下去，眼珠快速转动；近景正面，冷青蓝光打在半张脸上，写实都市夜戏；不出现文字、界面、浮空面板。",
+      "visual": "白朴张着嘴，脸色一点点白下去，眼珠快速转动。",
+      "action": "白朴张嘴，脸色发白。",
+      "durationSec": 2,
+      "dialogue": "等、等一下——",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "近景正面",
+      "size": "近景",
+      "emotion": "慌张",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 17,
+      "id": "s1-17",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，17岁少年的手死死攥住被角，指节发白；手部特写，冷蓝光，写实夜戏，浅景深；不出现文字、界面、浮空面板。",
+      "visual": "白朴的手死死攥住被角，指节发白。",
+      "action": "白朴攥紧被角。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [
+        "不可取消",
+        "今日零点自动失效"
+      ],
+      "camera": "手部特写，浅景深",
+      "size": "特写",
+      "emotion": "无力",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 18,
+      "id": "s1-18",
+      "characterIds": [],
+      "prompt": "竖屏9:16，老楼窗台上那排旧物——石子、干蛋壳、卷角杂志、小黄鸭，被一层幽蓝的光缓缓扫过，边缘泛出冷青色反光；特写缓慢横移，写实夜戏，冷青蓝调；不出现文字、界面、人物。",
+      "visual": "窗台上那排旧物被幽蓝的光缓缓扫过，边缘泛出冷青色的反光。",
+      "action": "一层幽蓝的光从那排旧物上缓缓扫过。",
+      "durationSec": 2.5,
+      "dialogue": "我昨天是不是不该许愿。",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [
+        "c1"
+      ],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "特写缓慢横移",
+      "size": "特写",
+      "emotion": "后悔",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 19,
+      "id": "s1-19",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，17岁少年白朴僵坐在床上屏住呼吸，胸口几乎不动，面色发白；近景固定，冷蓝光，写实都市夜戏；不出现文字、界面、浮空面板。",
+      "visual": "白朴僵坐在床上，屏住呼吸，胸口几乎不动，面色发白。",
+      "action": "白朴僵坐着屏住呼吸。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "咔哒"
+      ],
+      "overlayText": [
+        "已抽取"
+      ],
+      "camera": "近景固定",
+      "size": "近景",
+      "emotion": "紧张到极点",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 20,
+      "id": "s1-20",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，17岁少年白朴飞快眨了两下眼，喉结滚动；近景，冷蓝光，写实都市夜戏，浅景深；不出现文字、界面、浮空面板。",
+      "visual": "白朴飞快眨了两下眼，喉结滚了一下。",
+      "action": "白朴眨了两下眼。",
+      "durationSec": 2,
+      "dialogue": "抽到啥了？",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "近景，浅景深",
+      "size": "近景",
+      "emotion": "急切",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 21,
+      "id": "s1-21",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，17岁少年白朴歪着头安静地等着，蓝光在他脸上明灭；近景，写实都市夜戏，冷青蓝调；不出现文字、界面、浮空面板。",
+      "visual": "白朴歪着头，安静地等着，蓝光还在他脸上明灭。",
+      "action": "白朴歪着头等了两秒。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [
+        "请自行体会"
+      ],
+      "camera": "近景",
+      "size": "近景",
+      "emotion": "茫然",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 22,
+      "id": "s1-22",
+      "characterIds": [
+        "c1"
+      ],
+      "prompt": "竖屏9:16，17岁少年白朴皱起眉，嘴唇抿紧，一脸无语；近景正面，冷蓝光，写实都市夜戏；不出现文字、界面、浮空面板。",
+      "visual": "白朴皱起眉，嘴唇抿紧，一脸无语。",
+      "action": "白朴皱起眉。",
+      "durationSec": 2,
+      "dialogue": "我体会不到。",
+      "speaker": "c1",
+      "speakerName": "白朴",
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "近景正面",
+      "size": "近景",
+      "emotion": "无语",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 23,
+      "id": "s1-23",
+      "characterIds": [
+        "c2"
+      ],
+      "prompt": "竖屏9:16，18岁少年白朴已变成另一副样子：脸型收窄、下颌线清晰、微挑的双眼皮、鼻梁挺直、黑色短碎发尾部微卷，穿干净挺括的白衬衫外搭浅蓝牛仔外套；他冲到洗手间镜子前站定，镜中映出这张陌生的脸，胸膛起伏；中景越肩，镜中正面为主，写实都市晨光，冷白日光灯；不出现文字、界面。",
+      "visual": "白朴冲到洗手间镜子前站定，胸膛起伏。镜子里映出一张陌生的脸：脸型收窄，下颌线清晰，黑色短碎发尾部微卷。",
+      "action": "白朴冲到镜子前站定。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "急促脚步"
+      ],
+      "overlayText": [],
+      "camera": "中景背身越肩，镜中正面为主",
+      "size": "中景",
+      "emotion": "难以置信",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 24,
+      "id": "s1-24",
+      "characterIds": [
+        "c2"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，变帅后的少年，脸型收窄、下颌线清晰、微挑双眼皮、黑色短碎发尾部微卷，穿白衬衫浅蓝牛仔外套，抬起手用指尖轻轻碰自己的脸，眼神发直；特写，镜中倒影，写实都市晨光；不出现文字、界面。",
+      "visual": "白朴抬起手，指尖轻轻碰上自己的脸，眼神发直。",
+      "action": "白朴抬手摸自己的脸。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [
+        "……这是我？"
+      ],
+      "camera": "特写，镜中倒影",
+      "size": "特写",
+      "emotion": "震撼",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 25,
+      "id": "s1-25",
+      "characterIds": [
+        "c2"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，变帅后的少年抓起一部屏幕右上角裂了一道的旧手机举到眼前，脸色一点点沉下去；特写越肩，虚化前景是手，写实晨光；不出现文字、界面、数字。",
+      "visual": "白朴抓起那部屏幕右上角裂了一道的旧手机，举到眼前，脸色一点点沉下去。",
+      "action": "白朴把旧手机举到眼前。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "手机震动"
+      ],
+      "overlayText": [
+        "余额 0.01 元"
+      ],
+      "camera": "特写越肩，虚化前景是手",
+      "size": "特写",
+      "emotion": "不祥的预感",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 26,
+      "id": "s1-26",
+      "characterIds": [
+        "c2"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，变帅后的少年盯着面前空无一物的空气，眼睛里全是疑问；近景正面，写实晨光，浅景深；不出现文字、界面、浮空面板。",
+      "visual": "白朴盯着面前空无一物的空气，眼睛里全是问号。",
+      "action": "白朴盯着面前的空气。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [
+        "负向呢？系统？"
+      ],
+      "camera": "近景正面，浅景深",
+      "size": "近景",
+      "emotion": "期待",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 27,
+      "id": "s1-27",
+      "characterIds": [
+        "c2"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，变帅后的少年低头翻看自己的手掌，掌心翻过来又翻过去；近景略俯，写实晨光；不出现文字、界面、浮空面板。",
+      "visual": "白朴低头翻看自己的手掌，掌心翻过来又翻过去。",
+      "action": "白朴低头翻看自己的手掌。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [
+        "已生效"
+      ],
+      "camera": "近景略俯",
+      "size": "近景",
+      "emotion": "困惑",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 28,
+      "id": "s1-28",
+      "characterIds": [],
+      "prompt": "竖屏9:16，一部屏幕右上角裂了一道的旧手机静静搁在洗手台边，屏幕暗着；特写固定，写实晨光，浅景深；不出现文字、界面、数字、人物。",
+      "visual": "那部裂屏旧手机静静搁在洗手台边，屏幕暗着，右上角的裂纹清晰。",
+      "action": "旧手机搁在洗手台边，屏幕暗下去。",
+      "durationSec": 2,
+      "dialogue": "我体会到了。",
+      "speaker": "c2",
+      "speakerName": "白朴",
+      "voiceOnly": [
+        "c2"
+      ],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "特写固定，浅景深",
+      "size": "特写",
+      "emotion": "认命",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 29,
+      "id": "s1-29",
+      "characterIds": [
+        "c3"
+      ],
+      "prompt": "竖屏9:16，对面窗户“吱呀”推开，18岁瘦高少年吴耐探出头，剑眉星目、高鼻梁薄唇、黑色半长刘海遮住眉尾，穿洗到发白的蓝白校服、袖口起毛球；他嘴角一扯；中景隔街长焦压缩，写实都市晨光，冷调偏灰；不出现文字、界面。",
+      "visual": "对面窗户“吱呀”一声推开，瘦高的吴耐探出头，黑色半长刘海垂下来，蓝白校服的袖口起了毛球。他嘴角一扯。",
+      "action": "吴耐从窗户探出头。",
+      "durationSec": 2.5,
+      "dialogue": "哟。",
+      "speaker": "c3",
+      "speakerName": "吴耐",
+      "voiceOnly": [],
+      "sfx": [
+        "窗轴吱呀"
+      ],
+      "overlayText": [],
+      "camera": "中景隔街长焦压缩",
+      "size": "中景",
+      "emotion": "挑衅里带着犹豫",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 30,
+      "id": "s1-30",
+      "characterIds": [
+        "c3"
+      ],
+      "prompt": "竖屏9:16，18岁瘦高少年吴耐，剑眉星目、黑色半长刘海，蓝白校服袖口起毛球，站在窗边张了张嘴又把话咽了回去，眼神飘向一边；近景，晨光侧逆光，写实都市质感；不出现文字、界面。",
+      "visual": "吴耐张了张嘴，喉结动了一下，那句憋了十年的话又咽了回去，眼神飘向一边。",
+      "action": "吴耐张嘴，又把话咽了回去。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [],
+      "camera": "近景，晨光侧逆光",
+      "size": "近景",
+      "emotion": "欲言又止",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 31,
+      "id": "s1-31",
+      "characterIds": [
+        "c3"
+      ],
+      "prompt": "竖屏9:16，18岁瘦高少年吴耐抬手把手里一只被捏变形的大号黄色橡皮鸭狠狠扔出去；中景，跟手部动作快速甩镜，晨光，写实都市质感，轻微运动模糊；不出现文字、界面。",
+      "visual": "吴耐抬起手臂，把手里那只被捏变形的大号橡皮鸭狠狠扔了出去。",
+      "action": "吴耐抬手把大橡皮鸭扔了出去。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "嗖"
+      ],
+      "overlayText": [],
+      "camera": "中景，跟手部动作快速甩镜",
+      "size": "中景",
+      "emotion": "嘴硬",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 32,
+      "id": "s1-32",
+      "characterIds": [
+        "c2"
+      ],
+      "prompt": "竖屏9:16，变帅后的少年，白衬衫浅蓝牛仔外套，被砸得往后一仰，怀里多出一只被捏变形的大号黄色橡皮鸭；中近景，撞击瞬间轻微震动，晨光，写实都市质感；不出现文字、界面。",
+      "visual": "白朴被砸得往后一仰，怀里多出一只被捏变形的大号橡皮鸭，他低头看着它。",
+      "action": "白朴被砸得往后一仰。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "咚"
+      ],
+      "overlayText": [],
+      "camera": "中近景，撞击瞬间轻微震动",
+      "size": "中近景",
+      "emotion": "懵",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 33,
+      "id": "s1-33",
+      "characterIds": [
+        "c2"
+      ],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，变帅后的少年，白衬衫浅蓝牛仔外套，没有关窗，转身伸手拿起窗台上那只黄色橡胶小黄鸭，侧脸透出一点松动；中近景手持轻微跟随，晨光，写实都市质感；不出现文字、界面。",
+      "visual": "白朴没有关窗，转身伸手拿起窗台上那只小黄鸭，侧脸透出一点松动。",
+      "action": "白朴转身拿起窗台上的小黄鸭。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [],
+      "overlayText": [
+        "白朴（变帅后）（轻声）：……行。"
+      ],
+      "camera": "中近景手持轻微跟随",
+      "size": "中近景",
+      "emotion": "松动",
+      "refImage": null
+    },
+    {
+      "episode": 1,
+      "shotNo": 34,
+      "id": "s1-34",
+      "characterIds": [],
+      "prompt": "蓝光映在角色脸上，神情专注，竖屏9:16，老楼窗台上空出一个位置，旁边躺着被捏变形的大号黄色橡皮鸭，敞开的窗子里灌进晨风，吹动窗台上的石子与卷角杂志；特写缓慢推近空出的那个位置，写实都市晨光，冷调里透暖；不出现文字、界面、人物。",
+      "visual": "窗台上空出一个位置，旁边躺着那只被捏变形的大橡皮鸭，敞开的窗子里灌进晨风，吹动石子与卷角杂志。",
+      "action": "晨风从敞开的窗子里灌进来，吹动窗台上的旧物。",
+      "durationSec": 2,
+      "dialogue": "",
+      "speaker": null,
+      "speakerName": null,
+      "voiceOnly": [],
+      "sfx": [
+        "晨风"
+      ],
+      "overlayText": [
+        "今天，试试。"
+      ],
+      "camera": "特写缓慢推近空出来的那个位置",
+      "size": "特写",
+      "emotion": "微小的决心",
+      "refImage": null
+    }
+  ],
+  "warnings": []
+}

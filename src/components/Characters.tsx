@@ -157,6 +157,30 @@ export function Characters({ api }: { api: ProjectApi }) {
                 />
               </div>
               <div>
+                <label className="label">年龄 age</label>
+                <input className="field" value={c.age || ''} onChange={(e) => updateChar(c.id, { age: e.target.value || undefined })} placeholder="如：17" />
+              </div>
+              <div>
+                <label className="label">家境 / 住处 background</label>
+                <input className="field" value={c.background || ''} onChange={(e) => updateChar(c.id, { background: e.target.value || undefined })} placeholder="如：富三代·住高档小区" />
+              </div>
+              <div>
+                <label className="label">定妆图 refImage</label>
+                <input
+                  className="field"
+                  value={c.refImage || ''}
+                  title="定妆图文件名/前缀；填写后视觉锁定/服装视为权威，重新生成不会覆盖"
+                  onChange={(e) => updateChar(c.id, { refImage: e.target.value || undefined })}
+                  placeholder="定妆图文件名/前缀，如 bai_pu_plain"
+                />
+              </div>
+              <div className="flex items-end">
+                <label className="flex items-center gap-2 text-xs text-ink-muted">
+                  <input type="checkbox" checked={Boolean(c.locked || c.refImage?.trim())} disabled={Boolean(c.refImage?.trim())} onChange={(e) => updateChar(c.id, { locked: e.target.checked || undefined })} />
+                  锁定外观（视觉锁定/服装不被重新生成覆盖）
+                </label>
+              </div>
+              <div>
                 <label className="label">定位 / 角色（自由填写）</label>
                 <input
                   className="field"
