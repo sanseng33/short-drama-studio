@@ -2,6 +2,7 @@
 import type { Character, Project, Shot } from '../types'
 import { mapNamesToIds, shotCharacterIds } from './shotCast'
 import { cleanField, cleanPrompt } from './placeholder'
+import { postProcessExport, type DialogueLineOut } from './segmentPost'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
 /** Dialogue pacing: Chinese chars (CJK + alnum) per second */
@@ -39,19 +40,31 @@ export interface VideoPipelineShot {
   timeOfDay?: string
   /** present only when an original shot became several segments */
   segment?: { index: number; total: number; parentId: string }
+  /** merged 5–9s segment: all dialogue lines in order (first = dialogue/speaker); present only when >1 line */
+  dialogueLines?: DialogueLineOut[]
+  /** primary speaker is an off-list bit part heard off-screen (never depicted) */
+  speakerOffscreen?: boolean
+  /** original shot/segment ids fused into this segment (mergeToSegments) */
+  mergedFrom?: string[]
 }
 
 export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift'
   message: string
 }
 
 export interface VideoPipelineOptions {
   /** max seconds per segment (default 10) */
   maxShotSec?: number
+  /** merge consecutive short shots into 5–9s segments + dedupe (default true) */
+  mergeToSegments?: boolean
+  /** merged segment min seconds (default 5) */
+  segmentMinSec?: number
+  /** merged segment max seconds (default 9) */
+  segmentMaxSec?: number
 }
 
 export interface VideoPipelineExport {
@@ -75,6 +88,8 @@ export interface VideoPipelineExport {
     characterKey?: string | null
     /** GPU folder name from pack images.dir */
     imagesDir?: string | null
+    /** costume for prompts with logo/校徽/刺绣标 triggers removed (only when it differs from costume) */
+    costumePrompt?: string
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]
@@ -820,7 +835,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
   if (chars.some((c) => c.refImage?.trim()) && !/真人/.test(project.style || '')) {
     warnings.unshift({ episode: 0, code: 'style_mismatch', message: `画风为「${project.style}」，但角色定妆是真人参考图；请改为真人都市后重新生成分镜` })
   }
-  return {
+  const base: VideoPipelineExport = {
     schema: VIDEO_PIPELINE_SCHEMA,
     project: {
       id: project.id,
@@ -849,6 +864,12 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     shots,
     warnings,
   }
+  return postProcessExport(base, {
+    mergeToSegments: opts.mergeToSegments,
+    segmentMinSec: opts.segmentMinSec,
+    segmentMaxSec: opts.segmentMaxSec,
+    genre: project.genre,
+  })
 }
 
 export function videoPipelineFilename(project: Project): string {

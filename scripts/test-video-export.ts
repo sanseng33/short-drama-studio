@@ -1,11 +1,13 @@
 /** npx tsx scripts/test-video-export.ts — fixtures for video-pipeline@1 export */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, extractOverlay } from '../src/lib/videoExport'
+import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, extractOverlay, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
+import { addConstraint, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripLogoText } from '../src/lib/segmentPost'
+import { styleTag } from '../src/lib/templates/styleTag'
 import type { Character, Project, Shot } from '../src/types'
 import { writeFileSync } from 'node:fs'
 import { parseDialogue } from '../src/lib/videoExport'
-import { FACTS_HEADER, outlineUser, scriptUser, storyboardUser } from '../src/lib/prompts'
+import { FACTS_HEADER, outlineUser, scriptUser, shotCountRange, storyboardUser } from '../src/lib/prompts'
 import { OUTLINE_SYSTEM, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../src/lib/llm'
 import { IDEA_SYSTEM, mergeLockedCharacters, parseIdeaJson, toCharacters } from '../src/lib/idea'
 import { generateScript, generateStoryboard } from '../src/lib/templates'
@@ -58,7 +60,7 @@ const project: Project = {
   id: 'p_test', title: '测试', genre: '都市逆袭', platform: '红果', episodeCount: 1, secondsPerEp: 60, style: '真人都市',
   logline: '', characters: chars, outline: [], scripts: {}, storyboards: { 1: ep1 }, selectedEpisode: 1, updatedAt: '',
 }
-const out = buildVideoPipelineExport(project)
+const out = buildVideoPipelineExport(project, { mergeToSegments: false })
 let pass = 0
 const t = (name: string, fn: () => void) => { fn(); pass++; console.log('✓', name) }
 const parent = (id: string) => out.shots.filter((s) => (s.segment?.parentId ?? s.id) === id)
@@ -195,7 +197,7 @@ for (const [pid, g] of byP) {
   } as Shot)
 }
 const rp: Project = { ...(project as Project), ...real.project, characters: real.characters, storyboards: rsb } as Project
-const ro = buildVideoPipelineExport(rp)
+const ro = buildVideoPipelineExport(rp, { mergeToSegments: false })
 const allOv = ro.shots.flatMap((s) => s.overlayText)
 const stats = {
   parentShots: byP.size, segments: ro.shots.length, overlayCount: allOv.length, overlayUnique: new Set(allOv).size,
@@ -230,7 +232,7 @@ for (const x of real2.shots) {
 }
 const r2chars: Character[] = real2.characters.map((c) => (c.id === 'c1' ? { ...c, refImage: 'bai_pu_plain' } : c))
 const r2p: Project = { ...(project as Project), ...real2.project, characters: r2chars, storyboards: r2sb } as Project
-const r2 = buildVideoPipelineExport(r2p)
+const r2 = buildVideoPipelineExport(r2p, { mergeToSegments: false })
 const r2s = (id: string) => r2.shots.find((s) => s.id === id)!
 const cueIds = r2.shots.filter((s) => s.prompt.includes(INDIRECT_UI_CUE)).map((s) => s.id)
 t('real2 B: cue only with overlay + onscreen character', () => r2.shots.forEach((s) => {
@@ -251,7 +253,10 @@ t('parseDialogue: variant + extra paren', () => {
   assert.deepEqual(parseDialogue('白朴（变帅前）（小声）：让我变帅', chars), [{ name: '白朴（变帅前）', tag: '小声', text: '让我变帅' }])
   assert.deepEqual(parseDialogue('白朴（变帅后）(OS)：嗯', chars)[0].tag, 'OS')
 })
-t('real2 C: 早上七点 then 夜戏 → time_conflict', () => assert.ok(r2.warnings.some((w) => w.code === 'time_conflict' && w.shotId === 's1-14')))
+t('real2 C: 早上七点 then 夜戏 → rewritten to daytime, time_conflict resolved', () => {
+  assert.ok(!/夜戏/.test(r2s('s1-14').prompt), r2s('s1-14').prompt); assert.ok(/早晨戏/.test(r2s('s1-14').prompt), r2s('s1-14').prompt)
+  assert.ok(!r2.warnings.some((w) => w.code === 'time_conflict' && w.shotId === 's1-14'))
+})
 t('characters[].refImage exported; shot refImage own value or null', () => {
   assert.equal(r2.characters.find((c) => c.id === 'c1')!.refImage, 'bai_pu_plain'); assert.equal(r2.characters.find((c) => c.id === 'c3')!.refImage, null)
   r2.shots.forEach((s) => assert.equal(s.refImage, null))
@@ -288,6 +293,122 @@ t('locked / refImage characters survive regeneration', () => {
   const next = [C('c1', '白朴（变帅前）', { visualLock: 'new', costume: 'new' }), C('c2', '吴耐', { visualLock: 'new2' })]
   const m = mergeLockedCharacters(prev, next)
   assert.equal(m[0].visualLock, 'LOCK'); assert.equal(m[0].costume, 'COS'); assert.equal(m[0].refImage, 'bai_pu_plain'); assert.equal(m[1].visualLock, 'new2')
+})
+// ---------- storyboard P1: style lock / 5–9s merge / dedupe / time / offlist / logo ----------
+const LIVE = styleTag('真人都市')
+const countOf = (h: string, n: string) => h.split(n).length - 1
+t('P1 style: 真人都市 strips 2D日漫/赛璐璐/细线条, styleTag exactly once', () => {
+  const raw = '夜，江景别墅二楼卧室，2D日漫风。主体：少年。光线：暖光。风格：2D日漫，干净线条，写实光影。限制：竖屏9:16，无任何文字。'
+  const r = lockPromptStyle(raw, '真人都市')
+  assert.ok(r.drifted); assert.ok(!/日漫|2D|赛璐璐|线条/.test(r.text.split(LIVE).join('')), r.text)
+  assert.equal(countOf(r.text, LIVE), 1); assert.ok(r.text.indexOf(LIVE) < r.text.indexOf('限制'), r.text)
+  const r2x = lockPromptStyle('竖屏9:16，2D日漫风。主体：白朴。2D日漫赛璐璐上色，细线条，明亮白日光。限制：单人。', '真人都市')
+  assert.ok(!/日漫|赛璐璐|细线条/.test(r2x.text.split(LIVE).join('')), r2x.text); assert.ok(r2x.text.includes('明亮白日光')); assert.equal(countOf(r2x.text, LIVE), 1)
+  // idempotent; already-locked prompt is not drift
+  const again = lockPromptStyle(r.text, '真人都市'); assert.equal(again.text, r.text); assert.ok(!again.drifted)
+  // other styles untouched
+  assert.equal(lockPromptStyle(raw, '2D日漫').text, raw)
+})
+t('P1 storyboard prompt: styleTag hard constraint + forbidden styles + 5–9s / shot count', () => {
+  const u = storyboardUser({ ...fp, secondsPerEp: 75 }, fp.outline[0], '')
+  assert.ok(u.includes(LIVE)); assert.ok(/禁止2D\/日漫\/动漫\/赛璐璐\/二次元/.test(u)); assert.ok(u.includes('5–9 秒'))
+  assert.deepEqual(shotCountRange(75), [9, 13]); assert.ok(u.includes('9–13 镜'))
+  assert.ok(!/2D日漫/.test(STORYBOARD_SYSTEM)); assert.ok(/5–9 秒/.test(STORYBOARD_SYSTEM)); assert.ok(/不出镜/.test(STORYBOARD_SYSTEM))
+  assert.ok(!/至少 30% 镜头为 2–3\.5 秒/.test(STORYBOARD_SYSTEM))
+  const lu = storyboardUser({ ...fp, characters: [C('c9', '吴耐', { costume: '蓝白校服、左胸校徽' })] }, fp.outline[0], '')
+  assert.ok(!/左胸校徽/.test(lu), 'storyboard brief costume has no 校徽 trigger')
+})
+const V = (p: Partial<VideoPipelineShot>): VideoPipelineShot => ({
+  episode: 1, shotNo: 1, id: 'x', characterIds: ['c1'], prompt: '夜，别墅卧室。主体：林川。动作：抬头。表演：眨眼。镜头：近景。光线：暖光。限制：无任何文字。',
+  visual: '别墅卧室', action: '抬头', durationSec: 2, dialogue: '', speaker: null, speakerName: null, voiceOnly: [], sfx: [], overlayText: [],
+  camera: '近景', size: '近景', emotion: '', refImage: null, timeOfDay: '夜', ...p,
+})
+t('P1 merge: short shots → 5–9s segments, action+reaction, dialogueLines, ids', () => {
+  const list = [
+    V({ id: 's1-1', shotNo: 1, durationSec: 2.5, action: '石子打在玻璃上', sfx: ['啪'] }),
+    V({ id: 's1-2', shotNo: 2, durationSec: 2, action: '林川笔尖顿住', dialogue: '来了。', speaker: 'c1', speakerName: '林川' }),
+    V({ id: 's1-3', shotNo: 3, durationSec: 2.5, action: '赵泽探头', characterIds: ['c2'], dialogue: '写你的卷子。', speaker: 'c2', speakerName: '赵泽', camera: '侧打，轻推' }),
+    V({ id: 's1-4', shotNo: 4, durationSec: 3, action: '林川叹气', overlayText: ['本月第47枚'] }),
+    V({ id: 's1-5', shotNo: 5, durationSec: 2, action: '窗外天亮', timeOfDay: '早上', characterIds: [] }),
+  ]
+  const m = mergeEpisodeShots(list, { nameOf: (id) => ({ c1: '林川', c2: '赵泽' })[id] || id })
+  m.forEach((s) => { assert.ok(s.durationSec >= 5 && s.durationSec <= 9, `${s.id} ${s.durationSec}`); assert.ok(Math.abs(s.durationSec % 0.5) < 1e-9) })
+  assert.equal(m[0].id, 's1-1'); assert.ok(m[0].mergedFrom!.length >= 2); assert.ok(m[0].action.includes('；随后'))
+  const all = m.find((s) => s.mergedFrom?.includes('s1-3'))!
+  assert.ok(all.characterIds.length <= 2)
+  const lines = m.flatMap((s) => s.dialogueLines || (s.dialogue ? [{ speaker: s.speaker, speakerName: s.speakerName, text: s.dialogue }] : []))
+  assert.deepEqual(lines.map((l) => `${l.speakerName}:${l.text}`), ['林川:来了。', '赵泽:写你的卷子。'])
+  const withLines = m.find((s) => s.dialogueLines)
+  if (withLines) { assert.equal(withLines.dialogue, withLines.dialogueLines![0].text); assert.equal(withLines.speaker, withLines.dialogueLines![0].speaker) }
+  assert.ok(m.some((s) => s.sfx.includes('啪'))); assert.ok(m.some((s) => s.overlayText.includes('本月第47枚')))
+  // timeOfDay change never merged; lone 2s 早上 shot extended to 5s
+  const last = m[m.length - 1]; assert.deepEqual(last.mergedFrom, undefined); assert.equal(last.id, 's1-5'); assert.equal(last.durationSec, 5)
+  assert.ok(m[0].prompt.includes('时间轴') && m[0].prompt.includes('随后'), m[0].prompt)
+  assert.ok(/镜头：近景/.test(m[0].prompt), m[0].prompt)
+})
+t('P1 merge: never exceeds 9s, different places not merged', () => {
+  const list = [6, 2, 2, 2, 2].map((d, i) => V({ id: `s2-${i + 1}`, shotNo: i + 1, durationSec: d }))
+  const m = mergeEpisodeShots(list)
+  m.forEach((s) => assert.ok(s.durationSec <= 9 && s.durationSec >= 5, `${s.id} ${s.durationSec}`))
+  const a = V({ id: 'a', prompt: '白天，教室。主体：林川。', visual: '教室', timeOfDay: '白天' })
+  const b = V({ id: 'b', prompt: '白天，食堂。主体：林川。', visual: '食堂', timeOfDay: '白天' })
+  assert.equal(mergeEpisodeShots([a, b]).length, 2)
+})
+t('P1 dedupe: identical consecutive visuals (s1-7-a / s1-7-b) fused', () => {
+  const seg = (i: number) => V({ id: `s1-7-${'ab'[i]}`, shotNo: 7, characterIds: [], durationSec: 2, visual: '一本卷边的旧杂志拍在窗玻璃上，纸页被撞得翻开一角，顺着玻璃往下滑', action: i ? '顺着蛋液往下溜' : '杂志贴上玻璃', segment: { index: i, total: 2, parentId: 's1-7' } })
+  const m = mergeEpisodeShots([seg(0), seg(1)])
+  assert.equal(m.length, 1); assert.equal(m[0].id, 's1-7'); assert.deepEqual(m[0].mergedFrom, ['s1-7-a', 's1-7-b']); assert.equal(m[0].durationSec, 5)
+  assert.equal(m[0].segment, undefined)
+})
+t('P1 time: daytime timeOfDay rewrites night light words; constraint 无夜景 untouched', () => {
+  const p = '早上，别墅卧室。光线：冷蓝夜色，夜景灯火。限制：无夜景。'
+  const f = fixTimeWords(p, '早晨')
+  assert.ok(!hasNightConflict(f), f); assert.ok(f.includes('无夜景')); assert.ok(f.includes('清冷晨光'))
+  assert.ok(fixTimeWords('脸上有昨晚的红印，夜戏。', '白天').includes('昨晚'))
+  const exp: VideoPipelineExport = { schema: 'short-drama-studio/video-pipeline@1', project: { id: 'p', title: 't', style: '真人都市', platform: '红果', secondsPerEp: 60, settingFacts: [] },
+    characters: [], shots: [V({ id: 'd1', timeOfDay: '清晨', prompt: '夜，卧室。主体：林川。光线：夜色。限制：无夜景。' })],
+    warnings: [{ episode: 1, shotId: 'd1', code: 'time_conflict', message: '剧情时间为「清晨」，提示词却写了夜景/夜戏' }] }
+  const o = postProcessExport(exp)
+  assert.ok(!o.warnings.some((w) => w.code === 'time_conflict')); assert.ok(o.shots[0].prompt.startsWith('清晨'), o.shots[0].prompt)
+  assert.ok(o.warnings.some((w) => w.code === 'style_drift') === false)
+})
+t('P1 offlist: bit-part line → speakerOffscreen / voiceOnly line, not depicted', () => {
+  const exp: VideoPipelineExport = { schema: 'short-drama-studio/video-pipeline@1', project: { id: 'p', title: 't', style: '真人都市', platform: '红果', secondsPerEp: 60, settingFacts: [] },
+    characters: [], shots: [
+      V({ id: 'o1', timeOfDay: '白天', durationSec: 3, prompt: '白天，教室。主体：林川，同学甲站在他身后拍他肩。动作：林川回头。限制：无任何文字。', dialogue: '什么情况？', speakerName: '同学甲' }),
+      V({ id: 'o2', timeOfDay: '白天', durationSec: 3, prompt: '白天，教室。主体：林川。动作：林川笑。', dialogue: '没事。', speaker: 'c1', speakerName: '林川' }),
+    ], warnings: [{ episode: 1, shotId: 'o1', code: 'speaker_offlist', message: '说话人「同学甲」不在角色表（仅字幕名）' }] }
+  const o = postProcessExport(exp, { mergeToSegments: false })
+  assert.equal(o.shots[0].speakerOffscreen, true); assert.ok(!o.shots[0].prompt.includes('同学甲'), o.shots[0].prompt); assert.ok(o.shots[0].prompt.includes(OFFSCREEN_VOICE_CONSTRAINT))
+  assert.ok(o.warnings.some((w) => w.code === 'speaker_offlist' && /画外音/.test(w.message)))
+  const m = postProcessExport(exp)
+  assert.equal(m.shots.length, 1); const s = m.shots[0]
+  assert.equal(s.speakerOffscreen, true); assert.equal(s.dialogueLines![0].voiceOnly, true); assert.equal(s.dialogueLines![1].speaker, 'c1')
+  assert.ok(!s.prompt.includes('同学甲')); assert.ok(s.prompt.includes(OFFSCREEN_VOICE_CONSTRAINT)); assert.equal(m.warnings.find((w) => w.code === 'speaker_offlist')!.shotId, 'o1')
+})
+t('P1 logo: 刺绣标/校徽/logo stripped from prompts, no-badge constraint added, character data untouched', () => {
+  assert.equal(stripLogoText('米白色宽松连帽卫衣（胸口小刺绣标），浅蓝牛仔裤'), '米白色宽松连帽卫衣，浅蓝牛仔裤')
+  assert.equal(stripLogoText('白色拉链外套配蓝色插肩袖与双白条、左胸校徽；蓝色运动裤'), '白色拉链外套配蓝色插肩袖与双白条；蓝色运动裤')
+  assert.ok(!/logo/i.test(stripLogoText('白朴放下深灰无logo书包')))
+  const pr = addConstraint('主体：吴耐。限制：无任何文字。', NO_BADGE_CONSTRAINT)
+  assert.equal(pr, `主体：吴耐。限制：无任何文字，${NO_BADGE_CONSTRAINT}。`); assert.equal(addConstraint(pr, NO_BADGE_CONSTRAINT), pr)
+  const ch = { ...project, characters: [C('c1', '吴耐', { costume: '蓝白校服、左胸校徽' })], storyboards: { 1: [S({ id: 'g1', characterIds: ['c1'], durationSec: 6, seedancePrompt: '主体：吴耐，蓝白校服、左胸校徽。动作：站立。限制：无任何文字。' })] } }
+  const o = buildVideoPipelineExport(ch)
+  assert.ok(!o.shots[0].prompt.replace(NO_BADGE_CONSTRAINT, '').includes('校徽'), o.shots[0].prompt); assert.ok(o.shots[0].prompt.includes(NO_BADGE_CONSTRAINT))
+  assert.equal(o.characters[0].costume, '蓝白校服、左胸校徽'); assert.equal(o.characters[0].costumePrompt, '蓝白校服')
+})
+t('P1 default export merges to 5–9s with style lock + style_drift warning', () => {
+  const sp: Project = { ...project, storyboards: { 1: [1, 2, 3, 4, 5, 6].map((i) => S({ id: `m${i}`, shotNo: i, durationSec: 2.5, characterIds: ['c1'], visual: `写字楼大堂第${i}处细节${'甲乙丙丁戊己'[i - 1]}角落`, seedancePrompt: '写字楼大堂。主体：林川。动作：看表。风格：2D日漫风，赛璐璐上色。限制：无任何文字。' })) } }
+  const o = buildVideoPipelineExport(sp)
+  assert.ok(o.shots.length >= 2 && o.shots.length <= 3, String(o.shots.length))
+  o.shots.forEach((s) => { assert.ok(s.durationSec >= 5 && s.durationSec <= 9); assert.equal(countOf(s.prompt, LIVE), 1); assert.ok(!/日漫|赛璐璐/.test(s.prompt.split(LIVE).join('')), s.prompt) })
+  assert.ok(o.warnings.some((w) => w.code === 'style_drift'))
+  assert.equal(o.shots.reduce((a, s) => a + s.durationSec, 0), 15)
+})
+t('P1 real pack fixture: 0 anime prompts, all live-action, 5–9s', () => {
+  const rp2 = postProcessExport(r2)
+  rp2.shots.forEach((s) => { assert.ok(s.durationSec >= 5 && s.durationSec <= 10, `${s.id} ${s.durationSec}`); assert.ok(!/日漫|赛璐璐|二次元风/.test(s.prompt.split(LIVE).join('')), s.id) })
+  assert.ok(rp2.shots.length < r2.shots.length)
 })
 console.log('real2 stats', JSON.stringify({ segments: r2.shots.length, cueCount: cueIds.length, cueIds, overlayCount: r2.shots.flatMap((s) => s.overlayText).length,
   s1_12: { dialogue: r2s('s1-12').dialogue, speaker: r2s('s1-12').speaker }, s1_33: { dialogue: r2s('s1-33').dialogue, speaker: r2s('s1-33').speaker, overlay: r2s('s1-33').overlayText },

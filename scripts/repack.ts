@@ -1,0 +1,44 @@
+/**
+ * npx tsx scripts/repack.ts <in-pack.json> [out.json] [--no-merge] [--genre 都市逆袭]
+ * Re-apply the deterministic video-pipeline@1 post-processing (style lock, 5–9s merge, time/offlist/logo fixes)
+ * to an already exported pack, and print stats.
+ */
+import { readFileSync, writeFileSync } from 'node:fs'
+import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segmentPost'
+import type { VideoPipelineExport } from '../src/lib/videoExport'
+
+const args = process.argv.slice(2)
+const flags = new Set(args.filter((a) => a.startsWith('--')))
+const gi = args.indexOf('--genre')
+const genre = gi >= 0 ? args[gi + 1] : ''
+const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1))
+const [inp, outp] = pos
+if (!inp) {
+  console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G]')
+  process.exit(1)
+}
+const pack = JSON.parse(readFileSync(inp, 'utf8')) as VideoPipelineExport
+const { exp, stats } = postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre })
+const out = outp || inp.replace(/\.json$/, '-p1.json')
+writeFileSync(out, JSON.stringify(exp, null, 2) + '\n')
+
+const eps = [...new Set(exp.shots.map((s) => s.episode))].sort((a, b) => a - b)
+const perEp = eps.map((ep) => {
+  const a = pack.shots.filter((s) => s.episode === ep)
+  const b = exp.shots.filter((s) => s.episode === ep)
+  const sum = (x: { durationSec: number }[]) => Math.round(x.reduce((t, s) => t + s.durationSec, 0) * 10) / 10
+  return { ep, shotsBefore: a.length, shotsAfter: b.length, secsBefore: sum(a), secsAfter: sum(b) }
+})
+const hist: Record<string, number> = {}
+for (const s of exp.shots) hist[s.durationSec] = (hist[s.durationSec] || 0) + 1
+const count = (re: RegExp) => exp.shots.filter((s) => re.test(s.prompt)).length
+const warn: Record<string, number> = {}
+for (const w of exp.warnings) warn[w.code] = (warn[w.code] || 0) + 1
+console.log(JSON.stringify({
+  out, shotsBefore: pack.shots.length, shotsAfter: exp.shots.length, perEp,
+  durationHistogram: Object.fromEntries(Object.entries(hist).sort((a, b) => +a[0] - +b[0])),
+  promptsWithAnime: count(/日漫|2D|赛璐璐/), promptsWithLiveActionStyle: count(/真人实拍都市短剧质感/),
+  promptsWithNightInDay: exp.shots.filter((s) => /^(清晨|早上|白天)/.test(s.timeOfDay || '') && hasNightConflict(s.prompt)).length,
+  promptsWithLogo: exp.shots.filter((s) => /刺绣标|校徽|胸标|logo/i.test(s.prompt.split('服装无任何标志、校徽、刺绣字样').join(''))).length , offscreenLines: exp.shots.filter((s) => s.speakerOffscreen || s.dialogueLines?.some((l) => l.voiceOnly)).length,
+  warnings: warn, stats,
+}, null, 2))

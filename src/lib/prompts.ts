@@ -1,5 +1,7 @@
 /** LLM user-prompt builders (pure) — inject setting facts / backgrounds / ages / scene time as hard constraints. */
 import type { Character, EpisodeOutline, Project } from '../types'
+import { forbiddenStyleText, styleTag, styleToneForGenre } from './templates/styleTag'
+import { stripLogoText } from './segmentPost'
 
 /** 平台内容 + 跨集去重规则（随机副作用/惩罚/技能等） */
 export const CONTENT_RULES = '【内容规则】每集随机抽到的副作用/惩罚/代价/技能必须各不相同，全剧不得重复；写之前对照前面各集已用过的，不能换个说法再用一次。副作用只能是滑稽、无害、可当天解除的效果（如口音、打嗝、走路自带BGM、说话押韵、见猫就鞠躬），禁止以性取向、性别认同、种族/地域歧视、残障、疾病、宗教、自残或色情暗示作为惩罚或笑点。'
@@ -60,19 +62,35 @@ export function scriptUser(p: Project, o: EpisodeOutline): string {
   )
 }
 
+/** Exact style sentence the storyboard must copy into every 「风格：」 clause. */
+export function storyboardStyleLine(p: Pick<Project, 'style' | 'genre'>): string {
+  return styleTag(p.style, styleToneForGenre(p.genre))
+}
+/** Target shot count range for a 5–9s-per-shot episode (≈ secondsPerEp/7). */
+export function shotCountRange(secondsPerEp: number): [number, number] {
+  const s = Math.max(5, secondsPerEp || 60)
+  return [Math.max(1, Math.round(s / 8.5)), Math.max(1, Math.round(s / 5.8))]
+}
+
 export function storyboardUser(p: Project, o: EpisodeOutline, scriptText: string): string {
+  const tag = storyboardStyleLine(p)
+  const ban = forbiddenStyleText(p.style)
+  const [lo, hi] = shotCountRange(p.secondsPerEp)
   return withFacts(
     p,
     `为第${o.episode}集做分镜。画风${p.style} 时长${p.secondsPerEp}s
+【画风句（硬约束，每镜 seedancePrompt 的「风格：」原样照抄）】${tag}${ban ? `\n【画风禁令】${ban}。` : ''}
+【镜头数与时长（硬约束）】本集 ${lo}–${hi} 镜（约 ${p.secondsPerEp}÷7），每镜 durationSec 5–9 秒；每镜是一个小节拍：动作+反应，或台词+微表演（说前准备/说后余韵/听者反应写在同一镜时间轴里），不要 2–3 秒碎镜。
 大纲:${JSON.stringify(o)}
 剧本:${scriptText || '(无)'}
-角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => characterBrief(c)))}
+角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => characterBrief({ ...c, costume: stripLogoText(c.costume || '') })))}
 每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText（人物台词一律放 dialogue）；每镜 timeOfDay 照抄剧本场景时间，提示词光线与之一致，不要默认夜戏。
 硬约束：
-- 每镜一个剧情主动作，时长 2–10 秒；必须另写 1–2 个表演微动作；台词 ≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀）。
-- 对白必须打反应镜；禁止连续说话头；运镜禁止连续三镜纯固定。
+- 每镜一个剧情主动作，时长 5–9 秒；必须另写 1–2 个表演微动作与反应；台词 ≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀，且龙套只闻其声不出镜，放 voiceOnly，画面不描绘）。
+- 对白必须有反应（可写在同一镜后半段）；禁止连续说话头；运镜禁止连续三镜纯固定。
 - 优先单人；对话用过肩/正反打/反应镜头；同框最多2人。
 - visual 必须含本场地点的家境陈设锚点，并覆盖设定中的空间关系（如对窗邻居须拍到窗对窗）。
-- overlayText 只放界面原文，不放约束或描述；emotion 必须在 action/seedancePrompt 落地为可见表演。`,
+- overlayText 只放界面原文，不放约束或描述；emotion 必须在 action/seedancePrompt 落地为可见表演。
+- 服装/道具描写不要写 logo、校徽、胸标、刺绣标、字样。`,
   )
 }
