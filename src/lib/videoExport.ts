@@ -45,7 +45,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only'
   message: string
 }
 
@@ -571,6 +571,50 @@ export function hasUiContext(...texts: string[]): boolean {
   return texts.some((t) => (t || '').split(/[，。；;\n]/).some((c) => !isConstraintText(c) && UI_CONTEXT.test(c)))
 }
 
+/**
+ * Overlay / nearby copy looks like system · roulette · balance · panel UI (reuse UI_KEY family).
+ * Excludes bare 售货机/扫码 phone-pay scenes that lack a system surface.
+ */
+const SYSTEM_UI_SURFACE = /(系统|转盘|面板|弹窗|界面|视窗|光幕|全息|悬浮窗|提示框|选项)/
+const SYSTEM_UI_OVERLAY = /(系统|转盘|余额|选项|面板|弹窗|界面|视窗|宿主|颜值|愿望|已抽取|第\d+枚)/
+function ctxHasSystemSurface(...texts: string[]): boolean {
+  return texts.some((t) =>
+    (t || '')
+      .split(/[，。；;\n]/)
+      .some((c) => !isConstraintText(c) && SYSTEM_UI_SURFACE.test(c)),
+  )
+}
+export function looksLikeSystemUiOverlay(overlay: string[], ...ctx: string[]): boolean {
+  if (!overlay.length) return false
+  const o = overlay.join(' ')
+  const blob = [o, ...ctx].join(' ')
+  // ignore 限制/不出现… clauses so 「无界面」constraints do not count as system UI
+  if (ctxHasSystemSurface(o, ...ctx)) return true
+  // 余额/颜值-style overlay counts unless this is a vending/scan beat without system chrome
+  if (SYSTEM_UI_OVERLAY.test(o) || overlay.some((x) => UI_KEY.test(x))) {
+    if (/(售货机|扫码口|扫码)/.test(blob) && !ctxHasSystemSurface(...ctx)) return false
+    return SYSTEM_UI_OVERLAY.test(o)
+  }
+  return false
+}
+
+const CAM_MOVE = /(推|拉|摇|移|跟|手持|过肩|侧打|升|降|甩|微移)/
+/** Camera is essentially 固定机位 with little else (no push/pull/follow…). */
+export function isStiffFixedCamera(camera: string): boolean {
+  const c = (camera || '').trim()
+  return /固定/.test(c) && !CAM_MOVE.test(c)
+}
+
+const SPEECH_ACT = /(说话|喊话|回答|自语|开口)/
+const MICRO_ACT = /(视线|眨眼|吞咽|手指|呼吸|嘴角|重心|耸肩|握|喉结|闪避|点头|皱眉|抿|停顿|一边|余韵|准备)/
+/** Dialogue present and action is essentially just talking, with no micro-performance words. */
+export function isActingSpeechOnly(action: string, dialogue: string): boolean {
+  if (!(dialogue || '').trim()) return false
+  const a = (action || '').trim()
+  if (!SPEECH_ACT.test(a) || MICRO_ACT.test(a)) return false
+  return pacedChars(a) <= 28
+}
+
 function partPrompt(base: string, origAction: string, sg: Seg, changedTime: boolean): string {
   let p = stripCue(extractSfx(base).text)
   if (sg.actionSplit) {
@@ -580,8 +624,10 @@ function partPrompt(base: string, origAction: string, sg: Seg, changedTime: bool
   }
   if (changedTime) p = p.replace(/时间轴[：:][^。]*。/g, '')
   const { text, removed } = stripUiFromPrompt(p)
-  // cue only when the segment carries overlay text, has a character on screen to light, and is a UI moment
-  const cue = sg.overlay.length > 0 && sg.onscreen.length > 0 && (removed || hasUiContext(text, cleanField(sg.shot.visual)))
+  const visual = cleanField(sg.shot.visual)
+  // cue only for system/转盘/余额-class UI overlays (not arbitrary 售货机 overlays + bare 手机)
+  const systemUi = looksLikeSystemUiOverlay(sg.overlay, text, visual)
+  const cue = sg.overlay.length > 0 && sg.onscreen.length > 0 && systemUi && (removed || hasUiContext(text, visual) || ctxHasSystemSurface(...sg.overlay, text, visual))
   // prompt already has its own screen-light cue → don't stack the stock one
   const own = /(蓝光|幽蓝|屏幕光|冷光|荧光)[^，。；;]{0,8}映/.test(text)
   return tidy(cue && !own ? insertCue(text, INDIRECT_UI_CUE) : text)
@@ -601,8 +647,38 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     .filter((n) => project.storyboards[n]?.length)
     .sort((a, b) => a - b)
   const shots: VideoPipelineShot[] = []
+  const SETTING_FACT_KEYS = ['对窗', '邻居', '别墅', '贫困', '旧楼'] as const
+  const SETTING_SHOT_KEYS = ['对窗', '邻居', '别墅', '贫困', '旧楼', '对面楼', '对面窗', '窗对窗', '老楼', '城中村', '贫寒']
   for (const ep of eps) {
     const list = [...project.storyboards[ep]].sort((a, b) => a.shotNo - b.shotNo)
+    // soft: settingFacts space relations missing from this episode's visuals/prompts
+    const factBlob = (project.settingFacts || []).join(' ')
+    const factHits = SETTING_FACT_KEYS.filter((k) => factBlob.includes(k))
+    if (factHits.length) {
+      const shotBlob = list.map((s) => `${s.visual || ''} ${s.seedancePrompt || ''} ${s.action || ''}`).join(' ')
+      if (!SETTING_SHOT_KEYS.some((k) => shotBlob.includes(k))) {
+        warnings.push({
+          episode: ep,
+          code: 'setting_fact_gap',
+          message: `设定空间关系（${factHits.join('/')}）未出现在本集画面描述`,
+        })
+      }
+    }
+    // soft: ≥3 consecutive shots whose camera is only 固定机位 (+ little else)
+    let fixedRun = 0
+    for (const s of list) {
+      if (isStiffFixedCamera(s.camera || '')) {
+        fixedRun++
+        if (fixedRun === 3) {
+          warnings.push({
+            episode: ep,
+            shotId: s.id,
+            code: 'stiff_camera_run',
+            message: '连续 ≥3 镜运镜几乎只有固定机位',
+          })
+        }
+      } else fixedRun = 0
+    }
     const current = new Map<string, string>()
     let segs: Seg[] = list.flatMap((s) => buildShotSegs(ep, s, chars, current))
     const rawTotal = list.reduce((a, s) => a + (Number(s.durationSec) || 0), 0)
@@ -726,6 +802,13 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         warnings.push({ episode: ep, shotId: id, code: 'speaker_offlist', message: `说话人「${sg.offName}」不在角色表（仅字幕名）` })
       else if (sg.dialogue && !sg.speaker && !sg.narration)
         warnings.push({ episode: ep, shotId: id, code: 'speaker_unresolved', message: `台词无法确定说话人：${sg.dialogue.slice(0, 20)}` })
+      if (isActingSpeechOnly(sg.action, sg.dialogue))
+        warnings.push({
+          episode: ep,
+          shotId: id,
+          code: 'acting_speech_only',
+          message: 'action 几乎只有说话/喊话，缺微表演',
+        })
     }
   }
   for (const c of chars) {

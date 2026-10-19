@@ -34,7 +34,8 @@ export function constraintBlock(p: Pick<Project, 'settingFacts' | 'characters' |
     if (bits.length) lines.push(`- ${c.name}：${bits.join('，')}`)
   }
   if (!lines.length) return CONTENT_RULES
-  return `【${FACTS_HEADER}】\n${lines.join('\n')}\n（年龄以上为准，不得另写其他年龄；不要编造设定中没有的年数/时间跨度；场景与服装道具须符合各角色家境）\n${CONTENT_RULES}`
+  return `【${FACTS_HEADER}】\n${lines.join('\n')}\n（年龄以上为准，不得另写其他年龄；不要编造设定中没有的年数/时间跨度；场景与服装道具须符合各角色家境。
+分镜/剧本须把设定中的空间关系拍进画面：对窗、邻居、别墅/旧楼对比等不能只写在人物小传里；每个主要场景至少 2 个可辨认的家境陈设锚点，禁止空壳「豪华/简陋」形容词充数。）\n${CONTENT_RULES}`
 }
 
 const withFacts = (p: Project, body: string) => {
@@ -66,6 +67,12 @@ export function storyboardUser(p: Project, o: EpisodeOutline, scriptText: string
 大纲:${JSON.stringify(o)}
 剧本:${scriptText || '(无)'}
 角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => characterBrief(c)))}
-每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText（人物台词一律放 dialogue）；每镜 timeOfDay 照抄剧本场景时间，提示词光线与之一致，不要默认夜戏；每镜单动作、2-10秒、台词≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀如「收银员：」）；优先单人镜头，对话用过肩/正反打/反应镜头，同框最多2人；overlayText 只放界面原文，不放约束或描述。`,
+每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText（人物台词一律放 dialogue）；每镜 timeOfDay 照抄剧本场景时间，提示词光线与之一致，不要默认夜戏。
+硬约束：
+- 每镜一个剧情主动作，时长 2–10 秒；必须另写 1–2 个表演微动作；台词 ≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀）。
+- 对白必须打反应镜；禁止连续说话头；运镜禁止连续三镜纯固定。
+- 优先单人；对话用过肩/正反打/反应镜头；同框最多2人。
+- visual 必须含本场地点的家境陈设锚点，并覆盖设定中的空间关系（如对窗邻居须拍到窗对窗）。
+- overlayText 只放界面原文，不放约束或描述；emotion 必须在 action/seedancePrompt 落地为可见表演。`,
   )
 }
