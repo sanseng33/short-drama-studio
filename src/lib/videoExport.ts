@@ -3,6 +3,7 @@ import type { Character, Project, Shot } from '../types'
 import { mapNamesToIds, shotCharacterIds } from './shotCast'
 import { cleanField, cleanPrompt } from './placeholder'
 import { postProcessExport, type DialogueLineOut } from './segmentPost'
+import { tierSettingFacts, type SettingFactsByTier } from './settingFacts'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
 /** Dialogue pacing: Chinese chars (CJK + alnum) per second */
@@ -69,7 +70,17 @@ export interface VideoPipelineOptions {
 
 export interface VideoPipelineExport {
   schema: typeof VIDEO_PIPELINE_SCHEMA
-  project: { id: string; title: string; style: string; platform: string; secondsPerEp: number; settingFacts: string[] }
+  project: {
+    id: string
+    title: string
+    style: string
+    platform: string
+    secondsPerEp: number
+    /** flat list kept for old consumers / UI */
+    settingFacts: string[]
+    /** tiered facts; drama CLI should consume world+ongoing only (never ending) for shot prompts */
+    settingFactsByTier?: SettingFactsByTier
+  }
   characters: {
     id: string
     name: string
@@ -844,6 +855,8 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       platform: project.platform,
       secondsPerEp: project.secondsPerEp,
       settingFacts: (project.settingFacts || []).map((f) => f.trim()).filter(Boolean),
+      // drama CLI should consume settingFactsByTier.world + .ongoing only (never .ending) for shot prompts
+      settingFactsByTier: tierSettingFacts(project.settingFacts),
     },
     characters: chars.map((c) => ({
       id: c.id,

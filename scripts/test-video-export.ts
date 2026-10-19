@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, extractOverlay, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
-import { addConstraint, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripLogoText } from '../src/lib/segmentPost'
+import { addConstraint, ensureSinglePrefixedClause, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripLogoText } from '../src/lib/segmentPost'
+import { classifySettingFact, factsForShotPrompts, tierSettingFacts } from '../src/lib/settingFacts'
 import { styleTag } from '../src/lib/templates/styleTag'
 import type { Character, Project, Shot } from '../src/types'
 import { writeFileSync } from 'node:fs'
@@ -410,6 +411,66 @@ t('P1 real pack fixture: 0 anime prompts, all live-action, 5–9s', () => {
   rp2.shots.forEach((s) => { assert.ok(s.durationSec >= 5 && s.durationSec <= 10, `${s.id} ${s.durationSec}`); assert.ok(!/日漫|赛璐璐|二次元风/.test(s.prompt.split(LIVE).join('')), s.id) })
   assert.ok(rp2.shots.length < r2.shots.length)
 })
+
+// ---------- storyboard P1.1: tier settingFacts + ensureSinglePrefixedClause ----------
+const DUCK_FACTS = [
+  '白朴是富三代，长相普通，脾气极好，家住江景别墅。',
+  '吴耐是白朴的同班班草，长得帅但家里穷，嫉妒白朴有钱。',
+  '吴耐每天隔着窗户往白朴家扔东西，从小石子、鸡蛋一路升级到旧杂志和洗澡用的小黄鸭。',
+  '白朴脾气好，被砸从不还手。',
+  '某晚白朴被小黄鸭砸中额头，忍不住许愿：“让我变帅一点吧，少点钱也行。”',
+  '第二天早上七点，白朴脑子里弹出一个系统，每天一个选择框，正向只能选“变帅”。',
+  '负向由转盘随机抽一个，当天生效，第二天重抽。',
+  '白朴的外貌只有变帅前（普通）和变帅后（帅气）两种，第一次选择后直接切换成变帅后的样子，之后的“变帅”只体现为气质、自信和周围人的反应。',
+  '最后吴耐发现白朴一直在偷偷帮他家还债，两人从对头变成死党。',
+  '全剧只有白朴和吴耐两个主要角色，每集固定结构：早上抽奖、白天因副作用出糗、结尾吴耐又扔来一样新东西做钩子。',
+]
+t('P1.1 tier: 小黄鸭 10 facts → world/ongoing/ending', () => {
+  assert.deepEqual(DUCK_FACTS.map(classifySettingFact), [
+    'world', 'world', 'ongoing', 'ongoing', 'ongoing', 'ongoing', 'ongoing', 'ongoing', 'ending', 'ongoing',
+  ])
+  const tier = tierSettingFacts(DUCK_FACTS)
+  assert.equal(tier.ending.length, 1)
+  assert.ok(tier.ending[0].includes('还债') && tier.ending[0].includes('死党'))
+  assert.equal(tier.world.length, 2)
+  assert.equal(tier.ongoing.length, 7)
+  assert.deepEqual(factsForShotPrompts(DUCK_FACTS), [...tier.world, ...tier.ongoing])
+  assert.ok(!factsForShotPrompts(DUCK_FACTS).some((f) => /还债|死党/.test(f)))
+})
+t('P1.1 storyboardUser hides ending; outline/script keep full facts; export emits tiers', () => {
+  const duck: Project = { ...fp, settingFacts: DUCK_FACTS }
+  const sb = storyboardUser(duck, duck.outline[0], '')
+  assert.ok(sb.includes('白朴是富三代')); assert.ok(sb.includes('每集固定结构'))
+  assert.ok(!sb.includes('还债'), sb); assert.ok(!sb.includes('死党'), sb); assert.ok(!/从对头变成/.test(sb))
+  const ou = outlineUser(duck); assert.ok(ou.includes('还债') && ou.includes('死党'))
+  const duckBoard: Project = {
+    ...duck,
+    storyboards: { 1: [S({ id: 'df1', durationSec: 6, characterIds: ['c1'], seedancePrompt: '主体：白朴。动作：抬头。风格：2D日漫。光线：暖光。限制：无任何文字。' })] },
+  }
+  const exp = buildVideoPipelineExport(duckBoard)
+  assert.deepEqual(exp.project.settingFacts, DUCK_FACTS.map((f) => f.trim()))
+  assert.deepEqual(exp.project.settingFactsByTier, tierSettingFacts(DUCK_FACTS))
+  assert.equal(countOf(exp.shots[0].prompt, '风格：'), 1)
+  assert.ok(countOf(exp.shots[0].prompt, '光线：') <= 1)
+  assert.ok(!/还债|死党|从对头变成/.test(exp.shots.map((s) => s.prompt).join('\n')))
+})
+t('P1.1 ensureSinglePrefixedClause: no second 风格/光线 copy', () => {
+  const base = '主体：林川。光线：暖光。限制：无任何文字。'
+  const a = ensureSinglePrefixedClause(base, '光线：', '光线：明亮天光。')
+  assert.equal(countOf(a, '光线：'), 1); assert.ok(a.includes('暖光')); assert.ok(!a.includes('明亮天光'))
+  const b = ensureSinglePrefixedClause('主体：林川。限制：无。', '光线：', '光线：明亮天光。')
+  assert.equal(countOf(b, '光线：'), 1); assert.ok(b.includes('明亮天光'))
+  const c = ensureSinglePrefixedClause('光线：a。主体：x。光线：b。限制：无。', '光线：', '')
+  assert.equal(countOf(c, '光线：'), 1); assert.ok(c.includes('光线：a')); assert.ok(!c.includes('光线：b'))
+  const d = ensureSinglePrefixedClause('主体：x。风格：旧画风。限制：无。', '风格：', `风格：${LIVE}。`, { replace: true })
+  assert.equal(countOf(d, '风格：'), 1); assert.ok(d.includes(LIVE)); assert.ok(!d.includes('旧画风'))
+  // lockPromptStyle still exactly one styleTag
+  const e = lockPromptStyle('风格：2D日漫。主体：x。风格：赛璐璐。光线：暖光。光线：冷光。限制：无。', '真人都市')
+  assert.equal(countOf(e.text, '风格：'), 1); assert.equal(countOf(e.text, LIVE), 1)
+  const f = ensureSinglePrefixedClause(e.text, '光线：', '')
+  assert.equal(countOf(f, '光线：'), 1)
+})
+
 console.log('real2 stats', JSON.stringify({ segments: r2.shots.length, cueCount: cueIds.length, cueIds, overlayCount: r2.shots.flatMap((s) => s.overlayText).length,
   s1_12: { dialogue: r2s('s1-12').dialogue, speaker: r2s('s1-12').speaker }, s1_33: { dialogue: r2s('s1-33').dialogue, speaker: r2s('s1-33').speaker, overlay: r2s('s1-33').overlayText },
   timeConflicts: r2.warnings.filter((w) => w.code === 'time_conflict').map((w) => w.shotId) }))

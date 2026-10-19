@@ -2,6 +2,7 @@
 import type { Character, EpisodeOutline, Project } from '../types'
 import { forbiddenStyleText, styleTag, styleToneForGenre } from './templates/styleTag'
 import { stripLogoText } from './segmentPost'
+import { factsForShotPrompts } from './settingFacts'
 
 /** 平台内容 + 跨集去重规则（随机副作用/惩罚/技能等） */
 export const CONTENT_RULES = '【内容规则】每集随机抽到的副作用/惩罚/代价/技能必须各不相同，全剧不得重复；写之前对照前面各集已用过的，不能换个说法再用一次。副作用只能是滑稽、无害、可当天解除的效果（如口音、打嗝、走路自带BGM、说话押韵、见猫就鞠躬），禁止以性取向、性别认同、种族/地域歧视、残障、疾病、宗教、自残或色情暗示作为惩罚或笑点。'
@@ -76,8 +77,10 @@ export function storyboardUser(p: Project, o: EpisodeOutline, scriptText: string
   const tag = storyboardStyleLine(p)
   const ban = forbiddenStyleText(p.style)
   const [lo, hi] = shotCountRange(p.secondsPerEp)
+  // shot prompts / video model: world+ongoing only (hide ending spoilers)
+  const forShots: Project = { ...p, settingFacts: factsForShotPrompts(p.settingFacts) }
   return withFacts(
-    p,
+    forShots,
     `为第${o.episode}集做分镜。画风${p.style} 时长${p.secondsPerEp}s
 【画风句（硬约束，每镜 seedancePrompt 的「风格：」原样照抄）】${tag}${ban ? `\n【画风禁令】${ban}。` : ''}
 【镜头数与时长（硬约束）】本集 ${lo}–${hi} 镜（约 ${p.secondsPerEp}÷7），每镜 durationSec 5–9 秒；每镜是一个小节拍：动作+反应，或台词+微表演（说前准备/说后余韵/听者反应写在同一镜时间轴里），不要 2–3 秒碎镜。

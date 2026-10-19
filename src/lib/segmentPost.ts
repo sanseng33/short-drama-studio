@@ -8,6 +8,7 @@
  */
 import type { ArtStyle } from '../types'
 import { styleTag, styleToneForGenre } from './templates/styleTag'
+import { tierSettingFacts } from './settingFacts'
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
 
 export interface PostProcessOptions {
@@ -73,6 +74,46 @@ export function addConstraint(prompt: string, c: string): string {
   return `${prompt}${prompt && !/[。.]$/.test(prompt) ? '。' : ''}限制：${c}。`
 }
 
+
+/**
+ * Ensure at most one `prefix…` sentence (e.g. 「风格：」「光线：」).
+ * If the prompt already has that prefix, do not append a second copy — extras are stripped;
+ * the first is kept unless `opts.replace` and a non-empty `clause` replace it.
+ * If missing and `clause` is non-empty, insert once (before 限制：, else at end).
+ */
+export function ensureSinglePrefixedClause(
+  prompt: string,
+  prefix: string,
+  clause: string,
+  opts: { replace?: boolean } = {},
+): string {
+  const raw = (prefix || '').trim()
+  if (!raw) return prompt || ''
+  const esc = raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`${esc}[^。\\n]*[。\\n]?`, 'g')
+  const found = [...(prompt || '').matchAll(re)].map((m) => m[0])
+  let s = tidyPrompt((prompt || '').replace(re, ''))
+  let body = (clause || '').trim().replace(/[。\s]+$/u, '')
+  // allow callers to pass either "风格：xxx" or "xxx"
+  if (body.startsWith(raw)) body = body.slice(raw.length).replace(/^[：:\s]+/, '').trim().replace(/[。\s]+$/u, '')
+  let keep = ''
+  if (found.length) {
+    if (opts.replace && body) keep = `${raw}${body}。`
+    else {
+      const first = found[0].replace(/[。\s]+$/u, '')
+      keep = first.endsWith('。') ? first : `${first}。`
+      if (!keep.startsWith(raw)) keep = `${raw}${keep}`
+    }
+  } else if (body) {
+    keep = `${raw}${body}。`
+  } else {
+    return s
+  }
+  const k = s.search(/限制\s*[：:]/)
+  s = k >= 0 ? `${s.slice(0, k)}${keep}${s.slice(k)}` : `${s}${s && !/[。.]$/.test(s) ? '。' : ''}${keep}`
+  return tidyPrompt(s)
+}
+
 // ---------------- style lock ----------------
 
 /** Style phrases that contradict 真人都市 (longest first). */
@@ -123,9 +164,8 @@ export function lockPromptStyle(prompt: string, style: ArtStyle | string, genre 
   s = s.replace(/风格\s*[：:][^。\n]*[。\n]?/g, '')
   for (const re of LIVE_ACTION_BAN) s = s.replace(re, '')
   s = tidyPrompt(s)
-  const ins = `风格：${tag}。`
-  const k = s.search(/限制\s*[：:]/)
-  s = k >= 0 ? `${s.slice(0, k)}${ins}${s.slice(k)}` : `${s}${s && !/[。.]$/.test(s) ? '。' : ''}${ins}`
+  // exactly one 「风格：」 styleTag sentence
+  s = ensureSinglePrefixedClause(s, '风格：', `风格：${tag}。`, { replace: true })
   return { text: tidyPrompt(s), drifted }
 }
 
@@ -347,7 +387,7 @@ function mergedPrompt(shots: VideoPipelineShot[], durs: number[], total: number,
       .filter((x, i, arr) => !arr.some((y, j) => j !== i && y.trim() !== x.trim() && y.includes(x.trim()) && x.trim().length >= 3)),
     '，',
   )
-  return tidyPrompt(
+  const raw = tidyPrompt(
     [
       '竖屏9:16。',
       scene ? `${scene}。` : '',
@@ -360,6 +400,8 @@ function mergedPrompt(shots: VideoPipelineShot[], durs: number[], total: number,
       limits ? `限制：${limits}。` : '',
     ].join(''),
   )
+  // at most one 光线： (and style is re-locked after merge)
+  return ensureSinglePrefixedClause(raw, '光线：', light ? `光线：${light}` : '')
 }
 
 function mergeUnit(shots: VideoPipelineShot[], minSec: number, maxSec: number, nameOf: (id: string) => string, usedIds: Set<string>): VideoPipelineShot {
@@ -537,7 +579,7 @@ export function postProcessExportWithStats(
       prompt = fixed
       s.visual = fv
     }
-    // style lock
+    // style lock (exactly one 风格：) + at most one 光线：
     const st = lockPromptStyle(prompt, style, genre)
     s.visual = stripStyleDrift(s.visual, style, genre)
     s.action = stripStyleDrift(s.action, style, genre)
@@ -545,7 +587,7 @@ export function postProcessExportWithStats(
       stats.styleDrift++
       driftEp.set(s.episode, [...(driftEp.get(s.episode) || []), s.id])
     }
-    s.prompt = st.text
+    s.prompt = ensureSinglePrefixedClause(st.text, '光线：', '')
     return s
   })
 
@@ -568,6 +610,7 @@ export function postProcessExportWithStats(
           if (m.characterIds.length) p = addConstraint(p, NO_BADGE_CONSTRAINT)
           if (m.speakerOffscreen || m.dialogueLines?.some((l) => l.voiceOnly)) p = addConstraint(p, OFFSCREEN_VOICE_CONSTRAINT)
           p = lockPromptStyle(p, style, genre).text
+          p = ensureSinglePrefixedClause(p, '光线：', '')
         }
         merged.push({ ...m, prompt: p })
       }
@@ -627,7 +670,18 @@ export function postProcessExportWithStats(
     const cp = stripLogoText(c.costume)
     return cp !== c.costume ? { ...c, costumePrompt: cp } : c
   })
-  return { exp: { ...exp, characters, shots, warnings }, stats }
+  const settingFacts = exp.project.settingFacts || []
+  const settingFactsByTier = exp.project.settingFactsByTier ?? tierSettingFacts(settingFacts)
+  return {
+    exp: {
+      ...exp,
+      project: { ...exp.project, settingFacts, settingFactsByTier },
+      characters,
+      shots,
+      warnings,
+    },
+    stats,
+  }
 }
 
 function pacedLen(t: string): number {
