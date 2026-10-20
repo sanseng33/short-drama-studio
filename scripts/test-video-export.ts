@@ -3,6 +3,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, extractOverlay, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
 import { addConstraint, ensureSinglePrefixedClause, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripLogoText } from '../src/lib/segmentPost'
+import {
+  applySceneContinuity,
+  classifyPlace,
+  classifyShotScene,
+  dominantScene,
+  isOverlayOnlyColdOpen,
+  scenesCrossed,
+  timeBandOf,
+} from '../src/lib/sceneContinuity'
 import { classifySettingFact, factsForShotPrompts, tierSettingFacts } from '../src/lib/settingFacts'
 import { styleTag } from '../src/lib/templates/styleTag'
 import type { Character, Project, Shot } from '../src/types'
@@ -469,6 +478,116 @@ t('P1.1 ensureSinglePrefixedClause: no second 风格/光线 copy', () => {
   assert.equal(countOf(e.text, '风格：'), 1); assert.equal(countOf(e.text, LIVE), 1)
   const f = ensureSinglePrefixedClause(e.text, '光线：', '')
   assert.equal(countOf(f, '光线：'), 1)
+})
+
+
+// ---------- storyboard P2: sceneId + carryFromPrev ----------
+t('P2 timeBandOf: night/day/dusk coarse bands', () => {
+  assert.equal(timeBandOf('夜'), 'night')
+  assert.equal(timeBandOf('晚上'), 'night')
+  assert.equal(timeBandOf('早上'), 'day')
+  assert.equal(timeBandOf('早上7点'), 'day')
+  assert.equal(timeBandOf('清晨'), 'day')
+  assert.equal(timeBandOf('白天'), 'day')
+  assert.equal(timeBandOf('下午'), 'day')
+  assert.equal(timeBandOf('黄昏'), 'dusk')
+})
+t('P2 classifyPlace: villa / alley_window / classroom', () => {
+  assert.equal(classifyPlace('夜，江景别墅二楼卧室：落地窗')?.key, 'villa_bedroom')
+  assert.equal(classifyPlace('吴耐的脸贴在铁栏杆窗内侧，旧楼')?.key, 'alley_window')
+  assert.equal(classifyPlace('教室靠窗座位，课桌')?.key, 'classroom')
+  assert.equal(classifyPlace('教学楼走廊：水磨石地面')?.key, 'school_corridor')
+  assert.equal(classifyPlace('校门口奶茶店柜台')?.key, 'milk_tea_shop')
+})
+t('P2 classifyShotScene: stable sceneId across villa window variants', () => {
+  const a = classifyShotScene({
+    id: 'a', episode: 1, prompt: '竖屏9:16。夜，江景别墅二楼卧室。主体：白朴。',
+    visual: '夜，江景别墅二楼卧室：落地窗', action: '写卷子', timeOfDay: '夜', characterIds: ['c1'], overlayText: [],
+  })
+  const b = classifyShotScene({
+    id: 'b', episode: 1, prompt: '竖屏9:16。夜，别墅落地窗前。主体：白朴。',
+    visual: '白朴站在落地窗前擦蛋液', action: '擦玻璃', timeOfDay: '夜', characterIds: ['c1'], overlayText: [],
+  })
+  assert.equal(a.sceneId, 'villa_bedroom_night')
+  assert.equal(b.sceneId, 'villa_bedroom_night')
+  assert.ok(a.sceneLabel.includes('别墅') && a.sceneLabel.includes('夜'))
+  const c = classifyShotScene({
+    id: 'c', episode: 1, prompt: '竖屏9:16。夜，旧楼铁栏杆窗内。主体：吴耐。',
+    visual: '吴耐贴在铁栏杆窗内侧', action: '喊', timeOfDay: '夜', characterIds: ['c3'], overlayText: [],
+  })
+  assert.equal(c.sceneId, 'alley_window_night')
+  assert.notEqual(a.sceneId, c.sceneId)
+})
+t('P2 applySceneContinuity: first false; same scene carry; place/time change breaks', () => {
+  const shots = applySceneContinuity([
+    { id: 's1', episode: 1, prompt: '夜，江景别墅二楼卧室。主体：白朴。', visual: '别墅卧室落地窗', action: '坐', timeOfDay: '夜', characterIds: ['c1'], overlayText: [] },
+    { id: 's2', episode: 1, prompt: '夜，别墅落地窗前。主体：白朴。', visual: '别墅落地窗前擦玻璃', action: '擦', timeOfDay: '夜', characterIds: ['c1'], overlayText: [] },
+    { id: 's3', episode: 1, prompt: '夜，旧楼铁栏杆窗内。主体：吴耐。', visual: '旧楼铁栏杆窗', action: '喊', timeOfDay: '夜', characterIds: ['c3'], overlayText: [] },
+    { id: 's4', episode: 1, prompt: '早上，别墅卧室。主体：白朴。', visual: '早上别墅卧室床头', action: '醒来', timeOfDay: '早上', characterIds: ['c1'], overlayText: [] },
+    { id: 's5', episode: 2, prompt: '早上，别墅卧室。主体：白朴。', visual: '早上别墅卧室', action: '坐起', timeOfDay: '早上', characterIds: ['c1'], overlayText: [] },
+  ])
+  assert.equal(shots[0].carryFromPrev, false)
+  assert.equal(shots[0].sceneId, 'villa_bedroom_night')
+  assert.equal(shots[1].carryFromPrev, true)
+  assert.equal(shots[1].sceneId, 'villa_bedroom_night')
+  assert.equal(shots[2].carryFromPrev, false)
+  assert.equal(shots[2].sceneId, 'alley_window_night')
+  assert.equal(shots[3].carryFromPrev, false)
+  assert.equal(shots[3].sceneId, 'villa_bedroom_day')
+  assert.equal(shots[4].carryFromPrev, false) // new episode
+})
+t('P2 overlay-only cold open breaks carry', () => {
+  assert.equal(isOverlayOnlyColdOpen({ id: 'x', episode: 1, prompt: '', visual: '', action: '', characterIds: [], overlayText: ['系统启动'] }), true)
+  const shots = applySceneContinuity([
+    { id: 'a', episode: 1, prompt: '教室。主体：林川。', visual: '教室课桌', action: '坐', timeOfDay: '白天', characterIds: ['c1'], overlayText: [] },
+    { id: 'b', episode: 1, prompt: '空镜蓝光', visual: '光', action: '闪', timeOfDay: '白天', characterIds: [], overlayText: ['转盘·余额'] },
+  ])
+  assert.equal(shots[1].carryFromPrev, false)
+})
+t('P2 dominantScene / scenesCrossed for merge', () => {
+  const a = { id: 'a', episode: 1, prompt: '夜，江景别墅卧室。主体：x。', visual: '别墅卧室', action: '', timeOfDay: '夜', characterIds: ['c1'], overlayText: [] }
+  const b = { id: 'b', episode: 1, prompt: '夜，别墅落地窗。主体：x。', visual: '别墅落地窗', action: '', timeOfDay: '夜', characterIds: ['c1'], overlayText: [] }
+  const c = { id: 'c', episode: 1, prompt: '夜，旧楼窗。主体：y。', visual: '旧楼铁栏杆窗', action: '', timeOfDay: '夜', characterIds: ['c3'], overlayText: [] }
+  assert.equal(dominantScene([a, b, c]).sceneId, 'villa_bedroom_night')
+  assert.equal(scenesCrossed([a, b]), false)
+  assert.equal(scenesCrossed([a, c]), true)
+})
+t('P2 export/repack attaches sceneId+carryFromPrev', () => {
+  const board: Project = {
+    ...project,
+    storyboards: {
+      1: [
+        S({ id: 'p2a', shotNo: 1, durationSec: 6, characterIds: ['c1'], timeOfDay: '夜', visual: '夜，江景别墅二楼卧室：落地窗与床', seedancePrompt: '竖屏9:16。夜，江景别墅二楼卧室。主体：林川。动作：写字。风格：真人实拍都市短剧质感。限制：无任何文字。' }),
+        S({ id: 'p2b', shotNo: 2, durationSec: 6, characterIds: ['c1'], timeOfDay: '夜', visual: '夜，别墅落地窗前擦玻璃', seedancePrompt: '竖屏9:16。夜，别墅落地窗前。主体：林川。动作：擦玻璃。风格：真人实拍都市短剧质感。限制：无任何文字。' }),
+        S({ id: 'p2c', shotNo: 3, durationSec: 6, characterIds: ['c2'], timeOfDay: '夜', visual: '夜，旧楼铁栏杆窗内侧', seedancePrompt: '竖屏9:16。夜，旧楼铁栏杆窗内。主体：赵泽。动作：喊。风格：真人实拍都市短剧质感。限制：无任何文字。' }),
+      ],
+    },
+  }
+  const exp = buildVideoPipelineExport(board, { mergeToSegments: false })
+  assert.ok(exp.shots.every((s) => s.sceneId && s.sceneLabel))
+  assert.equal(exp.shots[0].carryFromPrev, false)
+  assert.equal(exp.shots[0].sceneId, 'villa_bedroom_night')
+  assert.equal(exp.shots[1].carryFromPrev, true)
+  assert.equal(exp.shots[2].carryFromPrev, false)
+  assert.equal(exp.shots[2].sceneId, 'alley_window_night')
+})
+t('P2 小黄鸭 p1b pack: scene continuity via postProcess', () => {
+  const packPath = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p1b.json'
+  const pack = JSON.parse(readFileSync(packPath, 'utf8')) as VideoPipelineExport
+  const out = postProcessExport(pack, { mergeToSegments: false })
+  const ep1 = out.shots.filter((s) => s.episode === 1)
+  assert.ok(ep1.length >= 8)
+  assert.ok(ep1.every((s) => s.sceneId && typeof s.carryFromPrev === 'boolean'))
+  const ids = [...new Set(ep1.map((s) => s.sceneId!))]
+  assert.ok(ids.includes('villa_bedroom_night') || ids.some((x) => x.startsWith('villa_')), ids.join(','))
+  assert.ok(ids.some((x) => x.includes('alley') || x.includes('villa')), ids.join(','))
+  assert.equal(ep1[0].carryFromPrev, false)
+  const carryN = ep1.filter((s) => s.carryFromPrev).length
+  assert.ok(carryN >= 1, `expected some carryFromPrev in ep1, got ${carryN}`)
+})
+t('P2 storyboard prompts mention optional location', () => {
+  assert.ok(STORYBOARD_SYSTEM.includes('location'))
+  assert.ok(storyboardUser(project, { episode: 1, title: 't', hook: '', summary: '', cliffhanger: '' }, '').includes('location'))
 })
 
 console.log('real2 stats', JSON.stringify({ segments: r2.shots.length, cueCount: cueIds.length, cueIds, overlayCount: r2.shots.flatMap((s) => s.overlayText).length,

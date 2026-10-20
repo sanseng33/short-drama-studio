@@ -47,6 +47,14 @@ export interface VideoPipelineShot {
   speakerOffscreen?: boolean
   /** original shot/segment ids fused into this segment (mergeToSegments) */
   mergedFrom?: string[]
+  /** stable place+time slug for FL2V chaining, e.g. villa_bedroom_night */
+  sceneId?: string
+  /** short Chinese label for humans, e.g. 江景别墅卧室·夜 */
+  sceneLabel?: string
+  /** true when this shot continues the previous shot (same episode + sceneId, not a hard cut) */
+  carryFromPrev?: boolean
+  /** optional storyboard location short tag (fed into scene classification when present) */
+  location?: string
 }
 
 export interface VideoPipelineWarning {
@@ -804,6 +812,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         emotion: s.emotion || '',
         refImage: s.refImage || null,
         ...(s.timeOfDay ? { timeOfDay: s.timeOfDay } : {}),
+        ...(s.location?.trim() ? { location: s.location.trim() } : {}),
         ...(multi ? { segment: { index: idx, total: group.length, parentId: s.id } } : {}),
       })
       if (sg.dialogue && sg.need > sg.u)

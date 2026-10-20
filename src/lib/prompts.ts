@@ -87,7 +87,7 @@ export function storyboardUser(p: Project, o: EpisodeOutline, scriptText: string
 大纲:${JSON.stringify(o)}
 剧本:${scriptText || '(无)'}
 角色(按列表原样使用，勿强行补齐男主女主反派):${JSON.stringify(p.characters.map((c) => characterBrief({ ...c, costume: stripLogoText(c.costume || '') })))}
-每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText（人物台词一律放 dialogue）；每镜 timeOfDay 照抄剧本场景时间，提示词光线与之一致，不要默认夜戏。
+每镜请在 characters 字段给出画面内出场角色名（造型变体写当前变体全名），画外音角色放 voiceOnly；音效放 sfx，系统界面/文字放 overlayText（人物台词一律放 dialogue）；每镜 timeOfDay 照抄剧本场景时间，提示词光线与之一致，不要默认夜戏；可选 location 短标签（如「江景别墅卧室」「旧楼窗」「教室」），同一物理场所保持同一标签。
 硬约束：
 - 每镜一个剧情主动作，时长 5–9 秒；必须另写 1–2 个表演微动作与反应；台词 ≤4.5字/秒且只有一个「名字：」说话人（龙套写身份前缀，且龙套只闻其声不出镜，放 voiceOnly，画面不描绘）。
 - 对白必须有反应（可写在同一镜后半段）；禁止连续说话头；运镜禁止连续三镜纯固定。

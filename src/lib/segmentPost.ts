@@ -5,11 +5,13 @@
  *  - off-list bit-part speakers → off-screen voice (speakerOffscreen / dialogueLines[].voiceOnly), not depicted
  *  - strip logo / 校徽 / 刺绣标 / 字样 phrases from prompts (+ no-badge constraint)
  *  - dedupe near-identical consecutive shots and merge short shots into 5–9 s segments (mergeToSegments, default on)
+ *  - sceneId / sceneLabel / carryFromPrev for FL2V chaining (src/lib/sceneContinuity.ts)
  */
 import type { ArtStyle } from '../types'
 import { styleTag, styleToneForGenre } from './templates/styleTag'
 import { tierSettingFacts } from './settingFacts'
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
+import { applySceneContinuity, sceneFieldsForMerge } from './sceneContinuity'
 
 export interface PostProcessOptions {
   /** merge consecutive short shots into segments (default true) */
@@ -408,6 +410,7 @@ function mergeUnit(shots: VideoPipelineShot[], minSec: number, maxSec: number, n
   if (shots.length === 1) {
     const s = shots[0]
     const d = s.durationSec < minSec ? minSec : s.durationSec
+    // leave sceneId unset — applySceneContinuity assigns with episode place fall-forward
     return d === s.durationSec ? s : { ...s, durationSec: d, prompt: s.prompt.replace(/时间轴[：:][^。]*。/g, '') }
   }
   const first = shots[0]
@@ -447,6 +450,14 @@ function mergeUnit(shots: VideoPipelineShot[], minSec: number, maxSec: number, n
   delete out.dialogueLines
   if (p0?.voiceOnly) out.speakerOffscreen = true
   if (lines.length > 1) out.dialogueLines = lines
+  // scene continuity: majority / first (skip unknown — let episode fall-forward fill);
+  // crossed merges break carry later
+  const sc = sceneFieldsForMerge(shots)
+  if (sc.placeKey !== 'unknown') {
+    out.sceneId = sc.sceneId
+    out.sceneLabel = sc.sceneLabel
+  }
+  if (sc.crossed) (out as VideoPipelineShot & { _scenesCrossed?: boolean })._scenesCrossed = true
   return out
 }
 
@@ -672,12 +683,14 @@ export function postProcessExportWithStats(
   })
   const settingFacts = exp.project.settingFacts || []
   const settingFactsByTier = exp.project.settingFactsByTier ?? tierSettingFacts(settingFacts)
+  // scene continuity (sceneId / sceneLabel / carryFromPrev) — after merge so ids are final
+  const withScene = applySceneContinuity(shots)
   return {
     exp: {
       ...exp,
       project: { ...exp.project, settingFacts, settingFactsByTier },
       characters,
-      shots,
+      shots: withScene,
       warnings,
     },
     stats,

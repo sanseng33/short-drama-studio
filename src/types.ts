@@ -113,6 +113,8 @@ export interface Shot {
   voiceOnly?: string[]
   /** Scene time of day carried from script, e.g. 清晨 / 白天 / 黄昏 / 夜 */
   timeOfDay?: string
+  /** Optional short location tag, e.g. 江景别墅卧室 / 教室 (helps sceneId; post-process still derives when absent) */
+  location?: string
 }
 
 export interface Project {
