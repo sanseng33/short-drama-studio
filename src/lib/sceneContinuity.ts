@@ -7,6 +7,10 @@
  */
 import type { VideoPipelineShot } from './videoExport'
 
+/** Carry-shot wardrobe constraint (one place): keep prev last-frame costume/props/staging. */
+export const CARRY_WARDROBE_CONSTRAINT =
+  '服装/道具/站位：保持与上一镜末帧一致，禁止换装、禁止换回定妆静帧服装、禁止引入定妆包道具（如小黄鸭）除非上一镜已有'
+
 /** Coarse time bands used in sceneId suffixes. */
 export type TimeBand = 'night' | 'day' | 'dusk' | 'unknown'
 

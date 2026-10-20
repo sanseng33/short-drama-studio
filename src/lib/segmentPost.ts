@@ -6,12 +6,13 @@
  *  - strip logo / 校徽 / 刺绣标 / 字样 phrases from prompts (+ no-badge constraint)
  *  - dedupe near-identical consecutive shots and merge short shots into 5–9 s segments (mergeToSegments, default on)
  *  - sceneId / sceneLabel / carryFromPrev for FL2V chaining (src/lib/sceneContinuity.ts)
+ *  - carry shots: append CARRY_WARDROBE_CONSTRAINT (no pack costume re-inject into prompt)
  */
 import type { ArtStyle } from '../types'
 import { styleTag, styleToneForGenre } from './templates/styleTag'
 import { tierSettingFacts } from './settingFacts'
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
-import { applySceneContinuity, sceneFieldsForMerge } from './sceneContinuity'
+import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
 
 export interface PostProcessOptions {
   /** merge consecutive short shots into segments (default true) */
@@ -684,7 +685,11 @@ export function postProcessExportWithStats(
   const settingFacts = exp.project.settingFacts || []
   const settingFactsByTier = exp.project.settingFactsByTier ?? tierSettingFacts(settingFacts)
   // scene continuity (sceneId / sceneLabel / carryFromPrev) — after merge so ids are final
-  const withScene = applySceneContinuity(shots)
+  const withScene = applySceneContinuity(shots).map((s) => {
+    if (!s.carryFromPrev) return s
+    // Keep character.costume in the cast list; only stop re-locking pack wardrobe in the shot prompt.
+    return { ...s, prompt: addConstraint(s.prompt || '', CARRY_WARDROBE_CONSTRAINT) }
+  })
   return {
     exp: {
       ...exp,

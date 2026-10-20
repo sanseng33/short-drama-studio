@@ -5,6 +5,7 @@ import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, 
 import { addConstraint, ensureSinglePrefixedClause, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripLogoText } from '../src/lib/segmentPost'
 import {
   applySceneContinuity,
+  CARRY_WARDROBE_CONSTRAINT,
   classifyPlace,
   classifyShotScene,
   dominantScene,
@@ -568,8 +569,30 @@ t('P2 export/repack attaches sceneId+carryFromPrev', () => {
   assert.equal(exp.shots[0].carryFromPrev, false)
   assert.equal(exp.shots[0].sceneId, 'villa_bedroom_night')
   assert.equal(exp.shots[1].carryFromPrev, true)
+  assert.ok(exp.shots[1].prompt.includes(CARRY_WARDROBE_CONSTRAINT), 'carry shot must append wardrobe constraint')
+  assert.ok(!exp.shots[0].prompt.includes(CARRY_WARDROBE_CONSTRAINT), 'non-carry must not get wardrobe constraint')
   assert.equal(exp.shots[2].carryFromPrev, false)
   assert.equal(exp.shots[2].sceneId, 'alley_window_night')
+})
+t('P2 carry wardrobe: append constraint; leave character.costume untouched', () => {
+  const board: Project = {
+    ...project,
+    characters: chars.map((c) => (c.id === 'c1' ? { ...c, costume: '米白色宽松连帽卫衣（胸口小刺绣标），浅蓝水洗直筒牛仔裤' } : c)),
+    storyboards: {
+      1: [
+        S({ id: 'cw1', shotNo: 1, durationSec: 6, characterIds: ['c1'], timeOfDay: '夜', visual: '夜，江景别墅二楼卧室：落地窗与床', seedancePrompt: '竖屏9:16。夜，江景别墅二楼卧室。主体：林川，米白连帽卫衣。动作：写字。风格：真人实拍都市短剧质感。限制：无任何文字。' }),
+        S({ id: 'cw2', shotNo: 2, durationSec: 6, characterIds: ['c1'], timeOfDay: '夜', visual: '夜，别墅落地窗前擦玻璃', seedancePrompt: '竖屏9:16。夜，别墅落地窗前。主体：林川，米白连帽卫衣。动作：擦玻璃。风格：真人实拍都市短剧质感。限制：无任何文字。' }),
+      ],
+    },
+  }
+  const exp = buildVideoPipelineExport(board, { mergeToSegments: false })
+  const carry = exp.shots.find((s) => s.carryFromPrev)
+  const first = exp.shots[0]
+  assert.ok(carry, 'expected a carry shot')
+  assert.ok(carry!.prompt.includes(CARRY_WARDROBE_CONSTRAINT))
+  assert.ok(!first.prompt.includes(CARRY_WARDROBE_CONSTRAINT))
+  const c1 = exp.characters.find((c) => c.id === 'c1')
+  assert.ok(c1?.costume.includes('连帽卫衣'), 'character.costume must remain in cast list')
 })
 t('P2 小黄鸭 p1b pack: scene continuity via postProcess', () => {
   const packPath = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p1b.json'
