@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, extractOverlay, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
-import { addConstraint, ensureSinglePrefixedClause, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripLogoText } from '../src/lib/segmentPost'
+import { addConstraint, dialogueLeaks, ensureSinglePrefixedClause, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, NO_GLYPH_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripDialogueFromPrompt, stripLogoText } from '../src/lib/segmentPost'
 import {
   applySceneContinuity,
   CARRY_WARDROBE_CONSTRAINT,
@@ -13,7 +13,7 @@ import {
   scenesCrossed,
   timeBandOf,
 } from '../src/lib/sceneContinuity'
-import { classifySettingFact, factsForShotPrompts, tierSettingFacts } from '../src/lib/settingFacts'
+import { classifySettingFact, factsForShotPrompts, QUOTE_MARK_RE, scrubQuotedFact, tierSettingFacts, tierSettingFactsForPrompt } from '../src/lib/settingFacts'
 import { styleTag } from '../src/lib/templates/styleTag'
 import type { Character, Project, Shot } from '../src/types'
 import { writeFileSync } from 'node:fs'
@@ -444,7 +444,8 @@ t('P1.1 tier: 小黄鸭 10 facts → world/ongoing/ending', () => {
   assert.ok(tier.ending[0].includes('还债') && tier.ending[0].includes('死党'))
   assert.equal(tier.world.length, 2)
   assert.equal(tier.ongoing.length, 7)
-  assert.deepEqual(factsForShotPrompts(DUCK_FACTS), [...tier.world, ...tier.ongoing])
+  const tp = tierSettingFactsForPrompt(DUCK_FACTS)
+  assert.deepEqual(factsForShotPrompts(DUCK_FACTS), [...tp.world, ...tp.ongoing])
   assert.ok(!factsForShotPrompts(DUCK_FACTS).some((f) => /还债|死党/.test(f)))
 })
 t('P1.1 storyboardUser hides ending; outline/script keep full facts; export emits tiers', () => {
@@ -459,10 +460,58 @@ t('P1.1 storyboardUser hides ending; outline/script keep full facts; export emit
   }
   const exp = buildVideoPipelineExport(duckBoard)
   assert.deepEqual(exp.project.settingFacts, DUCK_FACTS.map((f) => f.trim()))
-  assert.deepEqual(exp.project.settingFactsByTier, tierSettingFacts(DUCK_FACTS))
+  assert.deepEqual(exp.project.settingFactsByTier, tierSettingFactsForPrompt(DUCK_FACTS))
+  assert.deepEqual(exp.project.settingFactsForPrompt, factsForShotPrompts(DUCK_FACTS))
   assert.equal(countOf(exp.shots[0].prompt, '风格：'), 1)
   assert.ok(countOf(exp.shots[0].prompt, '光线：') <= 1)
   assert.ok(!/还债|死党|从对头变成/.test(exp.shots.map((s) => s.prompt).join('\n')))
+})
+// ---------- no dialogue text in prompts (subtitle/TTS only) ----------
+t('nodialogue: settingFacts quotes scrubbed for prompts, original kept', () => {
+  assert.equal(scrubQuotedFact('某晚白朴被小黄鸭砸中额头，忍不住许愿：“让我变帅一点吧，少点钱也行。”'), '某晚白朴被小黄鸭砸中额头，忍不住许愿。')
+  assert.equal(scrubQuotedFact('第二天早上七点，白朴脑子里弹出一个系统，每天一个选择框，正向只能选“变帅”。'), '第二天早上七点，白朴脑子里弹出一个系统，每天一个选择框，正向只能选变帅。')
+  assert.equal(scrubQuotedFact('他说：「走吧，别回头。」然后离开。'), '他说，然后离开。')
+  assert.equal(scrubQuotedFact('白朴家住江景别墅。'), '白朴家住江景别墅。')
+  const tp = tierSettingFactsForPrompt(DUCK_FACTS)
+  for (const f of [...tp.world, ...tp.ongoing]) { assert.ok(!QUOTE_MARK_RE.test(f), f); assert.ok(!f.includes('少点钱'), f) }
+  assert.deepEqual(tp.ending, tierSettingFacts(DUCK_FACTS).ending)
+  // postProcess re-scrubs an old pack's raw tiers; settingFacts verbatim
+  const old: VideoPipelineExport = { schema: 'short-drama-studio/video-pipeline@1', project: { id: 'p', title: 't', style: '真人都市', platform: '红果', secondsPerEp: 60, settingFacts: DUCK_FACTS, settingFactsByTier: tierSettingFacts(DUCK_FACTS) }, characters: [], shots: [], warnings: [] } as VideoPipelineExport
+  const o = postProcessExport(old)
+  assert.deepEqual(o.project.settingFacts, DUCK_FACTS)
+  assert.ok(![...o.project.settingFactsByTier!.world, ...o.project.settingFactsByTier!.ongoing, ...o.project.settingFactsForPrompt!].some((f) => QUOTE_MARK_RE.test(f) || f.includes('少点钱')))
+})
+t('nodialogue: stripDialogueFromPrompt removes line text, keeps fields', () => {
+  const sh = { dialogue: '让我变帅一点吧，少点钱也行。' }
+  const p = stripDialogueFromPrompt('主体：白朴。动作：捂额头小声许愿说：“让我变帅一点吧，少点钱也行。”。限制：无任何文字。', sh)
+  assert.deepEqual(dialogueLeaks(p, sh), []); assert.ok(!/[“”]/.test(p), p); assert.ok(p.includes('许愿'), p)
+  assert.equal(stripDialogueFromPrompt('主体：白朴。', sh), '主体：白朴。')
+})
+t('nodialogue: postProcess prompts contain no dialogue text (single + merged + lines)', () => {
+  const D = '让我变帅一点吧，少点钱也行。'
+  const cs = [{ id: 'c1', name: '白朴', role: '主角', tags: [], visualLock: '短发', costume: '白T', signatureProp: '' }] as unknown as VideoPipelineExport['characters']
+  const mk = (x: Partial<VideoPipelineShot>): VideoPipelineShot => ({
+    id: 'x', episode: 1, shotNo: 1, durationSec: 3, characterIds: ['c1'], timeOfDay: '夜', prompt: '', visual: '卧室', action: '抬头',
+    dialogue: '', speaker: null, speakerName: null, voiceOnly: [], sfx: [], overlayText: [], camera: '近景', size: '近景', emotion: '委屈', refImage: null, ...x,
+  }) as VideoPipelineShot
+  const shots = [
+    mk({ id: 's8', shotNo: 8, prompt: `夜，卧室。主体：白朴。动作：捂额头许愿「${D}」。限制：无任何文字。`, dialogue: D, speaker: 'c1', speakerName: '白朴' }),
+    mk({ id: 's9', shotNo: 9, prompt: '夜，卧室。主体：白朴。动作：闭眼。', action: '闭眼' }),
+    mk({ id: 's11', shotNo: 11, durationSec: 6, prompt: `夜，卧室。主体：白朴。表演：小声说让我变帅一点吧。限制：无任何文字。`, dialogue: D, speaker: 'c1', speakerName: '白朴',
+      dialogueLines: [{ speaker: 'c1', speakerName: '白朴', text: D }, { speaker: null, speakerName: '路人', text: '谁在楼上喊？', voiceOnly: true }] }),
+  ]
+  const exp = { schema: 'short-drama-studio/video-pipeline@1', project: { id: 'p', title: 't', style: '真人都市', platform: '红果', secondsPerEp: 60, settingFacts: DUCK_FACTS }, characters: cs, shots, warnings: [] } as unknown as VideoPipelineExport
+  for (const merge of [true, false]) {
+    const o = postProcessExport(exp, { mergeToSegments: merge })
+    for (const s of o.shots) {
+      assert.deepEqual(dialogueLeaks(s.prompt, s), [], `${merge} ${s.id}: ${s.prompt}`)
+      assert.ok(!s.prompt.includes('让我变帅') && !s.prompt.includes('谁在楼上'), s.prompt)
+      if (s.dialogue || s.dialogueLines?.length) assert.ok(s.prompt.includes(NO_GLYPH_CONSTRAINT), s.prompt)
+    }
+    // transcript kept in fields
+    const all = o.shots.flatMap((s) => [s.dialogue, ...(s.dialogueLines || []).map((l) => l.text)])
+    assert.ok(all.includes(D)); assert.ok(all.includes('谁在楼上喊？'))
+  }
 })
 t('P1.1 ensureSinglePrefixedClause: no second 风格/光线 copy', () => {
   const base = '主体：林川。光线：暖光。限制：无任何文字。'

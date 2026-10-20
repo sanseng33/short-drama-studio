@@ -7,10 +7,13 @@
  *  - dedupe near-identical consecutive shots and merge short shots into 5–9 s segments (mergeToSegments, default on)
  *  - sceneId / sceneLabel / carryFromPrev for FL2V chaining (src/lib/sceneContinuity.ts)
  *  - carry shots: append CARRY_WARDROBE_CONSTRAINT (no pack costume re-inject into prompt)
+ *  - dialogue text never inside `prompt` (stripDialogueFromPrompt) + NO_GLYPH_CONSTRAINT on talking shots;
+ *    transcript lives only in dialogue / dialogueLines (subtitle / TTS)
+ *  - project.settingFactsByTier world/ongoing quote-scrubbed + settingFactsForPrompt (settingFacts untouched)
  */
 import type { ArtStyle } from '../types'
 import { styleTag, styleToneForGenre } from './templates/styleTag'
-import { tierSettingFacts } from './settingFacts'
+import { factsForShotPrompts, scrubTiers, tierSettingFacts } from './settingFacts'
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
 import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
 
@@ -29,6 +32,47 @@ export const SEGMENT_MIN_SEC = 5
 export const SEGMENT_MAX_SEC = 9
 export const NO_BADGE_CONSTRAINT = '服装无任何标志、校徽、刺绣字样'
 export const OFFSCREEN_VOICE_CONSTRAINT = '画外人声的说话人不出镜，画面只出现指定角色'
+/** Hard no-glyph ban: the model paints dialogue / UI as on-screen text otherwise. */
+export const NO_GLYPH_CONSTRAINT = '画面禁止出现任何字幕、汉字、字母、数字、Logo、系统面板文字'
+/** Dialogue substrings shorter than this are not stripped (avoid eating names / common words). */
+export const DIALOGUE_LEAK_MIN = 4
+
+type WithLines = Pick<VideoPipelineShot, 'dialogue'> & { dialogueLines?: { text: string }[] }
+/** Dialogue strings of a shot (full lines). */
+export function dialogueTexts(s: WithLines): string[] {
+  return [s.dialogue, ...(s.dialogueLines || []).map((l) => l.text)].map((x) => (x || '').trim()).filter(Boolean)
+}
+/** Full lines, quote-stripped cores and clause fragments (≥ DIALOGUE_LEAK_MIN chars), longest first. */
+export function dialogueFragments(s: WithLines): string[] {
+  const out = new Set<string>()
+  for (const t of dialogueTexts(s)) {
+    const core = t.replace(/^[「」“”"'‘’『』\s]+|[「」“”"'‘’『』\s]+$/g, '')
+    for (const x of [t, core, ...core.split(/[，。！？、；…,.!?;~～\s]+/)]) {
+      const y = (x || '').trim()
+      if ([...y].length >= DIALOGUE_LEAK_MIN) out.add(y)
+    }
+  }
+  return [...out].sort((a, b) => b.length - a.length)
+}
+/** Dialogue fragments still present in `prompt` (empty = clean). */
+export function dialogueLeaks(prompt: string, s: WithLines): string[] {
+  return dialogueFragments(s).filter((f) => (prompt || '').includes(f))
+}
+/**
+ * Remove any dialogue text (≥4 chars) from a prompt; drops emptied quote pairs and a dangling 「说：」.
+ * Speaking is described only as （名字开口说台词） / emotion — never the transcript.
+ */
+export function stripDialogueFromPrompt(prompt: string, s: WithLines): string {
+  const frags = dialogueFragments(s)
+  if (!frags.length) return prompt || ''
+  let p = prompt || ''
+  for (const f of frags) p = p.split(f).join('')
+  if (p === prompt) return prompt
+  p = p
+    .replace(/[“「『‘"][\s，。！？、；…,.!?;~～]*[”」』’"]/g, '')
+    .replace(/(说道|喊道|问道|说)\s*[：:]\s*(?=[。，；,;]|$)/g, '$1')
+  return tidyPrompt(p)
+}
 
 // ---------------- clause helpers ----------------
 
@@ -533,6 +577,8 @@ export interface PostProcessStats {
   offscreen: number
   mergedGroups: number
   extendedToMin: number
+  /** shots whose prompt contained dialogue text (stripped) */
+  dialogueStripped: number
 }
 
 /** Re-apply all deterministic post-processing to an export (pure; returns a new export). */
@@ -547,7 +593,7 @@ export function postProcessExportWithStats(
   const genre = opts.genre ?? ''
   const minSec = opts.segmentMinSec ?? SEGMENT_MIN_SEC
   const maxSec = opts.segmentMaxSec ?? SEGMENT_MAX_SEC
-  const stats: PostProcessStats = { styleDrift: 0, timeFixed: 0, logoStripped: 0, offscreen: 0, mergedGroups: 0, extendedToMin: 0 }
+  const stats: PostProcessStats = { styleDrift: 0, timeFixed: 0, logoStripped: 0, offscreen: 0, mergedGroups: 0, extendedToMin: 0, dialogueStripped: 0 }
   const chars = exp.characters
   const nameOf = (id: string) => {
     const c = chars.find((x) => x.id === id)
@@ -600,6 +646,12 @@ export function postProcessExportWithStats(
       driftEp.set(s.episode, [...(driftEp.get(s.episode) || []), s.id])
     }
     s.prompt = ensureSinglePrefixedClause(st.text, '光线：', '')
+    // dialogue transcript never in the generation prompt (kept in dialogue / dialogueLines)
+    if (dialogueTexts(s).length) {
+      const clean = stripDialogueFromPrompt(s.prompt, s)
+      if (clean !== s.prompt) stats.dialogueStripped++
+      s.prompt = addConstraint(clean, NO_GLYPH_CONSTRAINT)
+    }
     return s
   })
 
@@ -621,6 +673,7 @@ export function postProcessExportWithStats(
         if (m.mergedFrom && m.mergedFrom.length > 1) {
           if (m.characterIds.length) p = addConstraint(p, NO_BADGE_CONSTRAINT)
           if (m.speakerOffscreen || m.dialogueLines?.some((l) => l.voiceOnly)) p = addConstraint(p, OFFSCREEN_VOICE_CONSTRAINT)
+          if (dialogueTexts(m).length) p = addConstraint(p, NO_GLYPH_CONSTRAINT)
           p = lockPromptStyle(p, style, genre).text
           p = ensureSinglePrefixedClause(p, '光线：', '')
         }
@@ -683,17 +736,25 @@ export function postProcessExportWithStats(
     return cp !== c.costume ? { ...c, costumePrompt: cp } : c
   })
   const settingFacts = exp.project.settingFacts || []
-  const settingFactsByTier = exp.project.settingFactsByTier ?? tierSettingFacts(settingFacts)
+  // prompt-facing tiers: quoted dialogue / plot lines scrubbed (settingFacts stays verbatim for humans)
+  const settingFactsByTier = scrubTiers(exp.project.settingFactsByTier ?? tierSettingFacts(settingFacts))
+  const settingFactsForPrompt = exp.project.settingFactsByTier
+    ? [...settingFactsByTier.world, ...settingFactsByTier.ongoing]
+    : factsForShotPrompts(settingFacts)
   // scene continuity (sceneId / sceneLabel / carryFromPrev) — after merge so ids are final
   const withScene = applySceneContinuity(shots).map((s) => {
     if (!s.carryFromPrev) return s
     // Keep character.costume in the cast list; only stop re-locking pack wardrobe in the shot prompt.
     return { ...s, prompt: addConstraint(s.prompt || '', CARRY_WARDROBE_CONSTRAINT) }
+  }).map((s) => {
+    // final guard (merge / carry may have re-assembled text): no dialogue substring in prompt
+    const clean = stripDialogueFromPrompt(s.prompt || '', s)
+    return clean === s.prompt ? s : { ...s, prompt: clean }
   })
   return {
     exp: {
       ...exp,
-      project: { ...exp.project, settingFacts, settingFactsByTier },
+      project: { ...exp.project, settingFacts, settingFactsByTier, settingFactsForPrompt },
       characters,
       shots: withScene,
       warnings,

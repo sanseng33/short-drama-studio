@@ -3,7 +3,7 @@ import type { Character, Project, Shot } from '../types'
 import { mapNamesToIds, shotCharacterIds } from './shotCast'
 import { cleanField, cleanPrompt } from './placeholder'
 import { postProcessExport, type DialogueLineOut } from './segmentPost'
-import { tierSettingFacts, type SettingFactsByTier } from './settingFacts'
+import { factsForShotPrompts, tierSettingFactsForPrompt, type SettingFactsByTier } from './settingFacts'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
 /** Dialogue pacing: Chinese chars (CJK + alnum) per second */
@@ -86,8 +86,11 @@ export interface VideoPipelineExport {
     secondsPerEp: number
     /** flat list kept for old consumers / UI */
     settingFacts: string[]
-    /** tiered facts; drama CLI should consume world+ongoing only (never ending) for shot prompts */
+    /** tiered facts; drama CLI should consume world+ongoing only (never ending) for shot prompts.
+     *  world/ongoing are quote-scrubbed (no quoted dialogue lines) — safe to inject into generation prompts. */
     settingFactsByTier?: SettingFactsByTier
+    /** world+ongoing, quote-scrubbed: the ONLY facts a video/generation prompt may use */
+    settingFactsForPrompt?: string[]
   }
   characters: {
     id: string
@@ -865,7 +868,8 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       secondsPerEp: project.secondsPerEp,
       settingFacts: (project.settingFacts || []).map((f) => f.trim()).filter(Boolean),
       // drama CLI should consume settingFactsByTier.world + .ongoing only (never .ending) for shot prompts
-      settingFactsByTier: tierSettingFacts(project.settingFacts),
+      settingFactsByTier: tierSettingFactsForPrompt(project.settingFacts),
+      settingFactsForPrompt: factsForShotPrompts(project.settingFacts),
     },
     characters: chars.map((c) => ({
       id: c.id,
