@@ -77,7 +77,8 @@ export interface VideoPipelineShot {
    */
   angleKey?: string
   /**
-   * opt-in splitCrossCut: most recent earlier shot (output order) with the same angleKey; null = first of its angle.
+   * opt-in splitCrossCut: most recent earlier shot (output order) IN THE SAME EPISODE with the same angleKey;
+   * null = first shot of that angleKey within its episode (chains never cross an episode boundary).
    * Runner rule (FL2V first frame):
    *  1. key present and a string → start from that shot's last frame (wins over carryFromPrev);
    *  2. key present and null → start from the character-pack ref image (ignore carryFromPrev);
@@ -110,6 +111,8 @@ export interface VideoPipelineOptions {
   beatMode?: 'off' | 'speed'
   /** opt-in: split two-person facing-window / cross-cut segments into solo shots + set angleKey/carryFromShotId (default false) */
   splitCrossCut?: boolean
+  /** with splitCrossCut: explicit { shotId: sceneId } place corrections */
+  sceneOverrides?: Record<string, string>
 }
 
 export interface VideoPipelineExport {
@@ -933,6 +936,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     genre: project.genre,
     beatMode: opts.beatMode,
     splitCrossCut: opts.splitCrossCut,
+    sceneOverrides: opts.sceneOverrides,
   })
 }
 

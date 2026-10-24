@@ -1,12 +1,14 @@
 /** npx tsx scripts/test-crosscut-split.ts — opt-in cross-cut split + angleKey / carryFromShotId */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
-import { applyBeatMode, BEAT_MOUTH_CUE, isBeatPrompt, SOLO_SPLIT_LIMIT } from '../src/lib/beatPrompt'
+import { applyBeatMode, BEAT_MOUTH_CUE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, SOLO_SPLIT_LIMIT } from '../src/lib/beatPrompt'
 import {
   allocateSplitDurations,
   angleKeyOf,
   applyCrossCutSplit,
   assignAngleKeys,
+  characterHomes,
+  correctScenes,
   isCrossCutShot,
   reviewCarryChains,
   splitCrossCutShots,
@@ -177,6 +179,83 @@ t('mixed beat (two named subjects) is divided by subject; other names → 对面
   assert.ok(splits[0].notes.some((n) => n.includes('按主语拆')))
 })
 
+t('episode boundary: chains restart per episode; validation rejects cross-episode refs', () => {
+  const e2 = (p: Partial<VideoPipelineShot>) => SH({ episode: 2, ...p })
+  const { exp } = applyCrossCutSplit(pack([soloC3, soloC2, S124, after, e2({ id: 's2-1', ...villa }), e2({ id: 's2-2', ...villa })]))
+  const m = Object.fromEntries(exp.shots.map((s) => [s.id, s]))
+  assert.equal(m['s2-1'].angleKey, 'villa_bedroom_day_c2')
+  assert.equal(m['s2-1'].carryFromShotId, null, 'first of its angle in episode 2 → null (not s1-24a)')
+  assert.equal(m['s2-2'].carryFromShotId, 's2-1')
+  assert.deepEqual(validateCarryChain(exp.shots), [])
+  const bad = [
+    { id: 'a', episode: 1, angleKey: 'k', carryFromShotId: null },
+    { id: 'b', episode: 2, angleKey: 'k', carryFromShotId: 'a' },
+  ]
+  assert.ok(validateCarryChain(bad).some((e) => e.includes('跨集')), 'cross-episode ref is an error')
+})
+
+t('scene correction rule: solo shot at the other character\'s facing-window home moves to its own home', () => {
+  const night = { sceneId: 'villa_bedroom_night', sceneLabel: '江景别墅卧室·夜', placeKey: 'villa_bedroom', timeBand: 'night' }
+  const alleyN = { sceneId: 'alley_window_night', sceneLabel: '旧楼窗·夜', placeKey: 'alley_window', timeBand: 'night' }
+  const cross = SH({ id: 'x1', characterIds: ['c2', 'c3'], prompt: '竖屏9:16。构图：对窗。主体：两人。', ...villa })
+  const shots = [
+    cross,
+    SH({ id: 'v1', ...villa }), SH({ id: 'v2', ...villa }), SH({ id: 'v3', ...night }),
+    SH({ id: 'a1', characterIds: ['c3'], ...alley }), SH({ id: 'a2', characterIds: ['c3'], ...alleyN }),
+    SH({ id: 'bad1', characterIds: ['c2'], ...alleyN }), // 白朴 labelled at 吴耐's window
+    SH({ id: 'bad2', characterIds: ['c3'], ...villa }), // 吴耐 labelled in 白朴's bedroom
+    SH({ id: 'cls', characterIds: ['c2'], sceneId: 'classroom_day', sceneLabel: '教室·日', placeKey: 'classroom', timeBand: 'day' }),
+    SH({ id: 'two', characterIds: ['c2', 'c3'], prompt: '竖屏9:16。构图：两窗对切。主体：两人。', ...alley }),
+  ]
+  const h = characterHomes(shots)
+  assert.equal(h.home.get('c2'), 'villa_bedroom')
+  assert.equal(h.home.get('c3'), 'alley_window')
+  const { exp, corrections } = correctScenes(pack(shots))
+  const m = Object.fromEntries(exp.shots.map((s) => [s.id, s]))
+  assert.deepEqual(corrections.map((c) => [c.id, c.from, c.to, c.by]), [
+    ['bad1', 'alley_window_night', 'villa_bedroom_night', 'rule'],
+    ['bad2', 'villa_bedroom_day', 'alley_window_day', 'rule'],
+  ])
+  assert.equal(m.bad1.sceneLabel, '江景别墅卧室·夜')
+  assert.equal(m.bad1.placeKey, 'villa_bedroom')
+  assert.equal(m.bad1.timeBand, 'night')
+  assert.equal(m.cls.sceneId, 'classroom_day', 'non-window places untouched')
+  assert.equal(m.two.sceneId, 'alley_window_day', 'multi-person shots untouched by the rule')
+  // explicit override wins, unknown sceneId throws
+  const o = correctScenes(pack(shots), { bad1: 'classroom_day', two: 'classroom_day' })
+  assert.deepEqual(o.corrections.map((c) => [c.id, c.to, c.by]), [['bad1', 'classroom_day', 'override'], ['bad2', 'alley_window_day', 'rule'], ['two', 'classroom_day', 'override']])
+  assert.throws(() => correctScenes(pack(shots), { bad1: 'moon_base' }), /unknown sceneId/)
+  // no clear majority → no home → no correction
+  const tie = [cross, shots[shots.length - 1], SH({ id: 't1', characterIds: ['c3'], ...villa }), SH({ id: 't2', characterIds: ['c3'], ...alley })]
+  assert.equal(characterHomes(tie).home.get('c3'), undefined)
+  assert.deepEqual(correctScenes(pack(tie)).corrections, [])
+})
+
+t('near-duplicate clauses: filler-insensitive containment keeps the fuller wording', () => {
+  assert.deepEqual(dedupeClauses(['眉毛抬起半寸', '手还搭在窗框上', '手搭在窗框上没放下', '眼神带着倔强']), ['眉毛抬起半寸', '手搭在窗框上没放下', '眼神带着倔强'])
+  assert.deepEqual(dedupeClauses(['手还搭在窗框上', '手指敲着桌面']), ['手还搭在窗框上', '手指敲着桌面'], 'different actions kept')
+  assert.deepEqual(dedupeClauses(['他笑了', '他又笑了']), ['他笑了', '他又笑了'], 'too short to judge')
+})
+
+t('solo child header / limits drop the two-space composition; X别墅 → 对面别墅', () => {
+  const s = SH({
+    id: 's2-22', characterIds: ['c2', 'c3'], durationSec: 5.5, dialogue: '这件我可是挑了很久的。', speaker: 'c2', speakerName: '白朴', timeOfDay: '黄昏',
+    sceneId: 'villa_bedroom_dusk', sceneLabel: '江景别墅卧室·黄昏', placeKey: 'villa_bedroom', timeBand: 'dusk',
+    visual: '白朴整理衬衫；对面旧楼窗口：吴耐捏着杂志，盯着白朴别墅的落地窗',
+    prompt:
+      '竖屏9:16。左右双窗同框的构图：左侧是江景别墅落地窗，右侧是旧楼窗。构图：对窗。主体：17岁少年白朴（变帅后），白衬衫；17岁少年吴耐，蓝白运动校服。时间轴（一镜5.5秒，小节拍）：0–3.5s白朴把领口抚平（白朴开口说台词）；3.5–5.5s随后吴耐把杂志角捏紧，盯着白朴别墅的落地窗。镜头：全景。限制：无任何文字，同框仅两人。',
+  })
+  const alleyD = { sceneId: 'alley_window_dusk', sceneLabel: '旧楼窗·黄昏', placeKey: 'alley_window', timeBand: 'dusk' }
+  const { exp } = splitCrossCutShots(pack([SH({ id: 'h1', characterIds: ['c3'], ...alleyD }), SH({ id: 'h2', ...villa }), s]))
+  const [a, b] = exp.shots.filter((x) => x.splitFrom)
+  assert.ok(a.prompt.startsWith('竖屏9:16。黄昏，江景别墅卧室窗前。'), a.prompt.slice(0, 40))
+  assert.ok(!/双窗|同框|两人/.test(a.prompt + b.prompt), 'no two-person composition / limit in solo children')
+  assert.ok(b.prompt.includes('对面别墅的落地窗'), b.prompt)
+  // dialogue child long enough for line/4.5 + 0.5 s plus one other segment
+  const need = [...'这件我可是挑了很久的'].length / 4.5 + DIALOGUE_PAD_SEC + 1
+  assert.ok(a.durationSec >= need, `${a.durationSec} ≥ ${need}`)
+})
+
 t('default stays off: no split / angle fields without the flag', () => {
   const a = postProcessExport(base, { mergeToSegments: false })
   assert.ok(a.shots.every((s) => !s.splitFrom && !('angleKey' in s) && !('carryFromShotId' in s)))
@@ -231,6 +310,32 @@ const P2 = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p2-clean
 if (existsSync(P2)) {
   const p2 = JSON.parse(readFileSync(P2, 'utf8')) as VideoPipelineExport
   const FLAGGED = ['s1-1', 's1-8', 's1-13', 's1-21', 's1-24', 's1-30', 's2-22', 's3-6', 's3-25', 's4-1']
+  const OV = JSON.parse(readFileSync(new URL('./scene-overrides/xiaohuangya-p2-clean.json', import.meta.url), 'utf8')).overrides as Record<string, string>
+  t('p2-clean: scene corrections (rule + override file), chains stay inside episodes', () => {
+    const { exp, corrections } = applyCrossCutSplit(p2, { sceneOverrides: OV })
+    assert.deepEqual(corrections.map((c) => `${c.id}:${c.to}:${c.by}`), [
+      's2-1:alley_window_day:rule',
+      's3-29:villa_bedroom_night:rule',
+      's4-25:villa_bedroom_night:rule',
+      's5-4:villa_bedroom_day:rule',
+      's6-13:classroom_day:override',
+      's6-16:classroom_day:override',
+    ])
+    // without the override file the rule alone would put s6-16 in the bedroom (why it is an explicit override)
+    assert.equal(applyCrossCutSplit(p2).corrections.find((c) => c.id === 's6-16')?.to, 'villa_bedroom_day')
+    assert.deepEqual(validateCarryChain(exp.shots), [])
+    const r = reviewCarryChains(exp.shots)
+    assert.deepEqual(r.crossEpisode, [])
+    assert.deepEqual(r.placeConflict, [])
+    assert.deepEqual(r.longGap, [])
+    assert.deepEqual(r.splitResolved.map((x) => x.split(':')[0]), ['s1-11', 's2-24', 's3-29'])
+    const ep = new Map(exp.shots.map((s) => [s.id, s.episode]))
+    for (const s of exp.shots) if (s.carryFromShotId) assert.equal(ep.get(s.carryFromShotId), s.episode, s.id)
+    const m = Object.fromEntries(exp.shots.map((s) => [s.id, s]))
+    assert.equal(m['s3-29'].carryFromShotId, 's3-25a', 'c2 night window continues from s3-25a')
+    assert.equal(m['s4-25'].carryFromShotId, 's4-21')
+    assert.equal(m['s2-2'].carryFromShotId, null, 'no carry from 吴耐 window / previous episode')
+  })
   t('p2-clean: exactly the flagged cross-cut segments are split; chain valid', () => {
     assert.deepEqual(p2.shots.filter(isCrossCutShot).map((s) => s.id), FLAGGED)
     const { exp, splits } = applyCrossCutSplit(p2)
@@ -263,7 +368,14 @@ if (existsSync(P2)) {
     assert.ok(Array.isArray(r.crossEpisode) && Array.isArray(r.legacyMismatch))
   })
   t('p2-clean split + beat: s1-24a/b solo prompts; no names or dialogue leaks in children', () => {
-    const exp = applyBeatMode(applyCrossCutSplit(p2).exp)
+    const exp = applyBeatMode(applyCrossCutSplit(p2, { sceneOverrides: OV }).exp)
+    for (const s of exp.shots) {
+      const lines = s.dialogueLines?.length ? s.dialogueLines.map((l) => l.text) : s.dialogue ? [s.dialogue] : []
+      const dlg = lines.reduce((a, l) => a + [...(l || '')].filter((ch) => /[\u4e00-\u9fffA-Za-z0-9]/.test(ch)).length / 4.5, 0)
+      const slow = s.beatSegments!.filter((x) => x.speed === '慢').reduce((a, x) => a + x.end - x.start, 0)
+      if (dlg > 0) assert.ok(slow >= dlg + DIALOGUE_PAD_SEC - 1e-9, `${s.id}: 慢 ${slow}s < ${dlg.toFixed(2)}+0.5`)
+    }
+    assert.ok(!exp.shots.find((s) => s.id === 's3-6b')!.prompt.includes('手还搭在窗框上'), 's3-6b duplicate clause removed')
     const m = Object.fromEntries(exp.shots.map((s) => [s.id, s]))
     assert.deepEqual([m['s1-24a'].characterIds, m['s1-24b'].characterIds], [['c2'], ['c3']])
     assert.equal(m['s1-24a'].dialogue, '我就是白朴。')

@@ -1,0 +1,11 @@
+{
+  "note": "小黄鸭砸出个帅系统 p2-clean: place labels with no reliable text cue for the solo-shot home rule. Use with: repack --split-crosscut --scene-overrides scripts/scene-overrides/xiaohuangya-p2-clean.json",
+  "overrides": {
+    "s6-13": "classroom_day",
+    "s6-16": "classroom_day"
+  },
+  "reasons": {
+    "s6-13": "两人隔着课桌站着，背景是后排窗；窗外旧楼只是窗景 → 教室，不是旧楼窗",
+    "s6-16": "紧接 s6-13 的教室正反打（视线落向画外的对方，白天窗侧柔光）；文本只有窗外旧楼倒影，规则会误判为别墅卧室"
+  }
+}

@@ -94,15 +94,25 @@ export function splitClauses(text: string): string[] {
     .filter((x) => paced(x) > 0)
 }
 
+/** clause core without filler adverbs/particles (还/又/也/仍/都/就/再/了/着), for near-duplicate checks */
+const fillerless = (t: string) => t.replace(/[还又也仍都就再了着]/g, '')
+
 /** Drop repeated / near-duplicate clauses (merged beats repeat 表演 notes). */
 export function dedupeClauses(cs: string[]): string[] {
   const out: string[] = []
   for (const c of cs) {
     const x = c.trim()
     if (!x) continue
-    const dup = out.findIndex((y) => y === x || (paced(x) >= 4 && y.includes(x)) || (paced(x) >= 4 && sim(x, y) >= 0.75))
+    const cx = fillerless(x)
+    const dup = out.findIndex((y) => {
+      if (y === x) return true
+      if (paced(x) < 4) return false
+      const cy = fillerless(y)
+      return y.includes(x) || sim(x, y) >= 0.75 || (Math.min(paced(cx), paced(cy)) >= 4 && (cy.includes(cx) || cx.includes(cy)))
+    })
     if (dup >= 0) {
-      if (paced(x) > paced(out[dup]) && x.includes(out[dup])) out[dup] = x
+      // keep the more informative wording (e.g. 手还搭在窗框上 + 手搭在窗框上没放下 → the latter)
+      if (paced(x) > paced(out[dup]) && (x.includes(out[dup]) || cx.includes(fillerless(out[dup])))) out[dup] = x
       continue
     }
     out.push(x)
@@ -324,6 +334,9 @@ export function partitionBeats(beats: RawBeat[], total: number): Group[] {
   })
 }
 
+/** seconds of slack on top of line length / 4.5 for the 【慢】 dialogue segment */
+export const DIALOGUE_PAD_SEC = 0.5
+
 /** Single-beat source (unmerged shot): clauses → pseudo-beats with proportional (unsnapped) times. */
 function clauseBeats(text: string, total: number, hasDialogue: boolean, onscreenSpeech: boolean): RawBeat[] {
   const cls = dedupeClauses(splitClauses(text))
@@ -371,12 +384,16 @@ function snapGroups(groups: Group[], total: number, needDialogueSec: number): vo
       const a = di ? cuts[di - 1] : 0
       const b = di < k - 1 ? cuts[di] : total
       if (b - a >= need - 1e-9) break
-      // grow toward the larger neighbour
-      const left = di ? (cuts[di - 1] - (di > 1 ? cuts[di - 2] : 0)) : 0
-      const right = di < k - 1 ? ((di + 1 < k - 1 ? cuts[di + 1] : total) - cuts[di]) : 0
-      if (right > minSeg + 1e-9 && right >= left) cuts[di] += 0.5
-      else if (left > minSeg + 1e-9) cuts[di - 1] -= 0.5
-      else break
+      // grow toward the side with more slack; cascade so a non-adjacent segment can donate too
+      const leftSlack = di ? cuts[di - 1] - minSeg * di : 0
+      const rightSlack = di < k - 1 ? total - cuts[di] - minSeg * (k - 1 - di) : 0
+      if (rightSlack >= 0.5 - 1e-9 && rightSlack >= leftSlack) {
+        cuts[di] += 0.5
+        for (let j = di + 1; j < k - 1; j++) if (cuts[j] - cuts[j - 1] < minSeg - 1e-9) cuts[j] += 0.5
+      } else if (leftSlack >= 0.5 - 1e-9) {
+        cuts[di - 1] -= 0.5
+        for (let j = di - 2; j >= 0; j--) if (cuts[j + 1] - cuts[j] < minSeg - 1e-9) cuts[j] -= 0.5
+      } else break
     }
   }
   groups.forEach((g, i) => {
@@ -564,7 +581,18 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     g.beats[g.beats.length - 1].voice = !onscreenSpeech
   }
   const dlgSec = lines.reduce((a, l) => a + paced(l.text || '') / 4.5, 0)
-  snapGroups(groups, total, groups.filter((g) => g.beats.some((b) => b.speech || b.voice)).length === 1 ? dlgSec : 0)
+  // the 【慢】 dialogue segment needs line length / 4.5 + 0.5 s; with 3 segments that may not fit (≥1 s for each
+  // of the others) → fold the smaller neighbour into the dialogue segment
+  const isDlg = (g: Group) => g.beats.some((b) => b.speech || b.voice)
+  const needSlow = dlgSec > 0 ? Math.ceil((dlgSec + DIALOGUE_PAD_SEC) * 2) / 2 : 0
+  if (groups.length === 3 && groups.filter(isDlg).length === 1 && needSlow > total - 2) {
+    const di = groups.findIndex(isDlg)
+    const ni = di === 0 ? 1 : di === 2 ? 1 : groups[0].end - groups[0].start <= groups[2].end - groups[2].start ? 0 : 2
+    const [a, b] = ni < di ? [ni, di] : [di, ni]
+    const merged: Group = { beats: [...groups[a].beats, ...groups[b].beats], start: groups[a].start, end: groups[b].end }
+    groups.splice(a, 2, merged)
+  }
+  snapGroups(groups, total, groups.filter(isDlg).length === 1 ? (dlgSec > 0 ? dlgSec + DIALOGUE_PAD_SEC : 0) : 0)
 
   // ---- render segments
   const segMeta: BeatSegmentMeta[] = []
@@ -650,7 +678,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   })
   for (const m of segMeta) if (m.end - m.start < 1 - 1e-9) todo.push(`分段 ${fmt(m.start)}–${fmt(m.end)}秒 不足 1 秒`)
   const slowSec = segMeta.filter((m) => m.speed === '慢').reduce((a, m) => a + m.end - m.start, 0)
-  if (hasDialogue && dlgSec > slowSec + 0.5) todo.push(`台词约需 ${dlgSec.toFixed(1)}秒，【慢】段仅 ${fmt(slowSec)}秒`)
+  if (hasDialogue && dlgSec + DIALOGUE_PAD_SEC > slowSec + 1e-9) todo.push(`台词约需 ${dlgSec.toFixed(1)}秒，【慢】段仅 ${fmt(slowSec)}秒`)
   if (cast.length >= 2 && CROSSCUT_RE.test(src)) todo.push('原段为对窗/对切双空间，单镜不切镜难以同时拍到两人，建议拆为单人镜')
 
   // ---- header / footer

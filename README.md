@@ -146,10 +146,12 @@
 **angleKey / carryFromShotId**（开启 splitCrossCut 时，整包每一镜都有）：
 
 - `angleKey = ${sceneId}_${characterIds 排序后用 + 连接 | empty}`，例如 `villa_bedroom_day_c2`、`classroom_day_c2+c3`。
-- `carryFromShotId` = 输出顺序中**更早**、angleKey 相同的最近一镜的 id；该 angleKey 的第一镜为 `null`。
+- `carryFromShotId` = 输出顺序中**更早**、**同一集内**、angleKey 相同的最近一镜的 id；该 angleKey 在每一集的第一次出现为 `null`（承接链永不跨集）。
 - **Runner 规则（首帧来源）**：① `carryFromShotId` 为字符串 → 用该镜的末帧（优先于 carryFromPrev）；② 字段存在且为 `null` → 从定妆包角色参考图起；③ 字段不存在（旧包）→ 按 `carryFromPrev`（true 用上一镜末帧，否则定妆参考图）。**承接帧一律用该镜 LatentSync 之前的干净无声末帧**（不要用对口型后的成片帧）。
 - 非拆分镜的 `carryFromPrev` 保持不变（向后兼容）；拆分子镜的 `carryFromPrev` 仅当 `carryFromShotId` 恰为上一镜时为 true。
-- 校验 `validateCarryChain(shots)`：每个 carryFromShotId 指向更早、angleKey 相同的镜头，无环、id 唯一。`reviewCarryChains` 列出跨集承接、旧 carryFromPrev 与新链不一致的镜头供人工核对。
+- 校验 `validateCarryChain(shots)`：每个 carryFromShotId 指向更早、同一集、angleKey 相同的镜头，无环、id 唯一。`reviewCarryChains` 供人工核对：`crossEpisode`（应为空）、`placeConflict`（单人镜在他人常驻窗，应为空）、`splitResolved`（拆分后上一镜换成了对方子镜，新链按机位跳过，属预期）、`legacyMismatch`（原有的 carryFromPrev 跨机位/人数变化，runner 以 carryFromShotId 为准）。
+- **地点纠正**（拆分前执行，`correctScenes`）：规则——单人镜被标在「另一角色的对窗常驻地点」（如白朴单人镜标成 `alley_window_*`）且该角色自己的常驻窗明确（单人镜过半数），改为自己的常驻地点、同一时段（目标 sceneId 必须已存在）。文本没有可靠地点线索的镜头用显式覆盖表 `{ shotId: sceneId }`（优先于规则），例如 `scripts/scene-overrides/xiaohuangya-p2-clean.json`（s6-13/s6-16 → 教室）。
+- 台词时长：【慢】台词段 ≥ 台词字数/4.5 + 0.5s；三段放不下时把较短的相邻段并入台词段；拆分子镜按此再留 ≥1s 给另一段，必要时子镜加长。
 
 命令行（对已定稿的包，不重新合并）：
 
@@ -157,6 +159,7 @@
 npx tsx scripts/repack.ts in.json out.json --beat-only                    # 只改写节拍
 npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut   # 先拆对窗段再改写节拍
 npx tsx scripts/repack.ts in.json out.json --split-only                   # 只拆分 + angleKey，不改写节拍
+npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut --scene-overrides scripts/scene-overrides/xiaohuangya-p2-clean.json
 ```
 
 测试：`npx tsx scripts/test-beat-prompt.ts`、`npx tsx scripts/test-crosscut-split.ts`。

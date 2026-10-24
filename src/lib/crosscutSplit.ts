@@ -17,7 +17,7 @@
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import type { DialogueLineOut } from './segmentPost'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
-import { clause, CROSSCUT_RE, dedupeClauses, isBeatPrompt, MARK_RE, nameVariants, parseMergedTimeline, SOLO_SPLIT_LIMIT, splitTop } from './beatPrompt'
+import { clause, CROSSCUT_RE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, MARK_RE, nameVariants, parseMergedTimeline, SOLO_SPLIT_LIMIT, splitTop } from './beatPrompt'
 
 type Shot = VideoPipelineShot
 type Char = VideoPipelineExport['characters'][number]
@@ -99,12 +99,20 @@ function displayName(c: Char | undefined): string {
   return (c?.baseName || c?.name || '').replace(/[（(][^）)]*[）)]/g, '')
 }
 /** replace the other cast members' names with a neutral off-screen reference */
+/** sentences describing the two-space composition (not usable as a solo header) */
+const TWO_SPACE_RE = /双窗|同框|左右两|分成左右|隔.{0,6}巷|两处/
+
 function replaceOthers(text: string, owner: string, names: CastName[]): string {
   let t = text
   const ownTexts = new Set(names.filter((n) => n.id === owner).map((n) => n.text))
   for (const n of names) {
     if (n.id === owner || ownTexts.has(n.text)) continue
-    t = t.split(`${n.text}家`).join('对面').split(n.text).join(OTHER_REF)
+    t = t
+      .split(`${n.text}家`)
+      .join('对面')
+      .replace(new RegExp(`${n.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[（(][^）)]*[）)])?(?=的?(?:别墅|旧楼|窗|房间|卧室))`, 'g'), '对面')
+      .split(n.text)
+      .join(OTHER_REF)
   }
   return t
     .replace(/两人/g, `他与${OTHER_REF}`)
@@ -384,10 +392,10 @@ export function splitCrossCutShot(s: Shot, chars: Char[], all: Shot[], crossPlac
     return any >= 0 ? any : 0
   })
 
-  // dialogue needs ~4.5 chars/s plus ~1 s of action around it
+  // dialogue needs line/4.5 + 0.5 s in the 【慢】 segment, plus ≥1 s for one other segment
   const needSec = runs.map((_, ri) => {
     const t = lines.filter((_, li) => lineChild[li] === ri).reduce((a, l) => a + paced(l.text || '') / 4.5, 0)
-    return t > 0 ? t + 1 : 0
+    return t > 0 ? t + DIALOGUE_PAD_SEC + 1 : 0
   })
   const durs = allocateSplitDurations(
     runs.map((r) => r.reduce((a, x) => a + x.dur, 0)),
@@ -406,7 +414,7 @@ export function splitCrossCutShot(s: Shot, chars: Char[], all: Shot[], crossPlac
     return (k >= 0 ? p.slice(0, k) : '')
       .split(/[。\n]/)
       .map((x) => x.trim())
-      .filter((x) => x && !CROSSCUT_RE.test(x))[0]
+      .filter((x) => x && !CROSSCUT_RE.test(x) && !TWO_SPACE_RE.test(x))[0]
       ?.replace(/[，,；;\s]+$/, '') || ''
   })()
   const subjPieces = splitTop(clause(src, /主体/), '；;').map((x) => x.trim()).filter(Boolean)
@@ -415,7 +423,7 @@ export function splitCrossCutShot(s: Shot, chars: Char[], all: Shot[], crossPlac
   const limitCl = dedupeClauses(
     splitTop(clause(src, /限制/).split(CARRY_WARDROBE_CONSTRAINT).join(''), '，,')
       .map((x) => x.trim())
-      .filter((x) => x && !/^服装无任何标志、样$/.test(x) && !/^(不出现人物|无人物|空镜)$/.test(x) && !/^(保持与上一镜末帧一致|禁止换装|禁止换回定妆静帧服装)/.test(x)),
+      .filter((x) => x && !/^服装无任何标志、样$/.test(x) && !/^(不出现人物|无人物|空镜)$/.test(x) && !/同框|两人|双人/.test(x) && !/^(保持与上一镜末帧一致|禁止换装|禁止换回定妆静帧服装)/.test(x)),
   ).join('，')
 
   const children: Shot[] = runs.map((run, ri) => {
@@ -433,8 +441,11 @@ export function splitCrossCutShot(s: Shot, chars: Char[], all: Shot[], crossPlac
     )
     const listen = lines.length > 0 && myLines.length === 0
     const beatTexts = run.map((sb, k) => {
-      const act = replaceOthers(sb.act.join('，'), owner, names)
-      const perf = replaceOthers(sb.perf.join('，'), owner, names)
+      // near-duplicate clauses between 动作 and 表演 (merged beats repeat themselves)
+      const aCls = dedupeClauses(splitTop(replaceOthers(sb.act.join('，'), owner, names), '，,'))
+      const comb = dedupeClauses([...aCls, ...splitTop(replaceOthers(sb.perf.join('，'), owner, names), '，,')])
+      const act = comb.slice(0, aCls.length).join('，')
+      const perf = comb.slice(aCls.length).join('，')
       let body = act || perf || '保持姿态，呼吸与眼神有细微变化'
       if (listen && k === run.length - 1) body += `，${LISTEN}`
       const mark = sb.speak && myLines.length ? `（${displayName(c)}开口说台词）` : sb.voice && myLines.length ? '（画外人声）' : ''
@@ -554,12 +565,14 @@ export function angleKeyOf(s: Pick<Shot, 'sceneId' | 'placeKey' | 'timeBand' | '
 
 /** Set angleKey + carryFromShotId on every shot (output order). carryFromPrev is untouched except on split children. */
 export function assignAngleKeys(exp: VideoPipelineExport): VideoPipelineExport {
+  // chains never cross an episode boundary: key = episode + angleKey
   const last = new Map<string, string>()
   const shots = exp.shots.map((s0, i) => {
     const s: Shot = { ...s0 }
     s.angleKey = angleKeyOf(s)
-    s.carryFromShotId = last.get(s.angleKey) ?? null
-    last.set(s.angleKey, s.id)
+    const k = `${s.episode}\u0000${s.angleKey}`
+    s.carryFromShotId = last.get(k) ?? null
+    last.set(k, s.id)
     if (s.splitFrom) {
       const prevId = i ? exp.shots[i - 1].id : null
       s.carryFromPrev = Boolean(s.carryFromShotId) && s.carryFromShotId === prevId
@@ -572,8 +585,8 @@ export function assignAngleKeys(exp: VideoPipelineExport): VideoPipelineExport {
   return { ...exp, shots }
 }
 
-/** Every carryFromShotId must point to an EARLIER shot with the same angleKey; no cycles; unique ids. */
-export function validateCarryChain(shots: Pick<Shot, 'id' | 'angleKey' | 'carryFromShotId'>[]): string[] {
+/** Every carryFromShotId must point to an EARLIER shot in the SAME episode with the same angleKey; no cycles; unique ids. */
+export function validateCarryChain(shots: (Pick<Shot, 'id' | 'angleKey' | 'carryFromShotId'> & { episode?: number })[]): string[] {
   const errs: string[] = []
   const idx = new Map<string, number>()
   shots.forEach((s, i) => {
@@ -588,6 +601,7 @@ export function validateCarryChain(shots: Pick<Shot, 'id' | 'angleKey' | 'carryF
     if (j === undefined) errs.push(`${s.id} → ${s.carryFromShotId} 不存在`)
     else if (j >= i) errs.push(`${s.id} → ${s.carryFromShotId} 不是更早的镜头`)
     else if (shots[j].angleKey !== s.angleKey) errs.push(`${s.id} → ${s.carryFromShotId} angleKey 不一致 (${s.angleKey} ≠ ${shots[j].angleKey})`)
+    else if (shots[j].episode !== s.episode) errs.push(`${s.id} → ${s.carryFromShotId} 跨集承接 (第${s.episode}集 ← 第${shots[j].episode}集)`)
   })
   // cycle check (independent of the ordering rule)
   const byId = new Map(shots.map((s) => [s.id, s]))
@@ -606,11 +620,26 @@ export function validateCarryChain(shots: Pick<Shot, 'id' | 'angleKey' | 'carryF
   return errs
 }
 
-/** Chains worth a human look (not errors). */
-export function reviewCarryChains(shots: Shot[]): { crossEpisode: string[]; legacyMismatch: string[]; longGap: string[] } {
+/**
+ * Chains worth a human look (not errors).
+ * - crossEpisode: should always be empty (validateCarryChain also rejects it)
+ * - legacyMismatch: carryFromPrev=true but carryFromShotId is not the previous shot and the previous shot
+ *   is NOT a split child (pre-existing angle/cast changes: runners following carryFromShotId re-anchor on purpose)
+ * - splitResolved: carryFromPrev=true on a shot right after a split child of another character; carryFromShotId
+ *   correctly skips to the same angle (expected, informational)
+ * - placeConflict: solo shot at another character's facing-window home (after scene corrections)
+ */
+export function reviewCarryChains(shots: Shot[]): {
+  crossEpisode: string[]
+  legacyMismatch: string[]
+  splitResolved: string[]
+  longGap: string[]
+  placeConflict: string[]
+} {
   const idx = new Map(shots.map((s, i) => [s.id, i]))
   const crossEpisode: string[] = []
   const legacyMismatch: string[] = []
+  const splitResolved: string[] = []
   const longGap: string[] = []
   shots.forEach((s, i) => {
     const prev = i ? shots[i - 1] : null
@@ -619,14 +648,95 @@ export function reviewCarryChains(shots: Shot[]): { crossEpisode: string[]; lega
       if (t.episode !== s.episode) crossEpisode.push(`${s.id} ← ${t.id} (${s.angleKey})`)
       else if (i - idx.get(s.carryFromShotId)! > 4) longGap.push(`${s.id} ← ${t.id} (+${i - idx.get(s.carryFromShotId)!} 镜)`)
     }
-    if (s.carryFromPrev && prev && s.carryFromShotId !== prev.id)
-      legacyMismatch.push(`${s.id}: carryFromPrev=true 但上一镜 ${prev.id}(${prev.angleKey}) ≠ carryFromShotId ${s.carryFromShotId ?? 'null'}`)
+    if (s.carryFromPrev && prev && s.carryFromShotId !== prev.id) {
+      const msg = `${s.id}: carryFromPrev=true 但上一镜 ${prev.id}(${prev.angleKey}) ≠ carryFromShotId ${s.carryFromShotId ?? 'null'}`
+      ;(prev.splitFrom && prev.characterIds.join() !== s.characterIds.join() ? splitResolved : legacyMismatch).push(msg)
+    }
   })
-  return { crossEpisode, legacyMismatch, longGap }
+  const homes = characterHomes(shots)
+  const placeConflict = shots
+    .filter((s) => s.characterIds?.length === 1 && homes.places.has(s.placeKey || '') && homes.home.get(s.characterIds[0]) && homes.home.get(s.characterIds[0]) !== s.placeKey)
+    .map((s) => `${s.id}: ${s.characterIds[0]} 在 ${s.sceneId}（其常驻窗为 ${homes.home.get(s.characterIds[0])}）`)
+  return { crossEpisode, legacyMismatch, splitResolved, longGap, placeConflict }
 }
 
-/** split + angle keys (the opt-in pass used by postProcess / repack). */
-export function applyCrossCutSplit(exp: VideoPipelineExport): { exp: VideoPipelineExport; splits: SplitInfo[] } {
-  const r = splitCrossCutShots(exp)
-  return { exp: assignAngleKeys(r.exp), splits: r.splits }
+// ---------------- scene corrections (solo shot at the other character's window) ----------------
+
+export interface SceneCorrection {
+  id: string
+  from: string
+  to: string
+  by: 'rule' | 'override'
+  reason: string
+}
+
+/** Facing-window places (placeKeys of cross-cut segments) and each character's most frequent one among their solo shots. */
+export function characterHomes(shots: Shot[]): { places: Set<string>; home: Map<string, string> } {
+  const places = new Set(shots.filter(isCrossCutShot).map((s) => s.placeKey).filter(Boolean) as string[])
+  // after splitting there are no cross-cut segments left: fall back to children's places
+  for (const s of shots) if (s.splitFrom && s.placeKey) places.add(s.placeKey)
+  const cnt = new Map<string, Map<string, number>>()
+  for (const s of shots) {
+    if (s.characterIds?.length !== 1 || !places.has(s.placeKey || '')) continue
+    const m = cnt.get(s.characterIds[0]) || new Map<string, number>()
+    m.set(s.placeKey!, (m.get(s.placeKey!) || 0) + 1)
+    cnt.set(s.characterIds[0], m)
+  }
+  const home = new Map<string, string>()
+  for (const [id, m] of cnt) {
+    const best = [...m].sort((a, b) => b[1] - a[1])[0]
+    // need a clear majority so a character who genuinely visits the other window is not "corrected"
+    const total = [...m.values()].reduce((a, b) => a + b, 0)
+    if (best && best[1] * 2 > total) home.set(id, best[0])
+  }
+  return { places, home }
+}
+
+/**
+ * Fix place/scene labels before splitting / angle keys:
+ * 1. explicit overrides { shotId: sceneId } win (used where the text gives no reliable place cue);
+ * 2. rule: a SOLO shot labelled at a facing-window place that is ANOTHER character's home (and not its own)
+ *    moves to its own home with the same time band (sceneId must already exist in the pack).
+ */
+export function correctScenes(exp: VideoPipelineExport, overrides: Record<string, string> = {}): { exp: VideoPipelineExport; corrections: SceneCorrection[] } {
+  const scenes = new Map<string, Shot>()
+  for (const s of exp.shots) if (s.sceneId && !scenes.has(s.sceneId)) scenes.set(s.sceneId, s)
+  const { places, home } = characterHomes(exp.shots)
+  const homeOwners = new Map<string, string[]>()
+  for (const [id, pk] of home) homeOwners.set(pk, [...(homeOwners.get(pk) || []), id])
+  const corrections: SceneCorrection[] = []
+  const moveTo = (s: Shot, sceneId: string): Shot => {
+    const ref = scenes.get(sceneId)!
+    return { ...s, sceneId, sceneLabel: ref.sceneLabel, placeKey: ref.placeKey, timeBand: ref.timeBand }
+  }
+  const shots = exp.shots.map((s) => {
+    const o = overrides[s.id]
+    if (o) {
+      if (!scenes.has(o)) throw new Error(`scene override ${s.id} → ${o}: unknown sceneId`)
+      if (o === s.sceneId) return s
+      corrections.push({ id: s.id, from: s.sceneId || '', to: o, by: 'override', reason: 'explicit override' })
+      return moveTo(s, o)
+    }
+    if (s.characterIds?.length !== 1 || s.splitFrom) return s
+    const c = s.characterIds[0]
+    const mine = home.get(c)
+    const pk = s.placeKey || ''
+    if (!mine || !places.has(pk) || pk === mine) return s
+    if (!(homeOwners.get(pk) || []).some((x) => x !== c)) return s
+    const target = `${mine}_${s.timeBand || ''}`
+    if (!scenes.has(target)) return s
+    corrections.push({ id: s.id, from: s.sceneId || '', to: target, by: 'rule', reason: `${c} 单人镜标在他人常驻窗 ${pk}，改回自己的 ${mine}` })
+    return moveTo(s, target)
+  })
+  return { exp: corrections.length ? { ...exp, shots } : exp, corrections }
+}
+
+/** scene corrections + split + angle keys (the opt-in pass used by postProcess / repack). */
+export function applyCrossCutSplit(
+  exp: VideoPipelineExport,
+  opts: { sceneOverrides?: Record<string, string> } = {},
+): { exp: VideoPipelineExport; splits: SplitInfo[]; corrections: SceneCorrection[] } {
+  const c = correctScenes(exp, opts.sceneOverrides)
+  const r = splitCrossCutShots(c.exp)
+  return { exp: assignAngleKeys(r.exp), splits: r.splits, corrections: c.corrections }
 }

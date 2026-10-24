@@ -32,6 +32,8 @@ export interface PostProcessOptions {
   beatMode?: 'off' | 'speed'
   /** opt-in: split two-person cross-cut segments into solo shots + angleKey/carryFromShotId (before beat mode) */
   splitCrossCut?: boolean
+  /** with splitCrossCut: explicit { shotId: sceneId } place corrections (win over the solo-shot home rule) */
+  sceneOverrides?: Record<string, string>
 }
 
 export const SEGMENT_MIN_SEC = 5
@@ -765,7 +767,7 @@ export function postProcessExportWithStats(
     warnings,
   }
   // opt-in: per-second speed-beat prompts (after merge / carry / dialogue guards so it sees final shots)
-  const split = opts.splitCrossCut ? applyCrossCutSplit(result).exp : result
+  const split = opts.splitCrossCut ? applyCrossCutSplit(result, { sceneOverrides: opts.sceneOverrides }).exp : result
   return { exp: opts.beatMode === 'speed' ? applyBeatMode(split, { style }) : split, stats }
 }
 
