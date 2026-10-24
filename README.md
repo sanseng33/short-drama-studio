@@ -136,6 +136,31 @@
 
 测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、内心画内保留、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分、durationSec 均为 0.5 倍数；约束/描述不进 overlay、引号 UI 保留、提示线索仅限 UI 段、系统角色台词仅 overlay、多人同框警告、龙套 speakerName；并从真实导出《每天变帅一点点》`scripts/fixtures/real-export-meitian.json` 重建项目回归：overlay 27 条、无约束文本）。生成侧提示词要求优先单人镜头（过肩/正反打代替双人同框，最多2人）、龙套写身份前缀。
 
+### 可选：按秒变速节拍 + 对窗/对切拆单人镜（opt-in，默认关闭）
+
+默认导出不变。两个开关都是可选的（`buildVideoPipelineExport(project, { beatMode: 'speed', splitCrossCut: true })`，或 `postProcessExport(exp, { … })`）：
+
+- `beatMode: 'speed'`（`src/lib/beatPrompt.ts`）：把每段 prompt 改写为 `竖屏9:16，N秒单镜` + `时间轴（按秒变速）` 2–3 段【快】/【慢】/【恢复常速】，台词段【慢】且正脸嘴部无遮挡，不含人名与台词原文；附 `beatSegments` / `beatTodo` / `beatRemovedProps` / `promptDefault`。
+- `splitCrossCut: true`（`src/lib/crosscutSplit.ts`）：把「≥2 人 + 对窗/两窗/越窗/隔窄巷/对切」的合并段拆成单人镜 `<id>a`、`<id>b`…（按节拍/画面顺序；每镜 ≥3s，原段允许时 ≥5s，台词镜按 4.5 字/秒+1s 留足；总时长≈原段，必要时略增）。每个子镜只有一个 `characterIds`、自己的节拍、`splitFrom: "<id>"`；台词归说这句的角色所在子镜，其余子镜无台词（安静听、嘴唇闭合）。子镜的 sceneId 取该角色单人镜最常出现的对窗地点（如吴耐 → `alley_window_*`）。拆分在节拍改写之前执行。
+
+**angleKey / carryFromShotId**（开启 splitCrossCut 时，整包每一镜都有）：
+
+- `angleKey = ${sceneId}_${characterIds 排序后用 + 连接 | empty}`，例如 `villa_bedroom_day_c2`、`classroom_day_c2+c3`。
+- `carryFromShotId` = 输出顺序中**更早**、angleKey 相同的最近一镜的 id；该 angleKey 的第一镜为 `null`。
+- **Runner 规则（首帧来源）**：① `carryFromShotId` 为字符串 → 用该镜的末帧（优先于 carryFromPrev）；② 字段存在且为 `null` → 从定妆包角色参考图起；③ 字段不存在（旧包）→ 按 `carryFromPrev`（true 用上一镜末帧，否则定妆参考图）。**承接帧一律用该镜 LatentSync 之前的干净无声末帧**（不要用对口型后的成片帧）。
+- 非拆分镜的 `carryFromPrev` 保持不变（向后兼容）；拆分子镜的 `carryFromPrev` 仅当 `carryFromShotId` 恰为上一镜时为 true。
+- 校验 `validateCarryChain(shots)`：每个 carryFromShotId 指向更早、angleKey 相同的镜头，无环、id 唯一。`reviewCarryChains` 列出跨集承接、旧 carryFromPrev 与新链不一致的镜头供人工核对。
+
+命令行（对已定稿的包，不重新合并）：
+
+```bash
+npx tsx scripts/repack.ts in.json out.json --beat-only                    # 只改写节拍
+npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut   # 先拆对窗段再改写节拍
+npx tsx scripts/repack.ts in.json out.json --split-only                   # 只拆分 + angleKey，不改写节拍
+```
+
+测试：`npx tsx scripts/test-beat-prompt.ts`、`npx tsx scripts/test-crosscut-split.ts`。
+
 ### 定妆包 h3-character-pack@1（含 LoRA / Omni 训练字段）
 
 Schema 常量：`h3-character-pack@1`（`src/lib/characterPack.ts`）。旧包（无训练字段）仍可导入。

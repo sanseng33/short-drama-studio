@@ -171,6 +171,7 @@ t('helpers: stripNames / fastify / isActionHeavy', () => {
   assert.equal(fastify('靠液体流动表现冲击'), '靠液体流动表现冲击，动作利落不拖', 'never inside 冲击')
   assert.ok(isActionHeavy('他猛地转身'), "isActionHeavy('他猛地转身')")
   assert.ok(!isActionHeavy('肩膀一点点绷起来，呼吸停在半口'), "!isActionHeavy('肩膀一点点绷起来，呼吸停在半口')")
+  assert.ok(!isActionHeavy('眼神不闪躲却带点不服气'), 'negated 躲 is not action')
 })
 
 t('applyBeatMode: metadata + idempotent re-run keeps promptDefault', () => {

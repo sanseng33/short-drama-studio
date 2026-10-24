@@ -52,7 +52,11 @@ export const BEAT_HEADER = '时间轴（按秒变速）'
 export const BEAT_REALISM = '自然哑光肤质，有毛孔细节，不打蜡不磨皮，真实运动速度，非慢动作'
 export const BEAT_LIMIT = '无任何文字、字幕、汉字、字母、数字、Logo；服装无标志、校徽、刺绣字样'
 export const BEAT_MOUTH_CUE = '正脸朝镜头开口说一句短话，嘴部清晰可见、无遮挡'
+/** limit added to solo children of a split cross-cut segment */
+export const SOLO_SPLIT_LIMIT = '画面只出现一个人物，对面窗里的人不入画'
 export const BEAT_FAST_TAIL = '动作利落不拖'
+/** two characters in facing windows / cross-cut inside one segment (split candidates) */
+export const CROSSCUT_RE = /两窗|对窗|越窗|隔窄巷|对切/
 
 // ---------------- small helpers ----------------
 
@@ -77,7 +81,7 @@ function sim(a: string, b: string): number {
 }
 
 /** Labelled sentence content (主体/光线/限制…) from a prompt. */
-function clause(prompt: string, label: RegExp): string {
+export function clause(prompt: string, label: RegExp): string {
   const m = (prompt || '').match(new RegExp(`(?:^|[。\\n；;])\\s*(?:${label.source})\\s*[：:]([^。\\n]*)`))
   return m ? m[1].trim() : ''
 }
@@ -129,7 +133,7 @@ export function splitTop(text: string, seps: string): string[] {
 
 /** Speech beat markers produced by mergedPrompt / storyboards. */
 const SPEECH_RE = /(开口说台词|开口|说道|说完?|喊|问道?|回答|嘀咕|低声道|念叨|吼|台词|说话)/
-const MARK_RE = /[（(]([^（）()]{0,16}?)开口说台词[）)]|[（(]画外人声[）)]/g
+export const MARK_RE = /[（(]([^（）()]{0,16}?)开口说台词[）)]|[（(]画外人声[）)]/g
 const STRONG_FAST = /(猛|冲|跑|扑|扔|砸|甩|跳|撞|一把|拽|踢|摔|窜|急|飞快|迅速|快步|扭头|转身|弹起|站起|跃|抢|躲|闪身|夺|拍桌|捶|蹬|掀|拉上|拉开|推开|踹|抓起|抄起)/
 const WEAK_FAST = /(抬手|指向|指了指|点了点|点一下|缩回|转回|回头|起身|伸手|抓住|拍了|推了|拉了|丢|抛|挥|按住|戳|掏出)/
 /** verbs 猛地/迅速 may be put in front of (whole words only — never inside 冲击 / 一点点) */
@@ -144,7 +148,8 @@ export const SMALL_PROP_RE = /(生鸡蛋|鸡蛋|硬币|打火机|钥匙|棒棒�
 const HANDLING_RE = /(指间|指尖|手里|手中|掌心|把玩|转了|转着|转动|捏|拨弄|抛|夹着|攥|搓|晃了?晃|在手上|颠了颠|翻来覆去)/
 
 export function isActionHeavy(text: string): boolean {
-  const t = text || ''
+  // negated motion (不闪躲 / 没躲 / 不动) is not action
+  const t = (text || '').replace(/[不没未别](?:闪躲|躲闪|躲|闪|动|跑|冲)/g, '')
   if (STRONG_FAST.test(t)) return true
   const weak = t.match(new RegExp(WEAK_FAST.source, 'g')) || []
   return weak.length >= 2
@@ -508,7 +513,9 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     void c
     return ''
   }
-  const subjects = cast.map((id) => subjectFor(id, pieceFor(id), byId.get(id), Boolean(s.carryFromPrev), variants)).filter(Boolean)
+  // split children (crosscutSplit) carry from carryFromShotId instead of the previous shot
+  const carry = Boolean(s.carryFromPrev) || Boolean(s.splitFrom && s.carryFromShotId)
+  const subjects = cast.map((id) => subjectFor(id, pieceFor(id), byId.get(id), carry, variants)).filter(Boolean)
 
   // reference words for names in beat text
   const garmentOf = new Map<string, string>()
@@ -605,6 +612,8 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   // speed tags
   const speeds: BeatSpeed[] = segTexts.map((x, i) => {
     if (x.dlg) return '慢'
+    // split cross-cut listener (crosscutSplit): never 快
+    if (/安静听/.test(x.cls.join('，'))) return '恢复常速'
     if (isActionHeavy(x.cls.join('，'))) return '快'
     void i
     return '恢复常速'
@@ -642,7 +651,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   for (const m of segMeta) if (m.end - m.start < 1 - 1e-9) todo.push(`分段 ${fmt(m.start)}–${fmt(m.end)}秒 不足 1 秒`)
   const slowSec = segMeta.filter((m) => m.speed === '慢').reduce((a, m) => a + m.end - m.start, 0)
   if (hasDialogue && dlgSec > slowSec + 0.5) todo.push(`台词约需 ${dlgSec.toFixed(1)}秒，【慢】段仅 ${fmt(slowSec)}秒`)
-  if (cast.length >= 2 && /两窗|对窗|越窗|隔窄巷|对切/.test(src)) todo.push('原段为对窗/对切双空间，单镜不切镜难以同时拍到两人，建议拆为单人镜')
+  if (cast.length >= 2 && CROSSCUT_RE.test(src)) todo.push('原段为对窗/对切双空间，单镜不切镜难以同时拍到两人，建议拆为单人镜')
 
   // ---- header / footer
   const head = sceneHeader(s)
@@ -660,7 +669,8 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   if (!light) light = s.timeOfDay ? `${s.timeOfDay}自然光` : '自然光'
   light = stripNames(light, variants, refOf)
   const limits = [BEAT_LIMIT]
-  if (src.includes(CARRY_WARDROBE_CONSTRAINT) || s.carryFromPrev) limits.push(CARRY_WARDROBE_CONSTRAINT)
+  if (src.includes(CARRY_WARDROBE_CONSTRAINT) || carry) limits.push(CARRY_WARDROBE_CONSTRAINT)
+  if (s.splitFrom && src.includes(SOLO_SPLIT_LIMIT)) limits.push(SOLO_SPLIT_LIMIT)
   if (s.speakerOffscreen || lines.some((l) => l.voiceOnly)) limits.push('画外人声的说话人不出镜，画面只出现指定角色')
   const prompt = [
     `竖屏9:16，${fmt(total)}秒单镜。${head ? `${head}，` : ''}${who}。`,

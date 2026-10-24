@@ -65,6 +65,28 @@ export interface VideoPipelineShot {
   beatTodo?: string[]
   /** beat mode: the default (non-beat) prompt, kept for comparison / re-conversion */
   promptDefault?: string
+  /** place slug of sceneId (sceneContinuity), e.g. villa_bedroom */
+  placeKey?: string
+  /** time band of sceneId (sceneContinuity), e.g. day */
+  timeBand?: string
+  /** opt-in splitCrossCut: id of the two-person cross-cut segment this solo child was split from */
+  splitFrom?: string
+  /**
+   * opt-in splitCrossCut: camera-angle continuity key = `${sceneId}_${sorted characterIds joined '+' | 'empty'}`,
+   * e.g. villa_bedroom_day_c2. Set on every shot of a split pack.
+   */
+  angleKey?: string
+  /**
+   * opt-in splitCrossCut: most recent earlier shot (output order) with the same angleKey; null = first of its angle.
+   * Runner rule (FL2V first frame):
+   *  1. key present and a string → start from that shot's last frame (wins over carryFromPrev);
+   *  2. key present and null → start from the character-pack ref image (ignore carryFromPrev);
+   *  3. key absent (legacy pack) → carryFromPrev=true uses the previous shot's last frame, else the pack ref.
+   * The carried frame is always the clean, silent, pre-LatentSync last frame of the source shot (never the lip-synced render).
+   * carryFromPrev is kept unchanged on non-split shots for backward compat; on split children it is true only when
+   * carryFromShotId is the immediately previous shot.
+   */
+  carryFromShotId?: string | null
 }
 
 export interface VideoPipelineWarning {
@@ -86,6 +108,8 @@ export interface VideoPipelineOptions {
   segmentMaxSec?: number
   /** 'speed' = opt-in per-second speed-beat prompts (时间轴（按秒变速）); default 'off' keeps the existing prompts */
   beatMode?: 'off' | 'speed'
+  /** opt-in: split two-person facing-window / cross-cut segments into solo shots + set angleKey/carryFromShotId (default false) */
+  splitCrossCut?: boolean
 }
 
 export interface VideoPipelineExport {
@@ -908,6 +932,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     segmentMaxSec: opts.segmentMaxSec,
     genre: project.genre,
     beatMode: opts.beatMode,
+    splitCrossCut: opts.splitCrossCut,
   })
 }
 

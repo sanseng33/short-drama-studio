@@ -17,6 +17,7 @@ import { factsForShotPrompts, scrubTiers, tierSettingFacts } from './settingFact
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
 import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
 import { applyBeatMode } from './beatPrompt'
+import { applyCrossCutSplit } from './crosscutSplit'
 
 export interface PostProcessOptions {
   /** merge consecutive short shots into segments (default true) */
@@ -29,6 +30,8 @@ export interface PostProcessOptions {
   genre?: string
   /** 'speed' = rewrite prompts as per-second speed beats (opt-in, last pass); default 'off' */
   beatMode?: 'off' | 'speed'
+  /** opt-in: split two-person cross-cut segments into solo shots + angleKey/carryFromShotId (before beat mode) */
+  splitCrossCut?: boolean
 }
 
 export const SEGMENT_MIN_SEC = 5
@@ -762,7 +765,8 @@ export function postProcessExportWithStats(
     warnings,
   }
   // opt-in: per-second speed-beat prompts (after merge / carry / dialogue guards so it sees final shots)
-  return { exp: opts.beatMode === 'speed' ? applyBeatMode(result, { style }) : result, stats }
+  const split = opts.splitCrossCut ? applyCrossCutSplit(result).exp : result
+  return { exp: opts.beatMode === 'speed' ? applyBeatMode(split, { style }) : split, stats }
 }
 
 function pacedLen(t: string): number {
