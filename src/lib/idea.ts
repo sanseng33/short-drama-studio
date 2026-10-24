@@ -297,7 +297,7 @@ export function isLockedCharacter(c: { locked?: boolean; refImage?: string }): b
   return Boolean(c.locked || c.refImage?.trim())
 }
 
-/** Re-generation merge: keep locked look fields (visualLock/costume/signatureProp/age/background/negative/refImage/…) matched by name. */
+/** Re-generation merge: keep locked look fields (visualLock/costume/signatureProp/age/background/negative/refImage/trainingAssets/…) matched by name. */
 export function mergeLockedCharacters(prev: Character[], next: Character[]): Character[] {
   const locked = prev.filter(isLockedCharacter)
   const out = next.map((n) => {
@@ -316,6 +316,7 @@ export function mergeLockedCharacters(prev: Character[], next: Character[]): Cha
       ...(p.characterKey?.trim() ? { characterKey: p.characterKey } : {}),
       ...(p.imagesDir?.trim() ? { imagesDir: p.imagesDir } : {}),
       ...(p.baseName?.trim() ? { baseName: p.baseName } : {}),
+      ...(p.trainingAssets ? { trainingAssets: p.trainingAssets } : {}),
     }
   })
   // locked characters dropped by the new extraction are kept (they carry a 定妆图)

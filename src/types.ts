@@ -47,6 +47,53 @@ export interface Character {
   characterKey?: string
   /** GPU 定妆图目录名 images.dir（导入定妆包；导出为 characters[].imagesDir） */
   imagesDir?: string
+  /**
+   * LoRA / Omni multi-ref training materials from 定妆包.
+   * Training-only: never inject into visual prompts, characterBrief, or inject_character_meta.
+   * dialogueClips[].text is for LoRA text training only.
+   */
+  trainingAssets?: CharacterTrainingAssets
+}
+
+/** Angle stills for Omni / LoRA identity (named + extras and/or slots). */
+export interface CharacterMultiAngleStills {
+  front?: string
+  side?: string
+  threeQuarter?: string
+  extras?: string[]
+  slots?: { kind: 'front' | 'side' | 'threeQuarter' | 'extra'; path: string; label?: string }[]
+}
+
+export interface CharacterWardrobeVariant {
+  id: string
+  label: string
+  costumePrompt?: string
+  refImages: string[]
+}
+
+export interface CharacterVoiceSample {
+  path?: string
+  url?: string
+  label?: string
+}
+
+/** LoRA dialogue line — never inject into visual prompts. */
+export interface CharacterDialogueClip {
+  text: string
+  sourceShotId?: string
+}
+
+export interface CharacterTrainingAssets {
+  multiAngleStills?: CharacterMultiAngleStills
+  wardrobeVariants?: CharacterWardrobeVariant[]
+  voiceSamples?: CharacterVoiceSample[]
+  /** Typically 10–14; LoRA only — never inject into visual prompts */
+  dialogueClips?: CharacterDialogueClip[]
+  loraStrengthDefault?: number
+  /** Should include 参考图勿强继承光照 */
+  trainingNotes?: string
+  /** Marker for exporters / injectors */
+  neverInjectIntoVisualPrompts?: true
 }
 
 export interface EpisodeOutline {
