@@ -14,6 +14,7 @@ import {
   splitCrossCutShots,
   validateCarryChain,
 } from '../src/lib/crosscutSplit'
+import { checkRhythm, fitSplitRhythm, retimeChild } from '../src/lib/rhythm'
 import { CARRY_WARDROBE_CONSTRAINT } from '../src/lib/sceneContinuity'
 import { postProcessExport } from '../src/lib/segmentPost'
 import { buildVideoPipelineExport, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
@@ -306,6 +307,56 @@ t('buildVideoPipelineExport: splitCrossCut option wires through, default unchang
   assert.deepEqual(validateCarryChain(s.shots), [])
 })
 
+// ---- rhythm rules ----
+const R = (id: string, d: number, p: Partial<VideoPipelineShot> = {}) => SH({ id, durationSec: d, ...p })
+const kid = (id: string, d: number, from: string, p: Partial<VideoPipelineShot> = {}) =>
+  R(id, d, { splitFrom: from, prompt: `竖屏9:16。主体：少年。时间轴（一镜${d}秒，小节拍）：0–${d / 2}s他抬头；${d / 2}–${d}s随后他低头。镜头：近景。`, ...p })
+
+t('checkRhythm: (a) consecutive < 4.5 s, (c) episode short ratio, (b) bracket warnings', () => {
+  const shots = [R('x1', 8), kid('g1a', 3, 'g1'), kid('g1b', 4, 'g1'), R('x2', 5), R('x3', 7), R('y1', 4, { episode: 2 }), R('y2', 3, { episode: 2 })]
+  const r = checkRhythm(shots)
+  assert.equal(r.ok, false, 'violations → not ok')
+  assert.deepEqual(r.consecutiveShort.map((x) => x.split(' ')[0]), ['g1a(3s)', 'y1(4s)'], 'x2→y1 crosses episodes and is not checked')
+  assert.deepEqual(r.episodeShortRatio.map((e) => [e.episode, e.short, e.shots, e.ok]), [[1, 2, 5, false], [2, 2, 2, false]])
+  assert.deepEqual(r.brackets.map((b) => [b.group, b.before, b.after, b.ok]), [['g1', 'x1', 'x2', false]], 'x2 5 s < 6 and longest child only 4 s')
+  assert.equal(r.warnings.filter((w) => w.startsWith('(a)')).length, 2, 'warnings list (a)')
+  assert.equal(r.warnings.filter((w) => w.startsWith('(b)')).length, 1, 'warnings list (b)')
+  assert.equal(r.warnings.filter((w) => w.startsWith('(c)')).length, 2, 'warnings list (c)')
+  // configurable cap
+  assert.ok(checkRhythm([R('a', 4), R('b', 6), R('c', 6)], { maxShortRatio: 0.34 }).ok, 'ratio 1/3 ≤ 0.34')
+  assert.ok(!checkRhythm([R('a', 4), R('b', 6), R('c', 6)]).ok, 'ratio 1/3 > 0.3')
+})
+
+t('fitSplitRhythm: lengthens split children only (bracket → pair → ratio), retimes the timeline, idempotent', () => {
+  const e = pack([R('x1', 8), kid('g1a', 3, 'g1'), kid('g1b', 3, 'g1'), kid('g1c', 3, 'g1'), R('x2', 5), R('x3', 7), R('x4', 7), R('x5', 7), R('x6', 7), R('x7', 7)])
+  const f = fitSplitRhythm(e)
+  const d = Object.fromEntries(f.exp.shots.map((s) => [s.id, s.durationSec]))
+  assert.equal(d.g1c, 6, 'bracket: x2 is 5 s, the (tied) child next to it is raised to 6 s')
+  assert.equal(d.g1b, 3, 'pair rule: g1a+g1b short → raise g1a (g1b already safe after g1c)')
+  assert.ok(d.g1a >= 4.5, 'pair fixed')
+  for (const id of ['x1', 'x2', 'x3']) assert.equal(d[id], e.shots.find((s) => s.id === id)!.durationSec, `${id} untouched`)
+  assert.ok(checkRhythm(f.exp.shots).ok, `fit result ok: ${checkRhythm(f.exp.shots).warnings.join('|')}`)
+  const c = f.exp.shots.find((s) => s.id === 'g1c')!
+  assert.ok(c.prompt.includes('时间轴（一镜6秒，小节拍）：0–3s他抬头；3–6s随后他低头。'), c.prompt)
+  assert.ok(f.notes.some((n) => n.startsWith('g1c 3s → 6s')), 'notes')
+  assert.deepEqual(fitSplitRhythm(f.exp).notes, [], 'idempotent')
+  // no split children → nothing changes, problems stay as warnings
+  const plain = pack([R('p1', 3), R('p2', 3)])
+  assert.equal(fitSplitRhythm(plain).exp, plain)
+  assert.ok(checkRhythm(plain.shots).warnings.some((w) => w.startsWith('(a)')))
+  // bracket that cannot be met (maxSec) stays a warning
+  const capped = fitSplitRhythm(pack([R('q1', 3), kid('qa', 4, 'q'), R('q2', 7), R('q3', 7), R('q4', 7)]), { maxSec: 5 })
+  const rc = checkRhythm(capped.exp.shots, { maxSec: 5 })
+  assert.equal(rc.brackets[0].ok, false, 'bracket not met')
+  assert.ok(rc.warnings.some((w) => w.startsWith('(b) q')), 'reported as warning')
+})
+
+t('retimeChild: header + beat ranges rescaled on a 0.5 s grid, last beat ends at D', () => {
+  const s = retimeChild(kid('k', 3.5, 'k0', { prompt: '主体：少年。时间轴（一镜3.5秒，小节拍）：0–1.5s甲；1.5–3.5s随后乙。镜头：近景。' }), 6)
+  assert.equal(s.durationSec, 6)
+  assert.equal(s.prompt, '主体：少年。时间轴（一镜6秒，小节拍）：0–2.5s甲；2.5–6s随后乙。镜头：近景。')
+})
+
 const P2 = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p2-clean.json'
 if (existsSync(P2)) {
   const p2 = JSON.parse(readFileSync(P2, 'utf8')) as VideoPipelineExport
@@ -360,9 +411,17 @@ if (existsSync(P2)) {
     assert.deepEqual(linesOf(exp.shots), linesOf(p2.shots))
     // dialogue sits with its speaker
     for (const s of exp.shots.filter((x) => x.splitFrom && x.speaker)) assert.ok(s.characterIds.includes(s.speaker!), s.id)
-    for (const x of splits) {
+    // raw allocation (rhythm fit off) stays within +2.5 s; the rhythm fit only lengthens children
+    const raw = applyCrossCutSplit(p2, { rhythm: false })
+    for (const x of raw.splits) {
       const tot = x.children.reduce((a, c) => a + c.durationSec, 0)
       assert.ok(tot >= x.durationSec && tot <= x.durationSec + 2.5, `${x.id} ${x.durationSec}→${tot}`)
+    }
+    const rawDur = new Map(raw.exp.shots.map((s) => [s.id, s.durationSec]))
+    assert.deepEqual(exp.shots.map((s) => s.id), raw.exp.shots.map((s) => s.id), 'rhythm fit never adds / removes shots')
+    for (const s of exp.shots) {
+      if (s.splitFrom) assert.ok(s.durationSec >= rawDur.get(s.id)!, `${s.id} only lengthened`)
+      else assert.equal(s.durationSec, rawDur.get(s.id), `${s.id} non-split duration untouched`)
     }
     const r = reviewCarryChains(exp.shots)
     assert.ok(Array.isArray(r.crossEpisode) && Array.isArray(r.legacyMismatch))
@@ -392,6 +451,25 @@ if (existsSync(P2)) {
       if (s.dialogue) assert.ok(s.beatSegments!.some((x) => x.lipSync), `${s.id} speaker gets lip-sync segment`)
       else assert.ok(!s.beatSegments!.some((x) => x.lipSync), `${s.id} listener has no lip-sync`)
     }
+  })
+  t('p2-clean split + beat: rhythm (a) no two consecutive < 4.5 s, (c) ≤ 30% < 5 s per episode, (b) brackets', () => {
+    assert.ok(checkRhythm(p2.shots).ok, 'source pack already fine')
+    assert.ok(!checkRhythm(applyCrossCutSplit(p2, { sceneOverrides: OV, rhythm: false }).exp.shots).ok, 'control: without the fit the raw split violates (a)/(c)')
+    const { exp, splits } = applyCrossCutSplit(p2, { sceneOverrides: OV })
+    const beat = applyBeatMode(exp)
+    for (const x of [exp, beat]) {
+      const r = checkRhythm(x.shots)
+      assert.deepEqual(r.consecutiveShort, [], `(a) ${r.consecutiveShort.join('|')}`)
+      for (const e of r.episodeShortRatio) assert.ok(e.ok, `(c) ep${e.episode} ${e.short}/${e.shots}`)
+      assert.deepEqual(r.warnings.filter((w) => !w.startsWith('(b)')), [], 'only bracket issues may remain as warnings')
+      assert.deepEqual(r.warnings, [], 'p2: all brackets met too')
+    }
+    // beat segments cover the fitted durations; SplitInfo mirrors them
+    for (const s of beat.shots) assert.equal(s.beatSegments![s.beatSegments!.length - 1].end, s.durationSec, `${s.id} coverage`)
+    const dur = new Map(exp.shots.map((s) => [s.id, s.durationSec]))
+    for (const x of splits) for (const c of x.children) assert.equal(c.durationSec, dur.get(c.id), `${c.id} SplitInfo duration`)
+    const m = Object.fromEntries(exp.shots.map((s) => [s.id, s.durationSec]))
+    assert.deepEqual([m['s1-1a'], m['s1-1b'], m['s1-1c'], m['s1-24a'], m['s1-24b'], m['s3-6a'], m['s3-6b'], m['s3-6c']], [5, 3, 6, 6, 3, 3, 4.5, 3])
   })
 }
 

@@ -18,6 +18,7 @@ import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } fro
 import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
 import { applyBeatMode } from './beatPrompt'
 import { applyCrossCutSplit } from './crosscutSplit'
+import type { RhythmOptions } from './rhythm'
 
 export interface PostProcessOptions {
   /** merge consecutive short shots into segments (default true) */
@@ -34,6 +35,8 @@ export interface PostProcessOptions {
   splitCrossCut?: boolean
   /** with splitCrossCut: explicit { shotId: sceneId } place corrections (win over the solo-shot home rule) */
   sceneOverrides?: Record<string, string>
+  /** with splitCrossCut: rhythm rules used to lengthen split children (false = off) */
+  rhythm?: RhythmOptions | false
 }
 
 export const SEGMENT_MIN_SEC = 5
@@ -767,7 +770,7 @@ export function postProcessExportWithStats(
     warnings,
   }
   // opt-in: per-second speed-beat prompts (after merge / carry / dialogue guards so it sees final shots)
-  const split = opts.splitCrossCut ? applyCrossCutSplit(result, { sceneOverrides: opts.sceneOverrides }).exp : result
+  const split = opts.splitCrossCut ? applyCrossCutSplit(result, { sceneOverrides: opts.sceneOverrides, rhythm: opts.rhythm }).exp : result
   return { exp: opts.beatMode === 'speed' ? applyBeatMode(split, { style }) : split, stats }
 }
 

@@ -8,7 +8,7 @@
  *
  * `assignAngleKeys` then sets on EVERY shot:
  *   angleKey        = `${sceneId}_${sorted characterIds joined '+' | 'empty'}`   e.g. villa_bedroom_day_c2
- *   carryFromShotId = most recent earlier shot (output order) with the same angleKey, null for the first one.
+ *   carryFromShotId = most recent earlier shot (output order, same episode) with the same angleKey, null for the first one.
  * Runner rule: carryFromShotId string wins; key present + null = start from the character-pack ref; key absent =
  * legacy carryFromPrev. The carried frame is the clean silent pre-LatentSync last frame.
  *
@@ -17,6 +17,7 @@
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import type { DialogueLineOut } from './segmentPost'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
+import { fitSplitRhythm, type RhythmOptions } from './rhythm'
 import { clause, CROSSCUT_RE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, MARK_RE, nameVariants, parseMergedTimeline, SOLO_SPLIT_LIMIT, splitTop } from './beatPrompt'
 
 type Shot = VideoPipelineShot
@@ -734,9 +735,19 @@ export function correctScenes(exp: VideoPipelineExport, overrides: Record<string
 /** scene corrections + split + angle keys (the opt-in pass used by postProcess / repack). */
 export function applyCrossCutSplit(
   exp: VideoPipelineExport,
-  opts: { sceneOverrides?: Record<string, string> } = {},
-): { exp: VideoPipelineExport; splits: SplitInfo[]; corrections: SceneCorrection[] } {
+  opts: { sceneOverrides?: Record<string, string>; rhythm?: RhythmOptions | false } = {},
+): { exp: VideoPipelineExport; splits: SplitInfo[]; corrections: SceneCorrection[]; rhythmNotes: string[] } {
   const c = correctScenes(exp, opts.sceneOverrides)
   const r = splitCrossCutShots(c.exp)
-  return { exp: assignAngleKeys(r.exp), splits: r.splits, corrections: c.corrections }
+  // rhythm (a)/(b)/(c): lengthen split children only (never invents or touches other shots)
+  const f = opts.rhythm === false ? { exp: r.exp, notes: [] } : fitSplitRhythm(r.exp, opts.rhythm || {})
+  if (f.notes.length) {
+    const dur = new Map(f.exp.shots.map((s) => [s.id, s.durationSec]))
+    for (const sp of r.splits) {
+      for (const ch of sp.children) ch.durationSec = dur.get(ch.id) ?? ch.durationSec
+      const mine = f.notes.filter((n) => sp.children.some((ch) => n.startsWith(`${ch.id} `)))
+      if (mine.length) sp.notes.push(...mine.map((n) => `节奏：${n}`))
+    }
+  }
+  return { exp: assignAngleKeys(f.exp), splits: r.splits, corrections: c.corrections, rhythmNotes: f.notes }
 }

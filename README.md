@@ -152,6 +152,7 @@
 - 校验 `validateCarryChain(shots)`：每个 carryFromShotId 指向更早、同一集、angleKey 相同的镜头，无环、id 唯一。`reviewCarryChains` 供人工核对：`crossEpisode`（应为空）、`placeConflict`（单人镜在他人常驻窗，应为空）、`splitResolved`（拆分后上一镜换成了对方子镜，新链按机位跳过，属预期）、`legacyMismatch`（原有的 carryFromPrev 跨机位/人数变化，runner 以 carryFromShotId 为准）。
 - **地点纠正**（拆分前执行，`correctScenes`）：规则——单人镜被标在「另一角色的对窗常驻地点」（如白朴单人镜标成 `alley_window_*`）且该角色自己的常驻窗明确（单人镜过半数），改为自己的常驻地点、同一时段（目标 sceneId 必须已存在）。文本没有可靠地点线索的镜头用显式覆盖表 `{ shotId: sceneId }`（优先于规则），例如 `scripts/scene-overrides/xiaohuangya-p2-clean.json`（s6-13/s6-16 → 教室）。
 - 台词时长：【慢】台词段 ≥ 台词字数/4.5 + 0.5s；三段放不下时把较短的相邻段并入台词段；拆分子镜按此再留 ≥1s 给另一段，必要时子镜加长。
+- **节奏规则**（`src/lib/rhythm.ts`，同集内）：(a) 不允许连续两镜都 < 4.5s；(b) 每个拆分组前后紧邻镜应 ≥ 6s——不新增镜头，邻镜偏短时把组内最长子镜加长到 ≥ 6s，做不到只报警告；(c) 每集 < 5s 的镜头 ≤ 30%（`--short-ratio` 可调）。`fitSplitRhythm` 在拆分后自动执行，只加长拆分子镜（0.5s 网格、≤ 9s，同步改写子镜时间轴），非拆分镜不动；`applyCrossCutSplit(exp, { rhythm: false })` 可关闭。`checkRhythm` 生成 repack 报告的 `rhythmCheck`（`ok`、`consecutiveShort`、`episodeShortRatio`、`brackets`、`warnings`），拆分时另有 `rhythmFit`（每次加长的说明）。
 
 命令行（对已定稿的包，不重新合并）：
 
@@ -160,6 +161,7 @@ npx tsx scripts/repack.ts in.json out.json --beat-only                    # 只�
 npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut   # 先拆对窗段再改写节拍
 npx tsx scripts/repack.ts in.json out.json --split-only                   # 只拆分 + angleKey，不改写节拍
 npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut --scene-overrides scripts/scene-overrides/xiaohuangya-p2-clean.json
+npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut --short-ratio 0.25   # 节奏 (c) 上限
 ```
 
 测试：`npx tsx scripts/test-beat-prompt.ts`、`npx tsx scripts/test-crosscut-split.ts`。
