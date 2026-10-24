@@ -6,15 +6,17 @@
  *                       plus angleKey / carryFromShotId on every shot (runs before beat mode; works with --beat-only)
  *   --split-only      : only the cross-cut split + angle keys on an already final pack (no beat, no re-merge)
  *   --short-ratio 0.3 : rhythm (c) cap of <5 s shots per episode (report + split-child fit); report section rhythmCheck
- *   --scene-overrides f.json : with split: explicit { "shotId": "sceneId" } place corrections (win over the home rule)
+ *   --scene-overrides f.json : with split: explicit { "shotId": "sceneId" } place corrections (win over the home rule);
+ *                              the same file's `beatOverrides` { shotId: [{start,end,speed,text,dialogue?}] } replace the
+ *                              automatic beats in beat mode (validated). Report: stretchReview (stretched split children)
  * Re-apply the deterministic video-pipeline@1 post-processing (style lock, 5–9s merge,
  * time/offlist/logo fixes, sceneId/carryFromPrev) to an already exported pack, and print stats.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segmentPost'
 import type { VideoPipelineExport } from '../src/lib/videoExport'
-import { applyBeatMode } from '../src/lib/beatPrompt'
-import { checkRhythm } from '../src/lib/rhythm'
+import { applyBeatMode, type BeatOverrides } from '../src/lib/beatPrompt'
+import { checkRhythm, stretchReview } from '../src/lib/rhythm'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -26,7 +28,10 @@ const beatMode = bi >= 0 && args[bi + 1] === 'speed' ? 'speed' : flags.has('--be
 const ri = args.indexOf('--short-ratio')
 const rhythm = ri >= 0 ? { maxShortRatio: Number(args[ri + 1]) } : {}
 const oi = args.indexOf('--scene-overrides')
-const sceneOverrides: Record<string, string> | undefined = oi >= 0 ? JSON.parse(readFileSync(args[oi + 1], 'utf8')).overrides : undefined
+const overridesFile = oi >= 0 ? JSON.parse(readFileSync(args[oi + 1], 'utf8')) : {}
+const sceneOverrides: Record<string, string> | undefined = overridesFile.overrides
+// explicit per-shot beats (beat mode only), validated in applyBeatMode
+const beatOverrides: BeatOverrides | undefined = overridesFile.beatOverrides
 const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1))
 const [inp, outp] = pos
 if (!inp) {
@@ -49,9 +54,9 @@ const { exp, stats } = lite
         sceneCorrections = r.corrections
         rhythmNotes = r.rhythmNotes
       }
-      return { exp: flags.has('--beat-only') ? applyBeatMode(e) : e, stats: null }
+      return { exp: flags.has('--beat-only') ? applyBeatMode(e, { beatOverrides }) : e, stats: null }
     })()
-  : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm })
+  : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides })
 const out = outp || inp.replace(/\.json$/, '-p2.json')
 writeFileSync(out, JSON.stringify(exp, null, 2) + '\n')
 
@@ -125,6 +130,7 @@ console.log(
             carryChainErrors: validateCarryChain(exp.shots),
             carryChainReview: reviewCarryChains(exp.shots),
             rhythmFit: rhythmNotes,
+            stretchReview: splits ? stretchReview(splits, beatMode === 'speed' ? Object.keys(beatOverrides || {}) : []) : null,
           }
         : {}),
       rhythmCheck: (() => {

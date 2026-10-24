@@ -153,6 +153,7 @@
 - **地点纠正**（拆分前执行，`correctScenes`）：规则——单人镜被标在「另一角色的对窗常驻地点」（如白朴单人镜标成 `alley_window_*`）且该角色自己的常驻窗明确（单人镜过半数），改为自己的常驻地点、同一时段（目标 sceneId 必须已存在）。文本没有可靠地点线索的镜头用显式覆盖表 `{ shotId: sceneId }`（优先于规则），例如 `scripts/scene-overrides/xiaohuangya-p2-clean.json`（s6-13/s6-16 → 教室）。
 - 台词时长：【慢】台词段 ≥ 台词字数/4.5 + 0.5s；三段放不下时把较短的相邻段并入台词段；拆分子镜按此再留 ≥1s 给另一段，必要时子镜加长。
 - **节奏规则**（`src/lib/rhythm.ts`，同集内）：(a) 不允许连续两镜都 < 4.5s；(b) 每个拆分组前后紧邻镜应 ≥ 6s——不新增镜头，邻镜偏短时把组内最长子镜加长到 ≥ 6s，做不到只报警告；(c) 每集 < 5s 的镜头 ≤ 30%（`--short-ratio` 可调）。`fitSplitRhythm` 在拆分后自动执行，只加长拆分子镜（0.5s 网格、≤ 9s，同步改写子镜时间轴），非拆分镜不动；`applyCrossCutSplit(exp, { rhythm: false })` 可关闭。`checkRhythm` 生成 repack 报告的 `rhythmCheck`（`ok`、`consecutiveShort`、`episodeShortRatio`、`brackets`、`warnings`），拆分时另有 `rhythmFit`（每次加长的说明）。
+- **拉长审查与手写节拍**：报告 `stretchReview` 列出被节奏补齐拉长、且比原节拍自然时长（`sourceSec`）多 ≥ 1.5s 的子镜（`idleSec` = 时长 − max(原节拍, 台词所需)，越大越容易「演员干站」）。对这些镜头可在覆盖文件里写 `beatOverrides: { "s1-1a": [{ start, end, speed, text, dialogue? }] }`，节拍模式下替换自动分段。`validateBeatOverride` 校验：2–4 段、0.5s 网格、每段 ≥ 1s、从 0 连续到镜头时长、有变速对比、text 不含人名/台词原文/第二个人物；有台词的镜头恰好一段 `dialogue: true`，必须【慢】且 ≥ 台词字数/4.5 + 0.5s、不遮嘴；无台词镜头不得有台词段。不合法或 shotId 不存在直接报错；生效的镜头带 `beatOverride: true`。时长变了（如改了节奏参数）旧覆盖会因覆盖不全而报错，需要重写。
 
 命令行（对已定稿的包，不重新合并）：
 

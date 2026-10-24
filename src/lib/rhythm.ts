@@ -8,6 +8,7 @@
  * `fitSplitRhythm` only lengthens split children (never other shots, never above `maxSec`).
  * `checkRhythm` reports violations of (a)/(c) (errors) and unmet brackets (b) (warnings).
  */
+import type { SplitInfo } from './crosscutSplit'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 
 type Shot = VideoPipelineShot
@@ -184,4 +185,49 @@ export function fitSplitRhythm(exp: VideoPipelineExport, opts: RhythmOptions = {
   }
   if (!notes.length) return { exp, notes }
   return { exp: { ...exp, shots: exp.shots.map((s, i) => retimeChild(s, D[i])) }, notes }
+}
+
+export interface StretchItem {
+  id: string
+  /** natural length of the source sub-beats the child got */
+  sourceSec: number
+  rawSec: number
+  durationSec: number
+  /** durationSec − sourceSec */
+  overSource: number
+  /** added by fitSplitRhythm */
+  fitAdded: number
+  /** dialogue need (line length / 4.5 + 0.5 s), 0 without dialogue */
+  dialogueSec: number
+  /** time with no source beat and no dialogue: durationSec − max(sourceSec, dialogueSec) — idle risk */
+  idleSec: number
+  beatOverride: boolean
+}
+
+/**
+ * Split children the rhythm fit stretched ≥ `minOver` s beyond their source beats' natural length (idle-actor risk),
+ * worst first (largest idleSec, then largest idle share of the shot). `overridden` = ids that already have explicit beats.
+ */
+export function stretchReview(splits: SplitInfo[], overridden: Iterable<string> = [], minOver = 1.5): StretchItem[] {
+  const ov = new Set(overridden)
+  const paced = (t: string) => (t.match(/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaffA-Za-z0-9]/g) || []).length
+  const r2 = (x: number) => Math.round(x * 100) / 100
+  return splits
+    .flatMap((sp) => sp.children)
+    .map((c) => {
+      const dialogueSec = c.dialogue ? paced(c.dialogue) / 4.5 + 0.5 : 0
+      return {
+        id: c.id,
+        sourceSec: c.sourceSec,
+        rawSec: c.rawSec,
+        durationSec: c.durationSec,
+        overSource: r2(c.durationSec - c.sourceSec),
+        fitAdded: r2(c.durationSec - c.rawSec),
+        dialogueSec: r2(dialogueSec),
+        idleSec: r2(c.durationSec - Math.max(c.sourceSec, dialogueSec)),
+        beatOverride: ov.has(c.id),
+      }
+    })
+    .filter((x) => x.fitAdded > 1e-9 && x.overSource >= minOver - 1e-9)
+    .sort((a, b) => b.idleSec - a.idleSec || b.idleSec / b.durationSec - a.idleSec / a.durationSec || b.overSource - a.overSource)
 }

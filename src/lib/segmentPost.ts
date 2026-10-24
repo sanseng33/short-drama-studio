@@ -16,7 +16,7 @@ import { styleTag, styleToneForGenre } from './templates/styleTag'
 import { factsForShotPrompts, scrubTiers, tierSettingFacts } from './settingFacts'
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
 import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
-import { applyBeatMode } from './beatPrompt'
+import { applyBeatMode, type BeatOverrides } from './beatPrompt'
 import { applyCrossCutSplit } from './crosscutSplit'
 import type { RhythmOptions } from './rhythm'
 
@@ -37,6 +37,8 @@ export interface PostProcessOptions {
   sceneOverrides?: Record<string, string>
   /** with splitCrossCut: rhythm rules used to lengthen split children (false = off) */
   rhythm?: RhythmOptions | false
+  /** with beatMode 'speed': explicit per-shot beats (validated, see beatPrompt.validateBeatOverride) */
+  beatOverrides?: BeatOverrides
 }
 
 export const SEGMENT_MIN_SEC = 5
@@ -771,7 +773,7 @@ export function postProcessExportWithStats(
   }
   // opt-in: per-second speed-beat prompts (after merge / carry / dialogue guards so it sees final shots)
   const split = opts.splitCrossCut ? applyCrossCutSplit(result, { sceneOverrides: opts.sceneOverrides, rhythm: opts.rhythm }).exp : result
-  return { exp: opts.beatMode === 'speed' ? applyBeatMode(split, { style }) : split, stats }
+  return { exp: opts.beatMode === 'speed' ? applyBeatMode(split, { style, beatOverrides: opts.beatOverrides }) : split, stats }
 }
 
 function pacedLen(t: string): number {

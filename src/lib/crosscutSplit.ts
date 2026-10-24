@@ -27,6 +27,10 @@ export interface SplitChildInfo {
   id: string
   characterId: string
   durationSec: number
+  /** natural length: sum of the source sub-beats (original merged timeline) this child got */
+  sourceSec: number
+  /** split allocation before the rhythm fit (durationSec is the final length) */
+  rawSec: number
   speaker: string | null
   speakerName: string | null
   dialogue: string
@@ -529,7 +533,7 @@ export function splitCrossCutShot(s: Shot, chars: Char[], all: Shot[], crossPlac
     info: {
       id: s.id,
       durationSec: s.durationSec,
-      children: children.map((c) => ({ id: c.id, characterId: c.characterIds[0], durationSec: c.durationSec, speaker: c.speaker, speakerName: c.speakerName, dialogue: c.dialogue })),
+      children: children.map((c, ci) => ({ id: c.id, characterId: c.characterIds[0], durationSec: c.durationSec, rawSec: c.durationSec, sourceSec: Math.round(runs[ci].reduce((a, x) => a + x.dur, 0) * 100) / 100, speaker: c.speaker, speakerName: c.speakerName, dialogue: c.dialogue })),
       notes,
     },
   }

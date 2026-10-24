@@ -63,6 +63,8 @@ export interface VideoPipelineShot {
   beatRemovedProps?: string[]
   /** beat mode: review notes where the beat split looked questionable */
   beatTodo?: string[]
+  /** beats come from an explicit beatOverrides entry (hand-written), not the automatic split */
+  beatOverride?: boolean
   /** beat mode: the default (non-beat) prompt, kept for comparison / re-conversion */
   promptDefault?: string
   /** place slug of sceneId (sceneContinuity), e.g. villa_bedroom */

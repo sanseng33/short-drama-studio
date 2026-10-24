@@ -44,7 +44,20 @@ export interface BeatModeOptions {
   style?: string
   /** keep the pre-beat prompt in `promptDefault` (default true) */
   keepDefaultPrompt?: boolean
+  /** explicit per-shot beats (shot id → segments) that replace the automatic beat split; validated */
+  beatOverrides?: BeatOverrides
 }
+
+/** One hand-written beat: `text` is the visual action only (no names, no dialogue text, one subject). */
+export interface BeatOverrideSegment {
+  start: number
+  end: number
+  speed: BeatSpeed
+  text: string
+  /** this segment carries the shot's dialogue (exactly one when the shot has dialogue; must be 【慢】) */
+  dialogue?: boolean
+}
+export type BeatOverrides = Record<string, BeatOverrideSegment[]>
 
 type Char = VideoPipelineExport['characters'][number]
 
@@ -501,6 +514,58 @@ function styleLineFor(prompt: string, style?: string): string {
 
 // ---------------- main builder ----------------
 
+const SPEEDS: BeatSpeed[] = ['快', '慢', '恢复常速']
+
+/**
+ * Validate hand-written beats for one shot: 2–4 segments on a 0.5 s grid, each ≥ 1 s, contiguous from 0 to exactly
+ * durationSec; speed contrast (not all one speed); text non-empty without character names or dialogue text; when the
+ * shot has dialogue exactly one `dialogue: true` segment, 【慢】, ≥ line length / 4.5 + DIALOGUE_PAD_SEC, nothing
+ * covering the mouth; without dialogue no dialogue segment. Returns error strings (empty = valid).
+ */
+export function validateBeatOverride(s: VideoPipelineShot, segs: BeatOverrideSegment[], chars: Char[]): string[] {
+  const e: string[] = []
+  const total = Number(s.durationSec) || 0
+  if (!Array.isArray(segs) || segs.length < 2 || segs.length > 4) return [`需要 2–4 段，实际 ${Array.isArray(segs) ? segs.length : '非数组'}`]
+  const on = (x: number) => Math.abs(x * 2 - Math.round(x * 2)) < 1e-9
+  if (Math.abs(segs[0].start) > 1e-9) e.push(`第 1 段应从 0 开始（${segs[0].start}）`)
+  segs.forEach((g, i) => {
+    const n = `第 ${i + 1} 段 ${g.start}–${g.end}s`
+    if (typeof g.start !== 'number' || typeof g.end !== 'number' || !on(g.start) || !on(g.end)) e.push(`${n}：起止须为 0.5s 网格上的数字`)
+    if (g.end - g.start < 1 - 1e-9) e.push(`${n}：不足 1 秒`)
+    if (i > 0 && Math.abs(g.start - segs[i - 1].end) > 1e-9) e.push(`${n}：与上一段不连续（上一段止于 ${segs[i - 1].end}s）`)
+    if (!SPEEDS.includes(g.speed)) e.push(`${n}：speed 须为 快/慢/恢复常速`)
+    if (!g.text || !paced(g.text)) e.push(`${n}：text 为空`)
+  })
+  if (Math.abs(segs[segs.length - 1].end - total) > 1e-9) e.push(`末段止于 ${segs[segs.length - 1].end}s ≠ 镜头时长 ${total}s`)
+  if (new Set(segs.map((g) => g.speed)).size < 2) e.push('所有分段同一速度，无变速对比')
+  // names / dialogue text never in the visual prompt
+  const lines = s.dialogueLines?.length ? s.dialogueLines : s.dialogue ? [{ speaker: s.speaker, speakerName: s.speakerName, text: s.dialogue, voiceOnly: s.speakerOffscreen }] : []
+  const names = [...new Set([...nameVariants(chars).map((v) => v.text), ...chars.flatMap((c) => [c.name, c.baseName || '']), ...lines.map((l) => l.speakerName || '')])].filter((x) => x && x.length >= 2)
+  const frags = lines.flatMap((l) => {
+    const core = (l.text || '').replace(/[^\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaffA-Za-z0-9，。！？、；…,.!?;~～\s]/g, '')
+    const parts = core.split(/[，。！？、；…,.!?;~～\s]+/).filter((x) => paced(x) >= 3)
+    const whole = core.replace(/[，。！？、；…,.!?;~～\s]+/g, '')
+    return whole.length >= 2 ? [whole, ...parts] : parts
+  })
+  segs.forEach((g, i) => {
+    for (const nm of names) if ((g.text || '').includes(nm)) e.push(`第 ${i + 1} 段含人名「${nm}」`)
+    const flat = (g.text || '').replace(/[，。！？、；…,.!?;~～\s]+/g, '')
+    for (const f of frags) if (flat.includes(f.replace(/[，。！？、；…,.!?;~～\s]+/g, ''))) e.push(`第 ${i + 1} 段含台词原文「${f}」`)
+    if (/另一人|两人|双人|同框/.test(g.text || '')) e.push(`第 ${i + 1} 段出现第二个人物`)
+  })
+  const dl = segs.filter((g) => g.dialogue)
+  if (lines.length) {
+    const dlgSec = lines.reduce((a, l) => a + paced(l.text || '') / 4.5, 0)
+    if (dl.length !== 1) e.push(`有台词的镜头须恰好 1 段 dialogue:true（实际 ${dl.length}）`)
+    for (const g of dl) {
+      if (g.speed !== '慢') e.push(`台词段 ${g.start}–${g.end}s 必须是【慢】`)
+      if (g.end - g.start < dlgSec + DIALOGUE_PAD_SEC - 1e-9) e.push(`台词段 ${g.start}–${g.end}s 不足 ${(dlgSec + DIALOGUE_PAD_SEC).toFixed(2)}s（台词字数/4.5 + ${DIALOGUE_PAD_SEC}）`)
+      if (MOUTH_BLOCK.test(g.text || '')) e.push(`台词段含遮挡嘴部的动作：${g.text}`)
+    }
+  } else if (dl.length) e.push('镜头无台词，不能有 dialogue:true 段')
+  return e
+}
+
 export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatModeOptions = {}): BeatPromptResult {
   const src = s.promptDefault ?? s.prompt ?? ''
   const total = Number(s.durationSec) || 0
@@ -551,6 +616,22 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     if (single) return pron
     const g = garmentOf.get(id)
     return distinct && g ? `穿${g}的${nounFor(byId.get(id))}` : isFemale(byId.get(id)) ? '她' : '他'
+  }
+
+  // ---- explicit beats (beatOverrides) replace the automatic split
+  const ov = opts.beatOverrides?.[s.id]
+  if (ov) {
+    const errs = validateBeatOverride(s, ov, chars)
+    if (errs.length) throw new Error(`beatOverrides ${s.id}: ${errs.join('；')}`)
+    const voiceOnly = hasDialogue && !onscreenSpeech
+    const meta: BeatSegmentMeta[] = ov.map((g) => ({ start: g.start, end: g.end, speed: g.speed, dialogue: Boolean(g.dialogue), lipSync: Boolean(g.dialogue) && !voiceOnly }))
+    const segLinesOv = ov.map((g) => {
+      let body = g.text.replace(/[，；。\s]+$/, '')
+      if (g.speed === '快' && !body.includes(BEAT_FAST_TAIL)) body = `${body}，${BEAT_FAST_TAIL}`
+      if (g.dialogue) body = `动作放慢，${body}；${voiceOnly ? '画外有人说话，画面人物停住倾听，嘴唇闭合不说话' : BEAT_MOUTH_CUE}`
+      return `${fmt(g.start)}–${fmt(g.end)}秒【${g.speed}】：${body}。`
+    })
+    return finish(segLinesOv, meta)
   }
 
   // ---- raw beats
@@ -680,42 +761,45 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   const slowSec = segMeta.filter((m) => m.speed === '慢').reduce((a, m) => a + m.end - m.start, 0)
   if (hasDialogue && dlgSec + DIALOGUE_PAD_SEC > slowSec + 1e-9) todo.push(`台词约需 ${dlgSec.toFixed(1)}秒，【慢】段仅 ${fmt(slowSec)}秒`)
   if (cast.length >= 2 && CROSSCUT_RE.test(src)) todo.push('原段为对窗/对切双空间，单镜不切镜难以同时拍到两人，建议拆为单人镜')
+  return finish(segLines, segMeta)
 
   // ---- header / footer
-  const head = sceneHeader(s)
-  const who = cast.length === 0 ? '空镜无人物' : single ? '单人' : cast.length === 2 ? '双人' : `${cast.length}人`
-  const subj = subjects.join('；另一人：')
-  const solo = single ? `全程只有${pron}一人，不出现第二个人物。` : ''
-  let light = clause(src, /光线/)
-  if (!light) {
-    const LIGHT = /(晨光|天光|日光|灯光|光从|光线|逆光|侧光|柔光|暖光|冷光|阳光|月光|斜射|光照)/
-    const sent = src.split(/[。；\n]/).find((x) => LIGHT.test(x) && !/^\s*(限制|风格)[：:]/.test(x)) || ''
-    light = splitTop(sent.replace(/^[^：:]{0,6}[：:]/, ''), '，,')
-      .filter((x) => LIGHT.test(x))
-      .join('，')
+  function finish(segLines: string[], segMeta: BeatSegmentMeta[]): BeatPromptResult {
+    const head = sceneHeader(s)
+    const who = cast.length === 0 ? '空镜无人物' : single ? '单人' : cast.length === 2 ? '双人' : `${cast.length}人`
+    const subj = subjects.join('；另一人：')
+    const solo = single ? `全程只有${pron}一人，不出现第二个人物。` : ''
+    let light = clause(src, /光线/)
+    if (!light) {
+      const LIGHT = /(晨光|天光|日光|灯光|光从|光线|逆光|侧光|柔光|暖光|冷光|阳光|月光|斜射|光照)/
+      const sent = src.split(/[。；\n]/).find((x) => LIGHT.test(x) && !/^\s*(限制|风格)[：:]/.test(x)) || ''
+      light = splitTop(sent.replace(/^[^：:]{0,6}[：:]/, ''), '，,')
+        .filter((x) => LIGHT.test(x))
+        .join('，')
+    }
+    if (!light) light = s.timeOfDay ? `${s.timeOfDay}自然光` : '自然光'
+    light = stripNames(light, variants, refOf)
+    const limits = [BEAT_LIMIT]
+    if (src.includes(CARRY_WARDROBE_CONSTRAINT) || carry) limits.push(CARRY_WARDROBE_CONSTRAINT)
+    if (s.splitFrom && src.includes(SOLO_SPLIT_LIMIT)) limits.push(SOLO_SPLIT_LIMIT)
+    if (s.speakerOffscreen || lines.some((l) => l.voiceOnly)) limits.push('画外人声的说话人不出镜，画面只出现指定角色')
+    const prompt = [
+      `竖屏9:16，${fmt(total)}秒单镜。${head ? `${head}，` : ''}${who}。`,
+      subj ? `主体：${subj}。${solo}` : solo,
+      `${BEAT_HEADER}：`,
+      ...segLines,
+      `镜头：${stripNames(cameraLine(s.camera), variants, refOf)}。`,
+      `光线：${light.replace(/[。\s]+$/, '')}。`,
+      `风格：${styleLineFor(src, opts.style)}。`,
+      `限制：${limits.join('；')}。`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+    // final guards: no names, no dialogue text
+    const leftover = variants.filter((v) => v.text.length >= 2 && prompt.includes(v.text)).map((v) => v.text)
+    if (leftover.length) todo.push(`提示词仍含人名：${leftover.join('、')}`)
+    return { prompt, segments: segMeta, removedProps, todo }
   }
-  if (!light) light = s.timeOfDay ? `${s.timeOfDay}自然光` : '自然光'
-  light = stripNames(light, variants, refOf)
-  const limits = [BEAT_LIMIT]
-  if (src.includes(CARRY_WARDROBE_CONSTRAINT) || carry) limits.push(CARRY_WARDROBE_CONSTRAINT)
-  if (s.splitFrom && src.includes(SOLO_SPLIT_LIMIT)) limits.push(SOLO_SPLIT_LIMIT)
-  if (s.speakerOffscreen || lines.some((l) => l.voiceOnly)) limits.push('画外人声的说话人不出镜，画面只出现指定角色')
-  const prompt = [
-    `竖屏9:16，${fmt(total)}秒单镜。${head ? `${head}，` : ''}${who}。`,
-    subj ? `主体：${subj}。${solo}` : solo,
-    `${BEAT_HEADER}：`,
-    ...segLines,
-    `镜头：${stripNames(cameraLine(s.camera), variants, refOf)}。`,
-    `光线：${light.replace(/[。\s]+$/, '')}。`,
-    `风格：${styleLineFor(src, opts.style)}。`,
-    `限制：${limits.join('；')}。`,
-  ]
-    .filter(Boolean)
-    .join('\n')
-  // final guards: no names, no dialogue text
-  const leftover = variants.filter((v) => v.text.length >= 2 && prompt.includes(v.text)).map((v) => v.text)
-  if (leftover.length) todo.push(`提示词仍含人名：${leftover.join('、')}`)
-  return { prompt, segments: segMeta, removedProps, todo }
 }
 
 /** Is a prompt already in beat (speed) format? */
@@ -727,6 +811,9 @@ export function isBeatPrompt(p: string): boolean {
 export function applyBeatMode(exp: VideoPipelineExport, opts: BeatModeOptions = {}): VideoPipelineExport {
   const style = opts.style ?? exp.project.style
   const keep = opts.keepDefaultPrompt !== false
+  const ov = opts.beatOverrides || {}
+  const unknown = Object.keys(ov).filter((id) => !exp.shots.some((s) => s.id === id))
+  if (unknown.length) throw new Error(`beatOverrides: unknown shot id ${unknown.join(', ')}`)
   const shots = exp.shots.map((s) => {
     // idempotent: rebuild from the stored default prompt when this shot was beat-converted before
     const base = s.promptDefault && isBeatPrompt(s.prompt) ? s.promptDefault : s.prompt
@@ -738,6 +825,8 @@ export function applyBeatMode(exp: VideoPipelineExport, opts: BeatModeOptions = 
       beatSegments: r.segments,
       ...(keep ? { promptDefault: base } : {}),
     }
+    if (ov[s.id]) out.beatOverride = true
+    else delete out.beatOverride
     if (!keep) delete out.promptDefault
     if (r.removedProps.length) out.beatRemovedProps = r.removedProps
     else delete out.beatRemovedProps

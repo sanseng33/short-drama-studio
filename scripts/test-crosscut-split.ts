@@ -1,7 +1,7 @@
 /** npx tsx scripts/test-crosscut-split.ts — opt-in cross-cut split + angleKey / carryFromShotId */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
-import { applyBeatMode, BEAT_MOUTH_CUE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, SOLO_SPLIT_LIMIT } from '../src/lib/beatPrompt'
+import { applyBeatMode, BEAT_MOUTH_CUE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, SOLO_SPLIT_LIMIT, validateBeatOverride, type BeatOverrideSegment } from '../src/lib/beatPrompt'
 import {
   allocateSplitDurations,
   angleKeyOf,
@@ -14,7 +14,7 @@ import {
   splitCrossCutShots,
   validateCarryChain,
 } from '../src/lib/crosscutSplit'
-import { checkRhythm, fitSplitRhythm, retimeChild } from '../src/lib/rhythm'
+import { checkRhythm, fitSplitRhythm, retimeChild, stretchReview } from '../src/lib/rhythm'
 import { CARRY_WARDROBE_CONSTRAINT } from '../src/lib/sceneContinuity'
 import { postProcessExport } from '../src/lib/segmentPost'
 import { buildVideoPipelineExport, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
@@ -357,6 +357,60 @@ t('retimeChild: header + beat ranges rescaled on a 0.5 s grid, last beat ends at
   assert.equal(s.prompt, '主体：少年。时间轴（一镜6秒，小节拍）：0–2.5s甲；2.5–6s随后乙。镜头：近景。')
 })
 
+// ---- explicit beat overrides ----
+t('validateBeatOverride: contiguous, exact coverage, contrast, no names / dialogue text, dialogue segment rules', () => {
+  const talk = SH({ id: 'v1', durationSec: 6, dialogue: '好看是好看……我怎么解释。', speaker: 'c2', speakerName: '白朴' })
+  const quiet = SH({ id: 'v2', durationSec: 4 })
+  const G = (start: number, end: number, speed: BeatOverrideSegment['speed'], text = '他抬手摸了摸后颈', dialogue?: boolean): BeatOverrideSegment => ({ start, end, speed, text, ...(dialogue ? { dialogue } : {}) })
+  const ok = [G(0, 1.5, '恢复常速'), G(1.5, 2.5, '快'), G(2.5, 6, '慢', '嘴角挂着笑', true)]
+  assert.deepEqual(validateBeatOverride(talk, ok, chars), [], 'valid')
+  const has = (segs: BeatOverrideSegment[], re: RegExp, shot = talk) => {
+    const e = validateBeatOverride(shot, segs, chars)
+    assert.ok(e.some((x) => re.test(x)), `${re} not in ${e.join(' | ')}`)
+  }
+  has([G(0, 1.5, '恢复常速'), G(2, 3, '快'), G(3, 6, '慢', 'x笑', true)], /不连续/)
+  has([G(0, 1.5, '恢复常速'), G(1.5, 2.5, '快'), G(2.5, 5.5, '慢', '笑', true)], /≠ 镜头时长/)
+  has([G(0, 0.5, '恢复常速'), G(0.5, 2.5, '快'), G(2.5, 6, '慢', '笑', true)], /不足 1 秒/)
+  has([G(0, 1.2, '恢复常速'), G(1.2, 2.5, '快'), G(2.5, 6, '慢', '笑', true)], /0\.5s 网格/)
+  has([G(0, 3, '慢'), G(3, 6, '慢', '笑', true)], /无变速对比/)
+  has([G(0, 1.5, '恢复常速', '白朴走到窗前'), G(1.5, 2.5, '快'), G(2.5, 6, '慢', '笑', true)], /人名/)
+  has([G(0, 1.5, '恢复常速'), G(1.5, 2.5, '快'), G(2.5, 6, '慢', '他说我怎么解释', true)], /台词原文/)
+  has([G(0, 1.5, '恢复常速'), G(1.5, 2.5, '快'), G(2.5, 6, '慢')], /恰好 1 段 dialogue/)
+  has([G(0, 1.5, '恢复常速'), G(1.5, 4.5, '快', '笑', true), G(4.5, 6, '慢')], /必须是【慢】/)
+  has([G(0, 2.5, '恢复常速'), G(2.5, 4, '快'), G(4, 6, '慢', '笑', true)], /不足 2\.72s/)
+  has([G(0, 1.5, '恢复常速'), G(1.5, 2.5, '快'), G(2.5, 6, '慢', '捂住嘴笑', true)], /遮挡嘴部/)
+  has([G(0, 2, '快'), G(2, 4, '慢', '笑', true)], /无台词/, quiet)
+  has([G(0, 2, '快', '他和另一人对视'), G(2, 4, '慢')], /第二个人物/, quiet)
+})
+
+t('applyBeatMode beatOverrides: replaces auto beats, flags shot, throws on invalid / unknown id, idempotent', () => {
+  const s = SH({ id: 'o1', durationSec: 6, dialogue: '来了。', speaker: 'c2', speakerName: '白朴', prompt: '竖屏9:16。夜，卧室。主体：17岁东亚少年白朴（变帅后），米白翻领拉链短夹克。动作：写卷子。' })
+  const other = SH({ id: 'o2', durationSec: 5 })
+  const segs: BeatOverrideSegment[] = [
+    { start: 0, end: 2, speed: '恢复常速', text: '他低头写卷子，笔尖在纸上继续划' },
+    { start: 2, end: 3, speed: '快', text: '笔尖顿住半拍，用笔帽敲了一下卷子边' },
+    { start: 3, end: 4.5, speed: '慢', dialogue: true, text: '眼睛没离开纸面，嘴角先动再出声' },
+    { start: 4.5, end: 6, speed: '恢复常速', text: '说完鼻翼轻轻收了一口气' },
+  ]
+  const e = pack([s, other])
+  const out = applyBeatMode(e, { beatOverrides: { o1: segs } })
+  const o1 = out.shots[0]
+  assert.equal(o1.beatOverride, true, 'flagged')
+  assert.equal(out.shots[1].beatOverride, undefined, 'others untouched')
+  assert.deepEqual(o1.beatSegments!.map((g) => [g.start, g.end, g.speed, g.dialogue, g.lipSync]), [
+    [0, 2, '恢复常速', false, false], [2, 3, '快', false, false], [3, 4.5, '慢', true, true], [4.5, 6, '恢复常速', false, false],
+  ])
+  assert.ok(o1.prompt.includes('2–3秒【快】：笔尖顿住半拍，用笔帽敲了一下卷子边，动作利落不拖。'), o1.prompt)
+  assert.ok(o1.prompt.includes(`3–4.5秒【慢】：动作放慢，眼睛没离开纸面，嘴角先动再出声；${BEAT_MOUTH_CUE}。`), o1.prompt)
+  assert.ok(!/白朴|来了/.test(o1.prompt), 'no name / dialogue')
+  assert.equal(o1.beatTodo, undefined, 'no review todo')
+  assert.deepEqual(applyBeatMode(out, { beatOverrides: { o1: segs } }), out, 'idempotent')
+  const back = applyBeatMode(out)
+  assert.equal(back.shots[0].beatOverride, undefined, 'dropping the override restores auto beats')
+  assert.throws(() => applyBeatMode(e, { beatOverrides: { nope: segs } }), /unknown shot id nope/)
+  assert.throws(() => applyBeatMode(e, { beatOverrides: { o1: segs.slice(0, 3) } }), /beatOverrides o1: .*≠ 镜头时长/)
+})
+
 const P2 = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p2-clean.json'
 if (existsSync(P2)) {
   const p2 = JSON.parse(readFileSync(P2, 'utf8')) as VideoPipelineExport
@@ -470,6 +524,33 @@ if (existsSync(P2)) {
     for (const x of splits) for (const c of x.children) assert.equal(c.durationSec, dur.get(c.id), `${c.id} SplitInfo duration`)
     const m = Object.fromEntries(exp.shots.map((s) => [s.id, s.durationSec]))
     assert.deepEqual([m['s1-1a'], m['s1-1b'], m['s1-1c'], m['s1-24a'], m['s1-24b'], m['s3-6a'], m['s3-6b'], m['s3-6c']], [5, 3, 6, 6, 3, 3, 4.5, 3])
+  })
+  t('p2-clean beatOverrides (override file): s1-1a/b/c + worst 3 stretched children get hand-written beats', () => {
+    const file = JSON.parse(readFileSync(new URL('./scene-overrides/xiaohuangya-p2-clean.json', import.meta.url), 'utf8'))
+    const BO = file.beatOverrides as Record<string, BeatOverrideSegment[]>
+    const { exp, splits } = applyCrossCutSplit(p2, { sceneOverrides: OV })
+    const out = applyBeatMode(exp, { beatOverrides: BO })
+    const m = Object.fromEntries(out.shots.map((s) => [s.id, s]))
+    const ids = Object.keys(BO)
+    assert.deepEqual(ids.slice(0, 3), ['s1-1a', 's1-1b', 's1-1c'])
+    // the worst three stretched children outside s1-1 are covered
+    const st = stretchReview(splits, ids)
+    assert.ok(st.length >= 6, `stretch list ${st.length}`)
+    assert.deepEqual(st.filter((x) => !x.id.startsWith('s1-1')).slice(0, 3).map((x) => x.id), ['s1-21a', 's3-6b', 's1-30a'])
+    for (const x of st.filter((y) => !y.id.startsWith('s1-1')).slice(0, 3)) assert.ok(x.beatOverride, `${x.id} overridden`)
+    for (const id of ids) {
+      const s = m[id]
+      assert.equal(s.beatOverride, true, `${id} flagged`)
+      assert.equal(s.beatTodo, undefined, `${id} no todo`)
+      assert.equal(s.characterIds.length, 1, `${id} single subject`)
+      assert.ok(new Set(s.beatSegments!.map((g) => g.speed)).size >= 2, `${id} speed contrast`)
+      assert.ok(!/白朴|吴耐|另一人|双人/.test(s.prompt), `${id} names`)
+      assert.equal(s.beatSegments![s.beatSegments!.length - 1].end, s.durationSec, `${id} coverage`)
+      assert.equal(s.beatSegments!.some((g) => g.lipSync), Boolean(s.dialogue), `${id} lip-sync iff speaker`)
+    }
+    assert.ok(m['s1-1a'].prompt.includes('小石子') && m['s1-1b'].prompt.includes('栏杆') && m['s1-1c'].prompt.includes('鼻翼'), 'grounded in s1-1 source')
+    assert.ok(!m['s1-1a'].prompt.includes('安静听'), 'no phantom listening beat before anyone speaks')
+    assert.ok(checkRhythm(out.shots).ok, 'rhythm unchanged')
   })
 }
 
