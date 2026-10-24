@@ -1,24 +1,31 @@
 /**
- * npx tsx scripts/repack.ts <in-pack.json> [out.json] [--no-merge] [--genre 都市逆袭]
+ * npx tsx scripts/repack.ts <in-pack.json> [out.json] [--no-merge] [--genre 都市逆袭] [--beat-mode speed] [--beat-only]
+ *   --beat-mode speed : opt-in per-second speed-beat prompts (时间轴（按秒变速）) as the last pass
+ *   --beat-only       : only convert prompts to speed beats (no re-merge / re-sanitize of an already final pack)
  * Re-apply the deterministic video-pipeline@1 post-processing (style lock, 5–9s merge,
  * time/offlist/logo fixes, sceneId/carryFromPrev) to an already exported pack, and print stats.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segmentPost'
 import type { VideoPipelineExport } from '../src/lib/videoExport'
+import { applyBeatMode } from '../src/lib/beatPrompt'
 
 const args = process.argv.slice(2)
 const flags = new Set(args.filter((a) => a.startsWith('--')))
 const gi = args.indexOf('--genre')
 const genre = gi >= 0 ? args[gi + 1] : ''
-const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1))
+const bi = args.indexOf('--beat-mode')
+const beatMode = bi >= 0 && args[bi + 1] === 'speed' ? 'speed' : flags.has('--beat-only') ? 'speed' : 'off'
+const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1))
 const [inp, outp] = pos
 if (!inp) {
-  console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G]')
+  console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G] [--beat-mode speed] [--beat-only]')
   process.exit(1)
 }
 const pack = JSON.parse(readFileSync(inp, 'utf8')) as VideoPipelineExport
-const { exp, stats } = postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre })
+const { exp, stats } = flags.has('--beat-only')
+  ? { exp: applyBeatMode(pack), stats: null }
+  : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode })
 const out = outp || inp.replace(/\.json$/, '-p2.json')
 writeFileSync(out, JSON.stringify(exp, null, 2) + '\n')
 
@@ -72,6 +79,14 @@ console.log(
       offscreenLines: exp.shots.filter((s) => s.speakerOffscreen || s.dialogueLines?.some((l) => l.voiceOnly)).length,
       warnings: warn,
       stats,
+      ...(beatMode === 'speed'
+        ? {
+            beatMode,
+            beatShots: exp.shots.filter((s) => s.beatMode === 'speed').length,
+            beatTodoShots: exp.shots.filter((s) => s.beatTodo?.length).map((s) => ({ id: s.id, todo: s.beatTodo })),
+            beatRemovedProps: exp.shots.filter((s) => s.beatRemovedProps?.length).map((s) => ({ id: s.id, removed: s.beatRemovedProps })),
+          }
+        : {}),
     },
     null,
     2,

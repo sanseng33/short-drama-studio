@@ -55,6 +55,16 @@ export interface VideoPipelineShot {
   carryFromPrev?: boolean
   /** optional storyboard location short tag (fed into scene classification when present) */
   location?: string
+  /** 'speed' when the prompt was rewritten as per-second speed beats (opt-in beatMode) */
+  beatMode?: 'speed'
+  /** beat mode: the timeline segments of `prompt` (seconds, speed tag, dialogue/lip-sync flags) */
+  beatSegments?: { start: number; end: number; speed: '快' | '慢' | '恢复常速'; dialogue: boolean; lipSync: boolean }[]
+  /** beat mode: small hand-prop clauses dropped from the prompt (TODO: re-add in post if story-critical) */
+  beatRemovedProps?: string[]
+  /** beat mode: review notes where the beat split looked questionable */
+  beatTodo?: string[]
+  /** beat mode: the default (non-beat) prompt, kept for comparison / re-conversion */
+  promptDefault?: string
 }
 
 export interface VideoPipelineWarning {
@@ -74,6 +84,8 @@ export interface VideoPipelineOptions {
   segmentMinSec?: number
   /** merged segment max seconds (default 9) */
   segmentMaxSec?: number
+  /** 'speed' = opt-in per-second speed-beat prompts (时间轴（按秒变速）); default 'off' keeps the existing prompts */
+  beatMode?: 'off' | 'speed'
 }
 
 export interface VideoPipelineExport {
@@ -895,6 +907,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     segmentMinSec: opts.segmentMinSec,
     segmentMaxSec: opts.segmentMaxSec,
     genre: project.genre,
+    beatMode: opts.beatMode,
   })
 }
 
