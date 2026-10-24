@@ -23,7 +23,64 @@
         "sideB": "03_270.png",
         "halfBody": "zz_half_body.png",
         "orbit": "orbit.mp4"
-      }
+      },
+      "multiAngleStills": {
+        "front": "train/bai_pu_plain/front_01.png",
+        "side": "train/bai_pu_plain/side_01.png",
+        "threeQuarter": "train/bai_pu_plain/tq_01.png",
+        "extras": [
+          "train/bai_pu_plain/front_02.png",
+          "train/bai_pu_plain/side_02.png",
+          "train/bai_pu_plain/tq_02.png",
+          "train/bai_pu_plain/extra_01.png",
+          "train/bai_pu_plain/extra_02.png"
+        ],
+        "slots": [
+          { "kind": "front", "path": "train/bai_pu_plain/slots/front_a.png", "label": "正" },
+          { "kind": "side", "path": "train/bai_pu_plain/slots/side_a.png", "label": "侧" },
+          { "kind": "threeQuarter", "path": "train/bai_pu_plain/slots/tq_a.png", "label": "3/4" }
+        ]
+      },
+      "wardrobeVariants": [
+        {
+          "id": "hoodie",
+          "label": "卫衣",
+          "costumePrompt": "米白色宽松连帽卫衣，浅蓝水洗直筒牛仔裤，白色运动鞋",
+          "refImages": [
+            "train/bai_pu_plain/wardrobe/hoodie_01.png",
+            "train/bai_pu_plain/wardrobe/hoodie_02.png"
+          ]
+        },
+        {
+          "id": "jacket",
+          "label": "夹克",
+          "costumePrompt": "浅色薄夹克内搭白T，深蓝直筒牛仔裤，白色运动鞋",
+          "refImages": [
+            "train/bai_pu_plain/wardrobe/jacket_01.png",
+            "train/bai_pu_plain/wardrobe/jacket_02.png"
+          ]
+        }
+      ],
+      "voiceSamples": [
+        { "path": "train/bai_pu_plain/voice/neutral_01.wav", "label": "中性旁白" },
+        { "url": "https://example.invalid/voice/bai_pu_plain_soft.wav", "label": "轻声" }
+      ],
+      "dialogueClips": [
+        { "text": "我今天…还是这样吧。", "sourceShotId": "ep1-s03" },
+        { "text": "别看我那样，其实还行。", "sourceShotId": "ep1-s07" },
+        { "text": "你先走，我马上就来。", "sourceShotId": "ep1-s12" },
+        { "text": "这件卫衣挺舒服的。", "sourceShotId": "ep2-s02" },
+        { "text": "对面那扇窗，又亮了。", "sourceShotId": "ep2-s05" },
+        { "text": "我不是故意瞒着你的。", "sourceShotId": "ep2-s09" },
+        { "text": "系统？你认真的吗。", "sourceShotId": "ep3-s01" },
+        { "text": "变帅一次就够了。", "sourceShotId": "ep3-s04" },
+        { "text": "吴耐，你听见没有。", "sourceShotId": "ep3-s08" },
+        { "text": "明天再说吧。", "sourceShotId": "ep3-s11" },
+        { "text": "别用那种眼神看我。", "sourceShotId": "ep4-s02" },
+        { "text": "我知道自己几斤几两。", "sourceShotId": "ep4-s06" }
+      ],
+      "loraStrengthDefault": 0.8,
+      "trainingNotes": "参考图勿强继承光照；多角度静帧与服装变体仅作身份/外形参考。dialogueClips 仅训 LoRA，永不注入画面 prompt / inject_character_meta。"
     },
     {
       "refImage": "bai_pu_glowup",
@@ -44,7 +101,29 @@
         "sideB": "03_270.png",
         "halfBody": "zz_half_body.png",
         "orbit": "orbit.mp4"
-      }
+      },
+      "multiAngleStills": {
+        "front": "train/bai_pu_glowup/front_01.png",
+        "side": "train/bai_pu_glowup/side_01.png",
+        "threeQuarter": "train/bai_pu_glowup/tq_01.png",
+        "extras": [
+          "train/bai_pu_glowup/front_02.png",
+          "train/bai_pu_glowup/side_02.png",
+          "train/bai_pu_glowup/extra_01.png",
+          "train/bai_pu_glowup/extra_02.png",
+          "train/bai_pu_glowup/extra_03.png"
+        ]
+      },
+      "wardrobeVariants": [
+        {
+          "id": "zip_jacket",
+          "label": "拉链短夹克",
+          "costumePrompt": "米白色翻领拉链短夹克，白T，黑直筒长裤",
+          "refImages": ["train/bai_pu_glowup/wardrobe/jacket_01.png"]
+        }
+      ],
+      "loraStrengthDefault": 0.8,
+      "trainingNotes": "参考图勿强继承光照；与变帅前共用 characterKey=bai_pu，勿混脸。"
     },
     {
       "refImage": "wu_nai",

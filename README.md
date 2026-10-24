@@ -136,6 +136,25 @@
 
 测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、内心画内保留、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分、durationSec 均为 0.5 倍数；约束/描述不进 overlay、引号 UI 保留、提示线索仅限 UI 段、系统角色台词仅 overlay、多人同框警告、龙套 speakerName；并从真实导出《每天变帅一点点》`scripts/fixtures/real-export-meitian.json` 重建项目回归：overlay 27 条、无约束文本）。生成侧提示词要求优先单人镜头（过肩/正反打代替双人同框，最多2人）、龙套写身份前缀。
 
+### 定妆包 h3-character-pack@1（含 LoRA / Omni 训练字段）
+
+Schema 常量：`h3-character-pack@1`（`src/lib/characterPack.ts`）。旧包（无训练字段）仍可导入。
+
+必填：`displayName`、`refImage`。可选外观：`age` / `background` / `appearance` / `costume` / `props` / `negative` / `sourcePrompt` / `characterKey` / `images`。
+
+**训练专用字段（可选，不进画面 prompt / `characterBrief` / `inject_character_meta`）**：
+
+| 字段 | 说明 |
+|---|---|
+| `multiAngleStills` | `{ front?, side?, threeQuarter?, extras?[], slots?[] }`，正/侧/3/4 + extras，容量 ≥8 |
+| `wardrobeVariants` | `[{ id, label, costumePrompt?, refImages[] }]`，如夹克 vs 卫衣 |
+| `voiceSamples` | `[{ path?, url?, label? }]`，TTS wav |
+| `dialogueClips` | `[{ text, sourceShotId? }]`，建议 10–14 条；**仅训 LoRA，永不注入画面 prompt** |
+| `loraStrengthDefault` | 默认 `0.8` |
+| `trainingNotes` | 须含「参考图勿强继承光照」等说明 |
+
+导入后写入角色卡 `trainingAssets`；视频管线导出与 LLM 角色简述白名单不含这些字段。样例：`samples/h3-character-pack.sample.json`。测试：`npx tsx scripts/test-character-pack.ts`。
+
 ### 设定事实 / 家境 / 年龄 / 定妆图（v7）
 
 - 从想法一键生成会抽取 **settingFacts**（关键设定事实，项目设定页可逐行编辑）以及每个角色的 **age / background（家境·住处）**；它们以「设定事实，必须遵守，不得与之矛盾」硬约束注入大纲 / 剧本 / 分镜提示词。想法项目（`source: 'idea'`）不再把「都市逆袭」之类题材标签与「压抑-开挂-打脸」套路塞进提示词。

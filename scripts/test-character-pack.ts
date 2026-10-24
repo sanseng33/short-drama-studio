@@ -6,15 +6,21 @@ import {
   applyCharacterPack,
   applyPackToCharacter,
   buildMatchRows,
+  countMultiAngleStills,
   createCharacterFromPack,
   joinProps,
   matchPackCharacter,
   parseCharacterPack,
   parseCharacterPackJson,
   stripVariantParen,
+  summarizeTrainingAssets,
+  trainingAssetsFromPack,
   CHARACTER_PACK_SCHEMA,
+  DEFAULT_LORA_STRENGTH,
+  PACK_TRAINING_FIELD_KEYS,
 } from '../src/lib/characterPack'
 import { buildVideoPipelineExport } from '../src/lib/videoExport'
+import { characterBrief } from '../src/lib/prompts'
 import { mergeLockedCharacters } from '../src/lib/idea'
 import type { Project } from '../src/types'
 
@@ -193,6 +199,7 @@ t('mergeLocked keeps pack fields on regen', () => {
   assert.equal(m[0].background, pack.characters[0].background)
   assert.equal(m[0].negative, pack.characters[0].negative)
   assert.equal(m[0].imagesDir, 'bai_piao_plain_20261016_115346')
+  assert.ok(m[0].trainingAssets?.multiAngleStills)
 })
 
 t('age null clears existing age', () => {
@@ -207,6 +214,142 @@ t('createCharacterFromPack sets locked + imagesDir', () => {
   assert.equal(neu.refImage, 'wu_nai')
   assert.equal(neu.locked, true)
   assert.equal(neu.imagesDir, 'wu_nai_20261016_142838')
+})
+
+t('training fields parsed on sample (plain)', () => {
+  const plain = pack.characters[0]
+  assert.ok(plain.multiAngleStills)
+  assert.equal(plain.multiAngleStills!.front, 'train/bai_pu_plain/front_01.png')
+  assert.equal(plain.multiAngleStills!.side, 'train/bai_pu_plain/side_01.png')
+  assert.equal(plain.multiAngleStills!.threeQuarter, 'train/bai_pu_plain/tq_01.png')
+  assert.equal(plain.multiAngleStills!.extras!.length, 5)
+  assert.equal(plain.multiAngleStills!.slots!.length, 3)
+  assert.ok(countMultiAngleStills(plain.multiAngleStills) >= 8)
+  assert.equal(plain.wardrobeVariants!.length, 2)
+  assert.equal(plain.wardrobeVariants![0].id, 'hoodie')
+  assert.equal(plain.wardrobeVariants![1].label, '夹克')
+  assert.equal(plain.voiceSamples!.length, 2)
+  assert.ok(plain.voiceSamples![0].path)
+  assert.ok(plain.voiceSamples![1].url)
+  assert.equal(plain.dialogueClips!.length, 12)
+  assert.ok(plain.dialogueClips!.every((d) => d.text.trim().length > 0))
+  assert.equal(plain.loraStrengthDefault, 0.8)
+  assert.ok(plain.trainingNotes!.includes('参考图勿强继承光照'))
+  assert.ok(summarizeTrainingAssets(plain)?.includes('不进画面 prompt'))
+})
+
+t('old pack without training fields still parses', () => {
+  const legacy = parseCharacterPack({
+    schema: CHARACTER_PACK_SCHEMA,
+    characters: [
+      {
+        displayName: '路人',
+        refImage: 'passerby',
+        appearance: '普通路人',
+        costume: '便装',
+      },
+    ],
+  })
+  assert.equal(legacy.characters.length, 1)
+  assert.equal(legacy.characters[0].multiAngleStills, undefined)
+  assert.equal(legacy.characters[0].dialogueClips, undefined)
+  const applied = applyPackToCharacter(C('x', '旧'), legacy.characters[0])
+  assert.equal(applied.trainingAssets, undefined)
+  assert.equal(applied.refImage, 'passerby')
+})
+
+t('wu_nai has no training block (optional)', () => {
+  const wu = pack.characters[2]
+  assert.equal(wu.multiAngleStills, undefined)
+  assert.equal(wu.dialogueClips, undefined)
+  assert.equal(summarizeTrainingAssets(wu), null)
+})
+
+t('apply stores trainingAssets; defaults lora strength + notes', () => {
+  const got = applyPackToCharacter(C('c1', '白朴（变帅前）'), pack.characters[0])
+  assert.ok(got.trainingAssets)
+  assert.equal(got.trainingAssets!.neverInjectIntoVisualPrompts, true)
+  assert.equal(got.trainingAssets!.loraStrengthDefault, DEFAULT_LORA_STRENGTH)
+  assert.ok(got.trainingAssets!.trainingNotes!.includes('参考图勿强继承光照'))
+  assert.equal(got.trainingAssets!.dialogueClips!.length, 12)
+  assert.equal(got.trainingAssets!.wardrobeVariants![1].id, 'jacket')
+})
+
+t('trainingAssetsFromPack fills defaults when only stills present', () => {
+  const assets = trainingAssetsFromPack({
+    refImage: 'r',
+    displayName: 'n',
+    multiAngleStills: { front: 'a.png', extras: ['b.png'] },
+  })
+  assert.equal(assets!.loraStrengthDefault, 0.8)
+  assert.ok(assets!.trainingNotes!.includes('参考图勿强继承光照'))
+})
+
+t('training fields NEVER leak into characterBrief / video export', () => {
+  const applied = applyPackToCharacter(C('c1', '白朴（变帅前）'), pack.characters[0])
+  const brief = characterBrief(applied, true) as Record<string, unknown>
+  for (const k of PACK_TRAINING_FIELD_KEYS) {
+    assert.equal(brief[k], undefined, `characterBrief leaked ${k}`)
+  }
+  assert.equal(brief.trainingAssets, undefined)
+  const dialogueTexts = (applied.trainingAssets?.dialogueClips || []).map((d) => d.text)
+  const briefJson = JSON.stringify(brief)
+  for (const line of dialogueTexts) {
+    assert.ok(!briefJson.includes(line), `dialogue clip leaked into characterBrief: ${line}`)
+  }
+
+  const project: Project = {
+    id: 'p',
+    title: 't',
+    genre: '都市逆袭',
+    platform: '红果',
+    episodeCount: 1,
+    secondsPerEp: 60,
+    style: '真人都市',
+    logline: '',
+    characters: [applied],
+    outline: [],
+    scripts: {},
+    storyboards: {},
+    selectedEpisode: 1,
+    updatedAt: '',
+  }
+  const out = buildVideoPipelineExport(project)
+  const e = out.characters.find((c) => c.id === 'c1')! as Record<string, unknown>
+  assert.equal(e.trainingAssets, undefined)
+  assert.equal(e.dialogueClips, undefined)
+  assert.equal(e.multiAngleStills, undefined)
+  const exportJson = JSON.stringify(e)
+  for (const line of dialogueTexts) {
+    assert.ok(!exportJson.includes(line), `dialogue clip leaked into video export character: ${line}`)
+  }
+})
+
+t('invalid training field shapes rejected', () => {
+  assert.throws(
+    () =>
+      parseCharacterPack({
+        schema: CHARACTER_PACK_SCHEMA,
+        characters: [{ displayName: 'a', refImage: 'r', voiceSamples: [{ label: 'x' }] }],
+      }),
+    /path 或 url/,
+  )
+  assert.throws(
+    () =>
+      parseCharacterPack({
+        schema: CHARACTER_PACK_SCHEMA,
+        characters: [{ displayName: 'a', refImage: 'r', wardrobeVariants: [{ id: 'j' }] }],
+      }),
+    /label/,
+  )
+  assert.throws(
+    () =>
+      parseCharacterPack({
+        schema: CHARACTER_PACK_SCHEMA,
+        characters: [{ displayName: 'a', refImage: 'r', dialogueClips: [{ sourceShotId: 's1' }] }],
+      }),
+    /text/,
+  )
 })
 
 console.log(`\n${pass} character-pack tests passed`)

@@ -12,6 +12,7 @@ import {
   applyCharacterPack,
   buildMatchRows,
   parseCharacterPackJson,
+  summarizeTrainingAssets,
   type CharacterPack,
   type PackMatchAction,
   type PackMatchRow,
@@ -200,6 +201,9 @@ export function Characters({ api }: { api: ProjectApi }) {
                       {row.pack.characterKey ? ` · key: ${row.pack.characterKey}` : ''}
                       {row.pack.images?.dir ? ` · dir: ${row.pack.images.dir}` : ''}
                     </div>
+                    {summarizeTrainingAssets(row.pack) && (
+                      <div className="mt-0.5 text-[11px] text-amber-200/80">{summarizeTrainingAssets(row.pack)}</div>
+                    )}
                   </div>
                   <span className="text-xs text-ink-faint">→</span>
                   <select
@@ -226,6 +230,7 @@ export function Characters({ api }: { api: ProjectApi }) {
           </div>
           <p className="text-xs text-ink-muted">
             默认按显示名 / refImage / 本名变体自动匹配。确认后写入外观、服装、定妆图并锁定；不会自动扩容阵容（除非选择「新建角色」）。
+            训练素材（多角度 / 服装变体 / 语音 / 对白训条）仅挂角色供 LoRA·Omni，不进画面 prompt。
           </p>
         </div>
       )}
@@ -345,6 +350,38 @@ export function Characters({ api }: { api: ProjectApi }) {
                   placeholder="GPU 定妆目录名"
                 />
               </div>
+              {c.trainingAssets && (
+                <div className="sm:col-span-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-ink-muted">
+                  <div className="font-medium text-amber-200/90">LoRA / Omni 训练素材（不进画面 prompt）</div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                    {c.trainingAssets.multiAngleStills && (
+                      <span>
+                        多角度{' '}
+                        {(c.trainingAssets.multiAngleStills.front ? 1 : 0) +
+                          (c.trainingAssets.multiAngleStills.side ? 1 : 0) +
+                          (c.trainingAssets.multiAngleStills.threeQuarter ? 1 : 0) +
+                          (c.trainingAssets.multiAngleStills.extras?.length || 0) +
+                          (c.trainingAssets.multiAngleStills.slots?.length || 0)}
+                      </span>
+                    )}
+                    {c.trainingAssets.wardrobeVariants?.length ? (
+                      <span>服装变体 {c.trainingAssets.wardrobeVariants.length}</span>
+                    ) : null}
+                    {c.trainingAssets.voiceSamples?.length ? (
+                      <span>语音 {c.trainingAssets.voiceSamples.length}</span>
+                    ) : null}
+                    {c.trainingAssets.dialogueClips?.length ? (
+                      <span>对白训条 {c.trainingAssets.dialogueClips.length}（仅训 LoRA）</span>
+                    ) : null}
+                    {c.trainingAssets.loraStrengthDefault != null ? (
+                      <span>LoRA 默认强度 {c.trainingAssets.loraStrengthDefault}</span>
+                    ) : null}
+                  </div>
+                  {c.trainingAssets.trainingNotes && (
+                    <p className="mt-1 text-[11px] text-ink-faint">{c.trainingAssets.trainingNotes}</p>
+                  )}
+                </div>
+              )}
               <div className="flex items-end">
                 <label className="flex items-center gap-2 text-xs text-ink-muted">
                   <input type="checkbox" checked={Boolean(c.locked || c.refImage?.trim())} disabled={Boolean(c.refImage?.trim())} onChange={(e) => updateChar(c.id, { locked: e.target.checked || undefined })} />
