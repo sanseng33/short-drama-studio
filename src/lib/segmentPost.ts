@@ -16,7 +16,7 @@ import { styleTag, styleToneForGenre } from './templates/styleTag'
 import { factsForShotPrompts, scrubTiers, tierSettingFacts } from './settingFacts'
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
 import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
-import { applyBeatMode, type BeatOverrides } from './beatPrompt'
+import { applyBeatMode, type BeatModeOptions, type BeatOverrides } from './beatPrompt'
 import { applyCrossCutSplit } from './crosscutSplit'
 import { annotateShots } from './shotAnnotate'
 import { applyCastConsistency } from './castConsistency'
@@ -41,6 +41,9 @@ export interface PostProcessOptions {
   rhythm?: RhythmOptions | false
   /** with beatMode 'speed': explicit per-shot beats (validated, see beatPrompt.validateBeatOverride) */
   beatOverrides?: BeatOverrides
+  /** beat mode dialogue fit: speech estimator / pad (see BeatModeOptions) */
+  speechRate?: BeatModeOptions['speechRate']
+  dialoguePad?: BeatModeOptions['dialoguePad']
 }
 
 export const SEGMENT_MIN_SEC = 5
@@ -785,7 +788,7 @@ export function postProcessExportWithStats(
   // opt-in: per-second speed-beat prompts (after merge / carry / dialogue guards so it sees final shots)
   const split = opts.splitCrossCut ? applyCrossCutSplit(result, { sceneOverrides: opts.sceneOverrides, rhythm: opts.rhythm }).exp : result
   // renderer fields on every shot (framing + wardrobeState), after split / beat so children get them too
-  return { exp: annotateShots(opts.beatMode === 'speed' ? applyBeatMode(split, { style, beatOverrides: opts.beatOverrides }) : split), stats }
+  return { exp: annotateShots(opts.beatMode === 'speed' ? applyBeatMode(split, { style, beatOverrides: opts.beatOverrides, speechRate: opts.speechRate, dialoguePad: opts.dialoguePad }) : split, { speechRate: opts.speechRate }), stats }
 }
 
 function pacedLen(t: string): number {

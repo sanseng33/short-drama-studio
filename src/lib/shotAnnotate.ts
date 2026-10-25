@@ -19,6 +19,7 @@
  * An optional `engine` field on a shot is passed through untouched. Pure + idempotent.
  */
 import { rewriteNote, visualizePrompt } from './emotionVisual'
+import { speechSec, type SpeechRate } from './dialogueTiming'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { sha1Hex } from './hash'
 import { autoVoices, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
@@ -147,7 +148,7 @@ const speechLen = (t: string) => Math.max(1, t.replace(/[\s，。！？、…—
  * beat segments marked dialogue in order (several lines in one segment share it by length); without beat segments
  * the lines share the whole shot by length. voiceOnly: off-list speaker, speakerOffscreen or a voiceOnly id not on screen.
  */
-export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] = []): TimedLine[] {
+export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] = [], rate: Partial<SpeechRate> = {}): TimedLine[] {
   const raw = s.dialogueLines?.length
     ? s.dialogueLines
     : s.dialogue?.trim()
@@ -162,7 +163,8 @@ export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] =
   lines.forEach((_, i) => slots[Math.min(i, slots.length - 1)].idx.push(i))
   const out: TimedLine[] = []
   for (const sl of slots) {
-    const w = sl.idx.map((i) => speechLen(lines[i].text))
+    // several lines in one segment share it by estimated speech (same estimator as the beat sizing / overrun check)
+    const w = sl.idx.map((i) => speechSec(lines[i].text, rate) || speechLen(lines[i].text))
     const sum = w.reduce((a, b) => a + b, 0) || 1
     let t0 = sl.start
     sl.idx.forEach((i, k) => {
@@ -608,7 +610,7 @@ export function withProposedWardrobe(exp: VideoPipelineExport): { exp: VideoPipe
  * Set `framing` + `wardrobeState` on every shot (engine and all other fields untouched).
  * Characters without hand wardrobe data first get an auto-proposed timeline (marked autoProposed).
  */
-export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
+export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Partial<SpeechRate> } = {}): VideoPipelineExport {
   const { exp: e0 } = withProposedWardrobe(exp)
   const e = { ...e0, characters: withCharacterVoices(e0.characters) }
   const chars = e.characters as WardrobeMeta[]
@@ -647,7 +649,7 @@ export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
         framing,
         wardrobeState: ws[i],
         seed: shotSeed(pid, s.id),
-        dialogueLines: withLineVoices(timedDialogueLines(s, chars), e.characters, extraVoices, auto),
+        dialogueLines: withLineVoices(timedDialogueLines(s, chars, opts.speechRate), e.characters, extraVoices, auto),
         audio: s.audio ?? null,
         prompt: r.prompt,
       }

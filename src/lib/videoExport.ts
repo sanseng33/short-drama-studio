@@ -118,6 +118,8 @@ export interface VideoPipelineShot {
    * timeline at this point implies `to`; `wardrobeState` is the timeline state kept for `to` in this shot.
    */
   castCorrection?: { from: string; to: string; characterKey: string; wardrobeState: string }
+  /** beat mode lengthened the shot so its dialogue fits (estimated speech + head / tail pad); fromSec = source length */
+  durationAdjustment?: { fromSec: number; toSec: number; reason: string }
 }
 
 export interface VideoPipelineWarning {

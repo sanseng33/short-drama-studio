@@ -18,6 +18,7 @@ import { PERSON_DESCRIPTOR, stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './sho
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
 import { actionCap, actionWeight, countActions, expandCompounds, limitActions } from './actionDensity'
+import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, dialogueSegmentNeeds, SHOT_TARGET_SEC, type DialoguePad, type SpeechRate } from './dialogueTiming'
 
 export type BeatMode = 'off' | 'speed'
 export type BeatSpeed = '快' | '慢' | '恢复常速'
@@ -50,6 +51,13 @@ export interface BeatModeOptions {
   keepDefaultPrompt?: boolean
   /** explicit per-shot beats (shot id → segments) that replace the automatic beat split; validated */
   beatOverrides?: BeatOverrides
+  /** speech estimator (dialogueTiming) sizing the 【慢】 dialogue segment */
+  speechRate?: Partial<SpeechRate>
+  /** silence before / after the line inside the dialogue segment (default 0.3 / 0.4 s) */
+  dialoguePad?: Partial<DialoguePad>
+  /** lengthen a shot whose dialogue segment cannot hold the line (default true), up to maxShotSec (default 9) */
+  fitDialogue?: boolean
+  maxShotSec?: number
 }
 
 /** One hand-written beat: `text` is the visual action only (no names, no dialogue text, one subject). */
@@ -557,7 +565,7 @@ function clauseBeats(text: string, total: number, hasDialogue: boolean, onscreen
 }
 
 /** Snap group boundaries to 0.5 s (exact total), keep ≥1 s each, give the dialogue group its speaking time. */
-function snapGroups(groups: Group[], total: number, needDialogueSec: number): void {
+function snapGroups(groups: Group[], total: number, needDialogueSec: number, needPerGroup?: number[]): void {
   const k = groups.length
   const cuts = groups.slice(0, -1).map((g) => snap(g.end))
   const minSeg = total >= k ? 1 : total / k
@@ -565,6 +573,27 @@ function snapGroups(groups: Group[], total: number, needDialogueSec: number): vo
     const lo = (i ? cuts[i - 1] : 0) + minSeg
     const hi = total - minSeg * (k - 1 - i)
     cuts[i] = Math.min(Math.max(cuts[i], lo), hi)
+  }
+  // several dialogue segments: each gets its own lines' need; 0.5 s steps from the segment with the most slack
+  // (lengths above their own minimum), so a satisfied dialogue segment is never cut below its need
+  if (needPerGroup && needPerGroup.filter((x) => x > 0).length >= 2) {
+    const L = groups.map((_, i) => (i < k - 1 ? cuts[i] : total) - (i ? cuts[i - 1] : 0))
+    const min = needPerGroup.map((n) => Math.max(minSeg, Math.ceil(n * 2 - 1e-9) / 2))
+    for (let guard = 0; guard < 80; guard++) {
+      const j = L.findIndex((x, i) => x < min[i] - 1e-9)
+      if (j < 0) break
+      const donor = L.map((x, i) => ({ i, slack: i === j ? -1 : x - min[i] })).sort((a, b) => b.slack - a.slack || Math.abs(a.i - j) - Math.abs(b.i - j))[0]
+      if (!donor || donor.slack < 0.5 - 1e-9) break
+      L[donor.i] -= 0.5
+      L[j] += 0.5
+    }
+    let acc = 0
+    groups.forEach((g, i) => {
+      g.start = acc
+      acc = i < k - 1 ? acc + L[i] : total
+      g.end = acc
+    })
+    return
   }
   const di = groups.findIndex((g) => g.beats.some((b) => b.speech || b.voice))
   if (di >= 0 && needDialogueSec > 0) {
@@ -901,6 +930,12 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const base = beats?.[0]?.text || s.action || clause(src, /动作/) || (s.visual || '')
     beats = clauseBeats([base, perf].filter(Boolean).join('，'), total, hasDialogue, onscreenSpeech || (hasDialogue && !lines.some((l) => l.voiceOnly || (l.speaker && !cast.includes(l.speaker)))))
   } else {
+    // a shot lengthened for its dialogue: source beat times scale with the new length
+    const from = s.durationAdjustment?.fromSec
+    if (from && from > 0 && Math.abs(from - total) > 1e-9) for (const b of beats) {
+      b.start = (b.start * total) / from
+      b.end = (b.end * total) / from
+    }
     beats[beats.length - 1].end = total
   }
   if (merged && beats.length > 3) todo.push(`原 ${beats.length} 个小节拍压缩为 2–3 段，请核对动作是否丢失`)
@@ -920,11 +955,12 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     g.beats[g.beats.length - 1].speech = onscreenSpeech
     g.beats[g.beats.length - 1].voice = !onscreenSpeech
   }
-  const dlgSec = lines.reduce((a, l) => a + paced(l.text || '') / 4.5, 0)
-  // the 【慢】 dialogue segment needs line length / 4.5 + 0.5 s; with 3 segments that may not fit (≥1 s for each
-  // of the others) → fold the smaller neighbour into the dialogue segment
+  // the 【慢】 dialogue segment needs the estimated speech + head / tail pad (dialogueTiming, same estimator as the
+  // dialogueOverrun check); with 3 segments that may not fit (≥1 s for each of the others) → fold the smaller
+  // neighbour into the dialogue segment
+  const dlgNeed = dialogueNeedSec(lines.map((l) => l.text || ''), opts.speechRate, opts.dialoguePad)
   const isDlg = (g: Group) => g.beats.some((b) => b.speech || b.voice)
-  const needSlow = dlgSec > 0 ? Math.ceil((dlgSec + DIALOGUE_PAD_SEC) * 2) / 2 : 0
+  const needSlow = dlgNeed > 0 ? Math.ceil(dlgNeed * 2) / 2 : 0
   if (groups.length === 3 && groups.filter(isDlg).length === 1 && needSlow > total - 2) {
     const di = groups.findIndex(isDlg)
     const ni = di === 0 ? 1 : di === 2 ? 1 : groups[0].end - groups[0].start <= groups[2].end - groups[2].start ? 0 : 2
@@ -932,7 +968,10 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const merged: Group = { beats: [...groups[a].beats, ...groups[b].beats], start: groups[a].start, end: groups[b].end }
     groups.splice(a, 2, merged)
   }
-  snapGroups(groups, total, groups.filter(isDlg).length === 1 ? (dlgSec > 0 ? dlgSec + DIALOGUE_PAD_SEC : 0) : 0)
+  const dlgGroups = groups.filter(isDlg).length
+  const segNeeds = dialogueSegmentNeeds(lines.map((l) => l.text || ''), dlgGroups, opts.speechRate, opts.dialoguePad)
+  let dk = 0
+  snapGroups(groups, total, dlgGroups === 1 ? dlgNeed : 0, groups.map((g) => (isDlg(g) ? segNeeds[dk++] : 0)))
 
   // ---- render segments
   const segMeta: BeatSegmentMeta[] = []
@@ -1129,7 +1168,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   })
   for (const m of segMeta) if (m.end - m.start < 1 - 1e-9) todo.push(`分段 ${fmt(m.start)}–${fmt(m.end)}秒 不足 1 秒`)
   const slowSec = segMeta.filter((m) => m.speed === '慢').reduce((a, m) => a + m.end - m.start, 0)
-  if (hasDialogue && dlgSec + DIALOGUE_PAD_SEC > slowSec + 1e-9) todo.push(`台词约需 ${dlgSec.toFixed(1)}秒，【慢】段仅 ${fmt(slowSec)}秒`)
+  if (hasDialogue && dlgNeed > slowSec + 1e-9) todo.push(`台词约需 ${dlgNeed.toFixed(1)}秒（含前后留白），【慢】段仅 ${fmt(slowSec)}秒`)
   if (cast.length >= 2 && CROSSCUT_RE.test(src)) todo.push('原段为对窗/对切双空间，单镜不切镜难以同时拍到两人，建议拆为单人镜')
   return finish(segLines, segMeta, trimmed)
 
@@ -1181,6 +1220,50 @@ export function isBeatPrompt(p: string): boolean {
   return (p || '').includes(BEAT_HEADER)
 }
 
+/**
+ * Dialogue fit: when the dialogue segment cannot hold the estimated speech + head / tail pad, lengthen the shot by
+ * the shortfall (0.5 s grid, ≤ maxShotSec, never shorter than the source) and rebuild — the segments (and the lines
+ * timed onto them) follow the new length. Idempotent: always starts from the source length (durationAdjustment.fromSec).
+ * Hand beats (beatOverrides) and shots with more than one dialogue segment are left as they are (overrun warning).
+ */
+function fitDialogueDuration(
+  s: VideoPipelineShot,
+  build: (x: VideoPipelineShot) => BeatPromptResult,
+  opts: BeatModeOptions,
+  hand: boolean,
+): { shot: VideoPipelineShot; r: BeatPromptResult } {
+  const from = s.durationAdjustment?.fromSec ?? s.durationSec
+  const { durationAdjustment: _old, ...base0 } = s
+  void _old
+  const base: VideoPipelineShot = { ...base0, durationSec: from }
+  let r = build(base)
+  const texts = (s.dialogueLines?.length ? s.dialogueLines.map((l) => l.text) : s.dialogue ? [s.dialogue] : []).filter((x) => x?.trim())
+  if (hand || opts.fitDialogue === false || !texts.length) return { shot: base, r }
+  const max = opts.maxShotSec ?? SHOT_TARGET_SEC.max
+  // shortfall over the dialogue segments (each holds its own lines' speech + pad)
+  const short = (x: BeatPromptResult) => {
+    const d = x.segments.filter((g) => g.dialogue)
+    if (!d.length) return { need: 0, have: 0, missing: 0 }
+    const needs = dialogueSegmentNeeds(texts, d.length, opts.speechRate, opts.dialoguePad)
+    const have = d.reduce((a, g) => a + g.end - g.start, 0)
+    return { need: needs.reduce((a, b) => a + b, 0), have, missing: d.reduce((a, g, i) => a + Math.max(0, needs[i] - (g.end - g.start)), 0) }
+  }
+  const s0 = short(r)
+  if (s0.missing < 1e-9) return { shot: base, r }
+  const pad = { ...DEFAULT_DIALOGUE_PAD, ...opts.dialoguePad }
+  const reason = `台词约需 ${s0.need.toFixed(2)} 秒（语速估算 + 每段前 ${pad.headSec}s / 后 ${pad.tailSec}s 留白），原 ${from} 秒镜头的台词段共 ${s0.have} 秒`
+  let shot = base
+  for (let guard = 0; guard < 8; guard++) {
+    const m = short(r).missing
+    if (m < 1e-9) break
+    const next = Math.min(max, Math.ceil((shot.durationSec + m) * 2 - 1e-9) / 2)
+    if (next <= shot.durationSec + 1e-9) break
+    shot = { ...base, durationSec: next, durationAdjustment: { fromSec: from, toSec: next, reason } }
+    r = build(shot)
+  }
+  return { shot, r }
+}
+
 /** Apply speed-beat prompts to every shot of an export (pure). */
 export function applyBeatMode(exp: VideoPipelineExport, opts: BeatModeOptions = {}): VideoPipelineExport {
   const style = opts.style ?? exp.project.style
@@ -1192,9 +1275,12 @@ export function applyBeatMode(exp: VideoPipelineExport, opts: BeatModeOptions = 
     // idempotent: rebuild from the stored default prompt when this shot was beat-converted before
     const src = s.promptDefault && isBeatPrompt(s.prompt) ? s.promptDefault : s.prompt
     // the appended render lines (景别 / no-text) are not scene text: parse without them, keep the original as promptDefault
-    const r = buildBeatPrompt({ ...s, prompt: isBeatPrompt(s.prompt) ? s.prompt : stripRenderLines(src), promptDefault: stripRenderLines(src) }, exp.characters, { ...opts, style })
+    const build = (x: VideoPipelineShot) =>
+      buildBeatPrompt({ ...x, prompt: isBeatPrompt(x.prompt) ? x.prompt : stripRenderLines(src), promptDefault: stripRenderLines(src) }, exp.characters, { ...opts, style })
+    const fit = fitDialogueDuration(s, build, opts, Boolean(ov[s.id]))
+    const r = fit.r
     const out: VideoPipelineShot = {
-      ...s,
+      ...fit.shot,
       prompt: r.prompt,
       beatMode: 'speed',
       beatSegments: r.segments,

@@ -20,7 +20,7 @@ import { autoVoiceDescription, autoVoiceId, characterVoices, lineVoice, missingV
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 import { applyCastConsistency } from '../src/lib/castConsistency'
 import { EMOTION_RE, parseRewriteNote, promptTextRisks, QUOTE_RE, visualizePrompt } from '../src/lib/emotionVisual'
-import { dialogueOverruns, speechSec } from '../src/lib/dialogueTiming'
+import { dialogueNeedSec, dialogueOverruns, dialogueSegmentNeeds, speechSec } from '../src/lib/dialogueTiming'
 import { EMOTION_VISIBLE } from '../src/lib/emotionVocab'
 
 let pass = 0
@@ -774,6 +774,109 @@ if (existsSync(P2)) {
       assert.ok(o[2].remedy.includes('至 4 秒') && o[2].remedy.includes('仍短于 5 秒'), o[2].remedy)
       assert.deepEqual(dialogueOverruns(shots, { charsPerSec: 6 }).map((x) => x.id), [], 'faster rate → no overrun')
     })
+    // ---- dialogue fit: lengthen a shot whose dialogue segment cannot hold estimated speech + head / tail pad
+    const DL = (text: string, speaker = 'a1') => ({ speaker, speakerName: speaker === 'a1' ? '甲' : null, text })
+    const timing = (s: VideoPipelineShot) => {
+      const head = Number(s.prompt.match(/竖屏9:16，([\d.]+)秒单镜/)?.[1])
+      const labels = [...s.prompt.matchAll(/^([\d.]+)–([\d.]+)秒/gm)].map((m) => [Number(m[1]), Number(m[2])])
+      const g = s.beatSegments!
+      assert.equal(head, s.durationSec, `${s.id} header`)
+      assert.deepEqual(labels, g.map((x) => [x.start, x.end]), `${s.id} time labels = beat segments`)
+      assert.equal(g[0].start, 0)
+      assert.equal(g[g.length - 1].end, s.durationSec)
+      g.slice(1).forEach((x, i) => assert.equal(x.start, g[i].end, `${s.id} contiguous`))
+      for (const x of g) assert.ok(x.end - x.start >= 1 - 1e-9, `${s.id} segment ≥ 1 s`)
+      for (const l of s.dialogueLines || []) assert.ok(l.startSec! >= 0 && l.endSec! <= s.durationSec + 1e-9, `${s.id} line inside`)
+    }
+    t('dialogue need: Σ estimated speech + head / tail pad, per dialogue segment in line order', () => {
+      assert.ok(Math.abs(dialogueNeedSec(['一二三四五六七八……九十。']) - 4.1) < 1e-9, '3.4 + 0.3 + 0.4')
+      assert.equal(dialogueNeedSec([]), 0)
+      assert.ok(Math.abs(dialogueNeedSec(['一二三四'], { charsPerSec: 2 }, { headSec: 0, tailSec: 0.5 }) - 2.5) < 1e-9)
+      const n = dialogueSegmentNeeds(['一二三四', '一二三四', '一二三四'], 2)
+      assert.ok(Math.abs(n[0] - 1.7) < 1e-9 && Math.abs(n[1] - 2.7) < 1e-9, String(n))
+    })
+    t('dialogue fit: short dialogue shot lengthened to need (0.5 s grid, not more), segments / labels / lines re-timed, idempotent', () => {
+      const line = '一二三四五六七八九十十一十二十三十四。' // 16 chars → 4.3 s speech, need 5.0 s
+      const s = SH({ id: 'f1', durationSec: 3, action: '他推门进来，环顾四周，开口说话', dialogueLines: [DL(line)], dialogue: line, speaker: 'a1', speakerName: '甲' })
+      const e = annotateShots(applyBeatMode(pack([s])))
+      const o = e.shots[0]
+      const need = dialogueNeedSec([line])
+      const dseg = o.beatSegments!.find((g) => g.dialogue)!
+      assert.ok(dseg.end - dseg.start >= need - 1e-9, `dialogue segment ${dseg.start}–${dseg.end} < ${need}`)
+      assert.equal(o.durationSec, Math.ceil((need + 1) * 2) / 2, 'need + the ≥1 s other segment, rounded up to 0.5 s')
+      assert.deepEqual({ ...o.durationAdjustment, reason: '' }, { fromSec: 3, toSec: o.durationSec, reason: '' })
+      assert.ok(o.durationAdjustment!.reason.includes('留白'))
+      timing(o)
+      assert.deepEqual(dialogueOverruns(e.shots), [])
+      for (const g of o.beatSegments!) {
+        const l = o.prompt.split('\n').find((x) => x.startsWith(`${g.start}–${g.end}秒`))!
+        const body = l.replace(/^[^：]*：/, '').replace(/动作放慢，?/, '').split('；')[0]
+        assert.ok(countActions(body.split(/[，。]/).filter(Boolean)) <= actionCap(g.speed, g.dialogue), `density ${l}`)
+      }
+      const again = annotateShots(applyBeatMode(e))
+      assert.equal(again.shots[0].durationSec, o.durationSec, 'idempotent: starts from the source length')
+      assert.equal(again.shots[0].prompt, o.prompt)
+      assert.deepEqual(again.shots[0].durationAdjustment, o.durationAdjustment)
+    })
+    t('dialogue fit: fits already → untouched; at 9 s cap → no extension past 9, overrun stays with split remedy; opt-out / hand beats', () => {
+      const fits = SH({ id: 'f2', durationSec: 6, action: '他坐下，开口说话', dialogueLines: [DL('好。')], dialogue: '好。', speaker: 'a1', speakerName: '甲' })
+      const long = '一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十。'
+      const big = SH({ id: 'f3', durationSec: 6, action: '他站着，开口说话', dialogueLines: [DL(long)], dialogue: long, speaker: 'a1', speakerName: '甲' })
+      const e = annotateShots(applyBeatMode(pack([fits, big])))
+      assert.equal(e.shots[0].durationSec, 6)
+      assert.equal(e.shots[0].durationAdjustment, undefined)
+      assert.equal(e.shots[1].durationSec, 9, 'capped at 9')
+      assert.equal(e.shots[1].durationAdjustment!.toSec, 9)
+      timing(e.shots[1])
+      const o = dialogueOverruns(e.shots)
+      assert.equal(o.length, 1)
+      assert.ok(o[0].remedy.includes('拆分镜头或缩短台词'), o[0].remedy)
+      assert.equal(applyBeatMode(pack([big]), { fitDialogue: false }).shots[0].durationSec, 6, 'opt-out')
+      assert.equal(applyBeatMode(pack([big]), { maxShotSec: 7 }).shots[0].durationSec, 7, 'configurable cap')
+      const pad0 = applyBeatMode(pack([SH({ ...big, id: 'f4', dialogueLines: [DL('一二三四五六七八九十十一十二。')], dialogue: 'x' })]), { dialoguePad: { headSec: 0, tailSec: 0 } }).shots[0]
+      const padBig = applyBeatMode(pack([SH({ ...big, id: 'f4', dialogueLines: [DL('一二三四五六七八九十十一十二。')], dialogue: 'x' })]), { dialoguePad: { headSec: 1, tailSec: 1 } }).shots[0]
+      assert.ok(padBig.durationSec > pad0.durationSec, `pad configurable ${pad0.durationSec} / ${padBig.durationSec}`)
+    })
+    t('dialogue fit: two dialogue segments each hold their own line; source timeline times scale with the new length', () => {
+      const a = '一二三四五六七八九十十一十二。'
+      const b = '一二三四五六七八九十十一十二。'
+      const two = SH({
+        id: 'f5', durationSec: 5,
+        prompt: '竖屏9:16，5秒单镜。白天，房间，单人。主体：17岁东亚少年，米白夹克。时间轴（一镜5秒，小节拍）：0–2.5s他抬头看向窗外（甲开口说台词）；2.5–5s随后他低头看手里的纸（甲开口说台词）。镜头：中景。',
+        dialogueLines: [DL(a), DL(b)], dialogue: a + b, speaker: 'a1', speakerName: '甲',
+      })
+      const e = annotateShots(applyBeatMode(pack([two])))
+      const o = e.shots[0]
+      timing(o)
+      const d = o.beatSegments!.filter((g) => g.dialogue)
+      assert.equal(d.length, 2, 'two dialogue segments')
+      const needs = dialogueSegmentNeeds([a, b], d.length)
+      d.forEach((g, i) => assert.ok(g.end - g.start >= needs[i] - 1e-9, `segment ${i} ${g.start}–${g.end} < ${needs[i]}`))
+      assert.ok(o.durationSec > 5 && o.durationSec <= 9, String(o.durationSec))
+      assert.deepEqual(dialogueOverruns(e.shots), [])
+    })
+    t('dialogue fit in repack: durationAdjustments (shot, old, new, reason), --dialogue-pad, rhythm still reported', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'fit-'))
+      const inp = join(dir, 'in.json')
+      const line = '一二三四五六七八九十十一十二十三十四。'
+      writeFileSync(inp, JSON.stringify(pack([
+        SH({ id: 'r1', durationSec: 6, action: '他走进来，放下包' }),
+        SH({ id: 'r2', durationSec: 3, action: '他推门进来，开口说话', dialogueLines: [DL(line)], dialogue: line, speaker: 'a1', speakerName: '甲' }),
+      ])))
+      const run = (...x: string[]) => JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice', ...x], { encoding: 'utf8' }))
+      const rep = run()
+      assert.deepEqual(rep.durationAdjustments.map((x: { shot: string; old: number }) => [x.shot, x.old]), [['r2', 3]])
+      const nu = rep.durationAdjustments[0].new
+      assert.ok(nu >= Math.ceil((dialogueNeedSec([line]) + 1) * 2) / 2 && nu <= 9 && nu * 2 === Math.round(nu * 2), String(nu))
+      assert.ok(rep.durationAdjustments[0].reason)
+      assert.deepEqual(rep.durationAdjustmentTotals, [{ ep: 1, shots: 1, addedSec: nu - 3 }])
+      assert.deepEqual(rep.dialogueOverrun, [])
+      assert.ok(rep.rhythmCheck && typeof rep.rhythmCheck.ok === 'boolean')
+      assert.equal(rep.perEp[0].secsAfter, 6 + nu, 'total episode duration change visible in perEp')
+      const big = run('--dialogue-pad', '1,1.5')
+      assert.ok(big.durationAdjustments[0].new > 6, JSON.stringify(big.durationAdjustments))
+      assert.deepEqual(big.dialoguePad, { headSec: 1, tailSec: 1.5 })
+    })
     t('known limitations: every medium / full shot with 2+ on screen gets the one-ref first-frame note (generic)', () => {
       const e = annotateShots(pack([
         SH({ id: 'm2', characterIds: ['a1', 'b1'], size: '中景' }),
@@ -795,6 +898,11 @@ if (existsSync(P2)) {
     // look variants: shots re-cast by the wardrobe timeline; the output pack has no remaining contradiction
     assert.ok(rep.castCorrections.length > 0 && rep.castCorrections.every((c: { from: string; to: string; evidence: string[] }) => c.from !== c.to && c.evidence.length))
     assert.ok(Array.isArray(rep.emotionRewrites) && Array.isArray(rep.dialogueOverrun) && rep.speechRate.charsPerSec > 0)
+    // dialogue fit: lengthened shots stay on the 0.5 s grid ≤ 9 s; what still overruns is at the 9 s cap (split remedy)
+    assert.ok(rep.durationAdjustments.length > 0 && rep.durationAdjustments.every((x: { old: number; new: number }) => x.new > x.old && x.new <= 9 && x.new * 2 === Math.round(x.new * 2)))
+    assert.ok(rep.dialogueOverrun.every((o: { durationSec: number; remedy: string }) => o.durationSec >= 9 && o.remedy.includes('拆分')), JSON.stringify(rep.dialogueOverrun))
+    assert.equal(rep.rhythmCheck.ok, true, rep.rhythmCheck.warnings.join('; '))
+    assert.deepEqual(rep.carryChainErrors, [])
     const outPack = JSON.parse(readFileSync(out, 'utf8'))
     for (const s of outPack.shots) assert.deepEqual(promptTextRisks(s.prompt), [], s.id)
     assert.deepEqual(applyCastConsistency(JSON.parse(readFileSync(out, 'utf8'))).corrections, [])

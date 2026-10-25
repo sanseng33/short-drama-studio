@@ -17,7 +17,9 @@
  * there implies another is re-cast (report castCorrections); ambiguous cases only warn (castConsistency).
  * Final prompts: emotion words → visible face / body action, inner monologue + quotes dropped (report emotionRewrites);
  *   a prompt still carrying a quote mark / emotion word / monologue marker fails the run (exit 4).
- * --speech-rate 4 : chars per second for the dialogueOverrun warning (estimated speech longer than the line's slot)
+ * --speech-rate 4 : chars per second of the speech estimate (beat dialogue segment sizing + dialogueOverrun warning)
+ * --dialogue-pad 0.3,0.4 : head / tail silence in the dialogue segment. Beat mode lengthens a shot whose dialogue
+ *   segment cannot hold speech + pad (0.5 s grid, ≤ 9 s; report durationAdjustments); beyond 9 s only the overrun warning.
  * Every output shot gets `framing` + `wardrobeState` (shotAnnotate); the run fails if any shot lacks either.
  * Characters without wardrobeTimeline / wardrobeCues get an AUTO-PROPOSED timeline from script cues
  * (report: wardrobeAutoProposed, reviewRequired) — hand data in the character JSON always wins.
@@ -33,7 +35,7 @@ import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotatio
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
 import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
-import { dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
+import { DEFAULT_DIALOGUE_PAD, dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -51,7 +53,10 @@ const sceneOverrides: Record<string, string> | undefined = overridesFile.overrid
 const beatOverrides: BeatOverrides | undefined = overridesFile.beatOverrides
 const si = args.indexOf('--speech-rate')
 const speechRate = si >= 0 ? { charsPerSec: Number(args[si + 1]) } : {}
-const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1))
+// --dialogue-pad 0.3,0.4 : silence before / after a line inside its dialogue segment (beat-mode dialogue fit)
+const pi = args.indexOf('--dialogue-pad')
+const dialoguePad = pi >= 0 ? (([h, tl]) => ({ headSec: h, tailSec: tl ?? h }))(args[pi + 1].split(',').map(Number)) : {}
+const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1) && (pi < 0 || i !== pi + 1))
 const [inp, outp] = pos
 if (!inp) {
   console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G] [--beat-mode speed] [--beat-only]')
@@ -75,9 +80,9 @@ const { exp, stats } = lite
         sceneCorrections = r.corrections
         rhythmNotes = r.rhythmNotes
       }
-      return { exp: annotateShots(flags.has('--beat-only') ? applyBeatMode(e, { beatOverrides }) : e), stats: null }
+      return { exp: annotateShots(flags.has('--beat-only') ? applyBeatMode(e, { beatOverrides, speechRate, dialoguePad }) : e, { speechRate }), stats: null }
     })()
-  : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides })
+  : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides, speechRate, dialoguePad })
 const missing = missingAnnotations(exp)
 if (missing.length) {
   console.error(`shots missing framing / wardrobeState: ${missing.join(', ')}`)
@@ -159,6 +164,15 @@ console.log(
       // estimated speech (chars / rate + pauses) longer than the line's slot: warning only
       speechRate: { ...DEFAULT_SPEECH_RATE, ...speechRate },
       dialogueOverrun: dialogueOverruns(exp.shots, speechRate),
+      // beat mode lengthened these shots so the dialogue segment holds the estimated speech + pad (≤ 9 s)
+      dialoguePad: { ...DEFAULT_DIALOGUE_PAD, ...dialoguePad },
+      durationAdjustments: exp.shots
+        .filter((s) => s.durationAdjustment)
+        .map((s) => ({ shot: s.id, episode: s.episode, old: s.durationAdjustment!.fromSec, new: s.durationAdjustment!.toSec, reason: s.durationAdjustment!.reason, ...(s.splitFrom ? { splitFrom: s.splitFrom } : {}) })),
+      durationAdjustmentTotals: eps.map((ep) => {
+        const a = exp.shots.filter((s) => s.episode === ep && s.durationAdjustment)
+        return { ep, shots: a.length, addedSec: Math.round(a.reduce((t, s) => t + s.durationAdjustment!.toSec - s.durationAdjustment!.fromSec, 0) * 10) / 10 }
+      }).filter((x) => x.shots),
       // look-variant cast checks: auto-corrected (timeline unambiguous) / left as is with a cast_consistency warning
       castCorrections: cast.corrections,
       castConsistency: cast.warnings,
@@ -194,7 +208,7 @@ console.log(
         : {}),
       ...(splitCrossCut
         ? {
-            crossCutSplits: (splits ?? exp.shots.filter((s) => s.splitFrom).reduce<{ id: string; children: string[] }[]>((acc, s) => {
+            crossCutSplits: (splits ? (splits as SplitInfo[]).map((sp) => ({ ...sp, children: sp.children.map((c) => ({ ...c, durationSec: exp.shots.find((x) => x.id === c.id)?.durationSec ?? c.durationSec })) })) : null) ?? (exp.shots.filter((s) => s.splitFrom).reduce<{ id: string; children: string[] }[]>((acc, s) => {
               const g = acc.find((x) => x.id === s.splitFrom)
               if (g) g.children.push(s.id)
               else acc.push({ id: s.splitFrom!, children: [s.id] })
