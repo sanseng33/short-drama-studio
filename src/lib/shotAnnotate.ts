@@ -18,6 +18,7 @@
  *
  * An optional `engine` field on a shot is passed through untouched. Pure + idempotent.
  */
+import { rewriteNote, visualizePrompt } from './emotionVisual'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { sha1Hex } from './hash'
 import { autoVoices, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
@@ -422,6 +423,10 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   let p = stripRenderLines(prompt)
   p = p.replace(/【(快|慢|恢复常速)】/g, (_m, k: string) => `，${SPEED_TAG_WORDS[k]}`).replace(/秒，，/g, '秒，')
   p = p.replace(/[【】]/g, '')
+  // abstract emotion words / inner monologue / quotes would be drawn as text: visible action instead
+  const vz = visualizePrompt(p)
+  p = vz.prompt
+  notes.push(...vz.rewrites.map(rewriteNote))
   const n = ctx ? ctx.onscreen.length : framing === 'empty' ? 0 : 1
   if (ctx && n >= 2) {
     p = p.replace(/主体[：:][^。\n]*。?/, (old) => {

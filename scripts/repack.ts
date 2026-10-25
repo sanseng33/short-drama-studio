@@ -15,6 +15,9 @@
  *                              hand overrides are bug signals for the generic generator, not part of the automatic pipeline.
  * Cast consistency: look variants sharing a characterKey — a shot casting one variant while the wardrobe timeline
  * there implies another is re-cast (report castCorrections); ambiguous cases only warn (castConsistency).
+ * Final prompts: emotion words → visible face / body action, inner monologue + quotes dropped (report emotionRewrites);
+ *   a prompt still carrying a quote mark / emotion word / monologue marker fails the run (exit 4).
+ * --speech-rate 4 : chars per second for the dialogueOverrun warning (estimated speech longer than the line's slot)
  * Every output shot gets `framing` + `wardrobeState` (shotAnnotate); the run fails if any shot lacks either.
  * Characters without wardrobeTimeline / wardrobeCues get an AUTO-PROPOSED timeline from script cues
  * (report: wardrobeAutoProposed, reviewRequired) — hand data in the character JSON always wins.
@@ -29,6 +32,8 @@ import { checkRhythm, stretchReview } from '../src/lib/rhythm'
 import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotations, wardrobeReport } from '../src/lib/shotAnnotate'
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
+import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
+import { dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -44,7 +49,9 @@ const overridesFile = oi >= 0 ? JSON.parse(readFileSync(args[oi + 1], 'utf8')) :
 const sceneOverrides: Record<string, string> | undefined = overridesFile.overrides
 // explicit per-shot beats (beat mode only), validated in applyBeatMode
 const beatOverrides: BeatOverrides | undefined = overridesFile.beatOverrides
-const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1))
+const si = args.indexOf('--speech-rate')
+const speechRate = si >= 0 ? { charsPerSec: Number(args[si + 1]) } : {}
+const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1))
 const [inp, outp] = pos
 if (!inp) {
   console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G] [--beat-mode speed] [--beat-only]')
@@ -75,6 +82,12 @@ const missing = missingAnnotations(exp)
 if (missing.length) {
   console.error(`shots missing framing / wardrobeState: ${missing.join(', ')}`)
   process.exit(2)
+}
+// final prompts must not carry text the video model could draw: quote marks, emotion words, inner monologue
+const textRisks = exp.shots.map((s) => ({ id: s.id, risks: promptTextRisks(s.prompt) })).filter((x) => x.risks.length)
+if (textRisks.length) {
+  console.error(`prompts with drawable text (${textRisks.length}):\n  ${textRisks.map((x) => `${x.id}: ${x.risks.join('; ')}`).join('\n  ')}`)
+  process.exit(4)
 }
 // every dialogue line needs a voice: speaker → character voice (characterKey inheritance) or project.voices[speakerName]
 const voiceMissing = missingVoices(exp.shots)
@@ -139,6 +152,13 @@ console.log(
       // off-list speakers with an auto-designed voice ({ description, id }): review before TTS
       voiceNeedsReview: Object.values(exp.autoVoices || {}).map((a) => ({ speakerName: a.speakerName, voice: a.voice, basis: a.basis, lines: a.lines, shots: a.shots })),
       dialogueLinesAutoVoice: exp.shots.reduce((a, s) => a + (s.dialogueLines || []).filter((l) => l.autoVoice).length, 0),
+      // abstract emotion words → visible actions, inner monologue / quotes dropped (final render pass)
+      emotionRewrites: exp.shots
+        .map((s) => ({ id: s.id, episode: s.episode, rewrites: (s.renderReview || []).map(parseRewriteNote).filter(Boolean) }))
+        .filter((x) => x.rewrites.length),
+      // estimated speech (chars / rate + pauses) longer than the line's slot: warning only
+      speechRate: { ...DEFAULT_SPEECH_RATE, ...speechRate },
+      dialogueOverrun: dialogueOverruns(exp.shots, speechRate),
       // look-variant cast checks: auto-corrected (timeline unambiguous) / left as is with a cast_consistency warning
       castCorrections: cast.corrections,
       castConsistency: cast.warnings,

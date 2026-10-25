@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyBeatMode, BEAT_LINE_RE, buildBeatPrompt, charOverlapDup, listToClauses, sharedRunDup, CLOSE_DIALOGUE_FRAMING, dialogueFraming, isNearDup, LONG_SHOT_SEC } from '../src/lib/beatPrompt'
-import { actionCap, countActions, limitActions } from '../src/lib/actionDensity'
+import { actionCap, actionWeight, countActions, limitActions } from '../src/lib/actionDensity'
 import { applyCrossCutSplit, correctScenes, explicitPlaces } from '../src/lib/crosscutSplit'
 import { postProcessExport } from '../src/lib/segmentPost'
 import {
@@ -19,6 +19,9 @@ import {
 import { autoVoiceDescription, autoVoiceId, characterVoices, lineVoice, missingVoices, normalizeVoice } from '../src/lib/voice'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 import { applyCastConsistency } from '../src/lib/castConsistency'
+import { EMOTION_RE, parseRewriteNote, promptTextRisks, QUOTE_RE, visualizePrompt } from '../src/lib/emotionVisual'
+import { dialogueOverruns, speechSec } from '../src/lib/dialogueTiming'
+import { EMOTION_VISIBLE } from '../src/lib/emotionVocab'
 
 let pass = 0
 const t = (name: string, fn: () => void) => {
@@ -692,6 +695,85 @@ if (existsSync(P2)) {
       const out = JSON.parse(readFileSync(join(dir, 'out.json'), 'utf8')) as VideoPipelineExport
       assert.deepEqual(out.shots.find((s) => s.id === 'k4')!.characterIds, ['x2'])
     })
+    // ---- drawable text: emotion words / inner monologue / quotes (synthetic text, generic vocabulary)
+    t('visualize: emotion words → visible actions in every form (一脸X, X地, 带着X, 有点X, X的…, abstract clause), idempotent', () => {
+      const v = (p: string) => visualizePrompt(p).prompt
+      assert.equal(v('他一脸尴尬地站着。'), '他站着，视线乱飘、嘴角僵住。')
+      assert.equal(v('她得意地笑了。'), '她笑了，嘴角上扬、下巴微抬。')
+      assert.equal(v('眼神不闪躲却带点不服气。'), '眼神不闪躲却皱眉、撇嘴。')
+      assert.equal(v('他有点紧张。'), '他指节发白、喉结滚动。')
+      for (const [w, vis] of Object.entries(EMOTION_VISIBLE))
+        for (const part of vis.split('、')) assert.equal(actionWeight(part), 0, `${w} → ${part}: expression-level only, never a new main action (density caps)`)
+      assert.equal(v('表演：听到消息的震惊，手指发抖。'), '表演：瞪大眼睛、身体僵住，手指发抖。')
+      assert.equal(v('带着委屈，嘴角下撇。'), '眼眶泛红，嘴角下撇。', 'visible parts already in the line are not repeated')
+      assert.equal(v('嘴角挂着无奈的笑。'), '嘴角挂着笑，眉毛塌下、轻叹一口气。')
+      assert.equal(v('0–2秒：他无奈地坐下。\n2–4秒：她无奈地摇头，嫌弃。'), '0–2秒：他坐下，眉毛塌下、轻叹一口气。\n2–4秒：她摇头，皱鼻、身子后仰。', 'a visible action is written once per prompt')
+      const once = v('0–2秒，正常节奏：他害羞地低下头，有点生气。')
+      assert.ok(!EMOTION_RE.test(once), once)
+      assert.equal(v(once), once, 'idempotent')
+      assert.deepEqual(visualizePrompt('他转身。').rewrites, [], 'no emotion word → untouched')
+    })
+    t('visualize: inner-monologue clauses dropped (visible action kept), quotes + quoted content stripped (speech → 嘴唇开合)', () => {
+      const r = visualizePrompt('0–2秒，正常节奏：他攥紧拳头，心想这次不能输，眼睛盯着门。')
+      assert.equal(r.prompt, '0–2秒，正常节奏：他攥紧拳头，眼睛盯着门。')
+      assert.deepEqual(r.rewrites.map((x) => x.kind), ['inner'])
+      assert.equal(visualizePrompt('他暗想：完了。').prompt, '')
+      assert.equal(visualizePrompt('他抬头说：“走吧”。').prompt, '他抬头开口说话，嘴唇开合。')
+      for (const q of ['「快跑」', '『快跑』', '‘快跑’', '"快跑"', "'快跑'", '《快跑》', '“快跑”']) {
+        const p = visualizePrompt(`墙上贴着${q}的纸，他回头。`).prompt
+        assert.ok(!QUOTE_RE.test(p) && !p.includes('快跑'), `${q}: ${p}`)
+      }
+      assert.equal(visualizePrompt('他回头”。').prompt, '他回头。', 'stray quote marks removed')
+      assert.equal(visualizePrompt('限制：不出现“字”。').prompt, '限制：不出现“字”。', 'style / limit lines untouched (gate catches them)')
+    })
+    t('visualize in the final render pass: notes + prompt tail rules (景别 + no-text line) still hold; gate', () => {
+      const raw = '竖屏9:16，5秒单镜。白天，教室，单人。\n主体：17岁东亚少年，米白夹克。\n时间轴（按秒变速）：\n0–2.5秒，正常节奏：他一脸慌张地站起，心里打鼓。\n2.5–5秒，接着放慢：他说：“我没有”。\n镜头：固定机位，不切镜。'
+      const r = renderPrompt(raw, 'medium')
+      const lines = r.prompt.split('\n')
+      assert.equal(lines[lines.length - 1], NO_TEXT_CONSTRAINT)
+      assert.ok(lines[lines.length - 2].startsWith('景别：'))
+      assert.deepEqual(promptTextRisks(r.prompt), [], r.prompt)
+      assert.ok(r.notes.some((n) => n.startsWith('情绪词改为可见动作：')) && r.notes.some((n) => n.startsWith('删去心理活动：')) && r.notes.some((n) => n.startsWith('删去引号内容：')), r.notes.join('|'))
+      assert.deepEqual(parseRewriteNote(r.notes.find((n) => n.startsWith('删去心理活动：'))!), { kind: 'inner', from: '心里打鼓', to: '' })
+      assert.equal(renderPrompt(r.prompt, 'medium').prompt, r.prompt, 'idempotent')
+      assert.deepEqual(promptTextRisks('他“笑”。\n限制：无。'), ['quote “”'])
+      assert.deepEqual(promptTextRisks('他很紧张，心想快跑。'), ['emotion 紧张', 'inner 心想'])
+      // repack: a quote left in a line the rewrite never touches fails the run (exit 4), no pack written
+      const dir = mkdtempSync(join(tmpdir(), 'txt-'))
+      const inp = join(dir, 'in.json')
+      writeFileSync(inp, JSON.stringify(pack([SH({ id: 'q1', prompt: '竖屏9:16。白天，房间。主体：17岁东亚少年，米白夹克。他有点紧张。风格：真人实拍“胶片”质感。' })])))
+      let code = 0
+      let err = ''
+      try {
+        execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8', stdio: 'pipe' })
+      } catch (x) {
+        code = (x as { status: number }).status
+        err = String((x as { stderr: string }).stderr)
+      }
+      assert.equal(code, 4, err)
+      assert.ok(err.includes('q1: quote'), err)
+      assert.ok(!existsSync(join(dir, 'out.json')))
+      writeFileSync(inp, JSON.stringify(pack([SH({ id: 'q1', durationSec: 5, prompt: '竖屏9:16。白天，房间。主体：17岁东亚少年，米白夹克。时间轴：0–5s他有点紧张，心想别出错。', action: '他有点紧张，心想别出错' })])))
+      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8' }))
+      assert.ok(rep.emotionRewrites.length === 1 && rep.emotionRewrites[0].rewrites.some((x: { kind: string }) => x.kind === 'emotion'), JSON.stringify(rep.emotionRewrites))
+    })
+    t('dialogue overrun: estimated speech (chars / rate + pauses) vs the line slot, configurable rate, remedy within 5–9 s', () => {
+      assert.ok(Math.abs(speechSec('一二三四五六七八……九十。') - 3.4) < 1e-9, 'calibration: 10 chars + …… + 。')
+      assert.ok(Math.abs(speechSec('一二三四', { charsPerSec: 2 }) - 2) < 1e-9)
+      const L = (text: string, startSec: number, endSec: number) => ({ speaker: 'a1', speakerName: '甲', text, startSec, endSec })
+      const shots = [
+        SH({ id: 'o1', durationSec: 6, dialogueLines: [L('一二三四五六七八……九十。', 2, 5)] }),
+        SH({ id: 'o2', durationSec: 9, dialogueLines: [L('一二三四五六七八九十十一十二。', 6, 9)] }),
+        SH({ id: 'o3', durationSec: 5, dialogueLines: [L('好。', 1, 4)] }),
+        SH({ id: 'o4', durationSec: 3, dialogueLines: [L('一二三四五六七八九十。', 1, 3)] }),
+      ]
+      const o = dialogueOverruns(shots)
+      assert.deepEqual(o.map((x) => [x.id, x.overrunSec]), [['o1', 0.4], ['o2', 0.8], ['o4', 0.8]])
+      assert.ok(o[0].remedy.includes('6.5 秒') && o[0].remedy.includes('5–9'), o[0].remedy)
+      assert.ok(o[1].remedy.includes('拆分'), o[1].remedy)
+      assert.ok(o[2].remedy.includes('至 4 秒') && o[2].remedy.includes('仍短于 5 秒'), o[2].remedy)
+      assert.deepEqual(dialogueOverruns(shots, { charsPerSec: 6 }).map((x) => x.id), [], 'faster rate → no overrun')
+    })
     t('known limitations: every medium / full shot with 2+ on screen gets the one-ref first-frame note (generic)', () => {
       const e = annotateShots(pack([
         SH({ id: 'm2', characterIds: ['a1', 'b1'], size: '中景' }),
@@ -712,6 +794,9 @@ if (existsSync(P2)) {
     assert.deepEqual(rep.voiceMissing, [], 'default repack passes: every line voiced')
     // look variants: shots re-cast by the wardrobe timeline; the output pack has no remaining contradiction
     assert.ok(rep.castCorrections.length > 0 && rep.castCorrections.every((c: { from: string; to: string; evidence: string[] }) => c.from !== c.to && c.evidence.length))
+    assert.ok(Array.isArray(rep.emotionRewrites) && Array.isArray(rep.dialogueOverrun) && rep.speechRate.charsPerSec > 0)
+    const outPack = JSON.parse(readFileSync(out, 'utf8'))
+    for (const s of outPack.shots) assert.deepEqual(promptTextRisks(s.prompt), [], s.id)
     assert.deepEqual(applyCastConsistency(JSON.parse(readFileSync(out, 'utf8'))).corrections, [])
     assert.equal(rep.overridesFile, null)
     // every line of a listed character has a voice (look variants via characterKey); only off-list bit parts may lack one
