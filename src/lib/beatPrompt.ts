@@ -18,7 +18,9 @@ import { PERSON_DESCRIPTOR, stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './sho
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
 import { actionCap, actionWeight, clauseCap, countActions, expandCompounds, isVisibleAction, limitActions, visibleCap } from './actionDensity'
-import { splitVoice, stripVoiceAdverbs } from './emotionVisual'
+import { splitVoice, stripVoiceAdverbs, visibleForEmotion } from './emotionVisual'
+/** beatTrimmedActions prefix of the performance rule (emotion → visible acting / skipped) */
+export const PERFORMANCE_NOTE = '表演规则：'
 import { clearMouthClause, MOUTH_BLOCK_RE } from './mouthOcclusion'
 import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, dialogueSegmentNeeds, SHOT_TARGET_SEC, type DialoguePad, type SpeechRate } from './dialogueTiming'
 
@@ -1194,12 +1196,21 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const perf = x.cls.some((c) => !/安静听/.test(c) && (actionWeight(c) > 0 || MICRO_RE.test(c)))
     const idle = !x.cls.length || x.cls.every((c) => /安静听|保持姿态/.test(c))
     if (perf || !emo.length || (!idle && total < LONG_SHOT_SEC)) return
-    // an emotion another segment already shows (the same emotion in two segments) is not repeated: take the next unused one
-    const used = (em: string) => segTexts.some((y) => y.cls.some((c) => c.includes(em.replace(/^[的地得]/, ''))))
+    // the emotion is written as visible acting from the emotion table (never 神情透出<abstract phrase>, which the model
+    // draws as an abstract face / text); acting another segment already shows is not repeated; a phrase with no table
+    // word is skipped (logged) and the next emotion is tried
+    const shown = segTexts.flatMap((y) => y.cls).join('，')
     const k = Math.min(emo.length - 1, Math.floor((i * emo.length) / segTexts.length))
-    const e = [...emo.slice(k), ...emo.slice(0, k)].find((em) => !used(em))
-    if (!e) return
-    x.cls = [...x.cls, `神情透出${e.replace(/^[的地得]/, '')}`]
+    for (const em of [...emo.slice(k), ...emo.slice(0, k)]) {
+      const v = visibleForEmotion(em, shown)
+      if (!v) {
+        trimmed.push(`${PERFORMANCE_NOTE}${fmt(x.g.start)}–${fmt(x.g.end)}秒 无可见动作对照，略去：${em}`)
+        continue
+      }
+      trimmed.push(`${PERFORMANCE_NOTE}${fmt(x.g.start)}–${fmt(x.g.end)}秒 ${em} → ${v}`)
+      x.cls = [...x.cls, v]
+      return
+    }
   })
   if (speeds.filter((x) => x === '慢').length > 1) todo.push('多段含台词，均标为【慢】，请核对节奏')
   if (speeds.every((x) => x === '慢')) todo.push('所有分段都是【慢】，与「非慢动作」冲突，建议拆镜')

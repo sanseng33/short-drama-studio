@@ -24,6 +24,8 @@ import { applyCastConsistency } from '../src/lib/castConsistency'
 import { EMOTION_RE, HOLD_EXPRESSION, isVoiceClause, parseRewriteNote, promptTextRisks, QUOTE_RE, splitVoice, stripVoiceAdverbs, visualizePrompt } from '../src/lib/emotionVisual'
 import { dialogueNeedSec, dialogueOverruns, dialogueSegmentNeeds, speechSec } from '../src/lib/dialogueTiming'
 import { CONTEXTUAL_EMOTION, EMOTION_VISIBLE } from '../src/lib/emotionVocab'
+import { ABSTRACT_PERF_NOTE, dropRepeatedTimeLead, rewriteAbstractPerformance, TIME_REPEAT_NOTE } from '../src/lib/renderHygiene'
+import { visibleForEmotion } from '../src/lib/emotionVisual'
 import { BAND_NEGATIVE, carrySegmentSubjects, emptyShotRisks, FIRST_LINE_NO_TEXT, rewriteCaptionWords, scrubEmptyStyle, speechChars, withFirstLineNoText } from '../src/lib/renderHygiene'
 import { isPropNegLine, qualifyTextProps } from '../src/lib/textProps'
 
@@ -103,7 +105,11 @@ t(`performance rule: idle segments get a beat from the shot's own emotion text (
   const r = buildBeatPrompt(s, chars)
   const lines = r.prompt.split('\n').filter((l) => BEAT_LINE_RE.test(l))
   assert.equal(lines.length, 3)
-  assert.match(lines[1], /神情透出较劲/)
+  // 较劲 has no visible-acting table word → skipped (logged); the next emotion (敷衍) is written as visible acting
+  assert.match(lines[1], /眼皮半垂/)
+  assert.ok(!r.prompt.includes('神情透出'), r.prompt)
+  assert.ok(r.trimmedActions.some((x) => x.startsWith('表演规则：') && x.endsWith('略去：较劲')), r.trimmedActions.join('\n'))
+  assert.ok(r.trimmedActions.some((x) => x.startsWith('表演规则：') && x.includes('敷衍 → 眼皮半垂')), r.trimmedActions.join('\n'))
   for (const l of lines) assert.ok(!/^[^：]*：保持姿态，呼吸与眼神有细微变化。$/.test(l), `no empty stand: ${l}`)
 })
 
@@ -1261,12 +1267,13 @@ if (existsSync(FIX)) {
     assert.deepEqual(h.map((x) => x.shotId), ['em'])
     assert.ok(h[0].reasons.some((x) => x.startsWith('empty:')), JSON.stringify(h))
   })
-  t('performance rule: an empty shot (no cast) never gets a 神情透出… clause', () => {
+  t('performance rule: an empty shot (no cast) gets no performance; a person shot gets visible acting', () => {
     const src = SH({ id: 'pf', characterIds: [], durationSec: 6, emotion: '升级的挑衅→越来越离谱', camera: '特写', size: '特写', prompt: '竖屏9:16。夜，窗外特写。主体：窗玻璃。时间轴（一镜6秒，小节拍）：0–3s雨水顺着玻璃往下淌；3–6s随后纸箱砰地落到窗台上。镜头：特写。' })
     const r = buildBeatPrompt(src, [])
     assert.ok(!r.prompt.includes('神情透出'), r.prompt)
     const person = buildBeatPrompt({ ...src, characterIds: ['a1'], prompt: src.prompt.replace('主体：窗玻璃', '主体：17岁东亚少年，米白夹克') }, chars)
-    assert.ok(person.prompt.includes('神情透出'), 'person shots keep the rule: ' + person.prompt)
+    assert.ok(!person.prompt.includes('神情透出'), person.prompt)
+    assert.ok(person.prompt.includes('挑眉'), 'person shots keep the rule as visible acting: ' + person.prompt)
   })
   t('subject carry: a subjectless motion segment inherits the previous object subject; unresolved flagged, nothing invented', () => {
     const r = carrySegmentSubjects('0–2秒，正常节奏：纸箱砰地落到地上，盖子弹开一角，靠纸板抖动表现力度。\n2–4秒，正常节奏：顺着台阶往下滚。', true)
@@ -1286,12 +1293,12 @@ if (existsSync(FIX)) {
       [`${cue}；他说完。`, `${cue}；他收声。`],
       ['喊完低下头。', '收声后低下头。'],
       ['说完这句嘴唇抿了一下。', '收声后嘴唇抿了一下。'],
-      ['他抬头对着空气嘀咕，偏了下头。', '他抬头嘴唇轻轻动了动，偏了下头。'],
+      ['他抬头对着空气嘀咕，偏了下头。', '他抬头嘴唇小幅快速开合，偏了下头。'],
       ['画外有人说话，画面人物停住倾听，嘴唇闭合不说话。', '画外传来人声，画面人物停住倾听，嘴唇闭合。'],
       ['嘴唇闭合安静听对面说话。', '嘴唇闭合安静听着对面。'],
       ['笔尖点了一下才说话。', '笔尖点了一下才开口。'],
       ['他双手撑在栏杆上喊话。', '他双手撑在栏杆上张大嘴。'],
-      ['眉头先皱起半拍才开口，他问话，眼神打量。', '眉头先皱起半拍才开口，眼神打量。'],
+      ['眉头先皱起半拍才开口，他问话，眼神打量。', '眉头先皱起半拍才开口，他下巴微抬、眉梢上挑，眼神打量。'],
       ['说着说着笑了。', '渐渐笑了。'],
       ['一点说不清的情绪。', '一点难以分辨的情绪。'],
     ]
@@ -1312,6 +1319,85 @@ if (existsSync(FIX)) {
     assert.equal(r.prompt.split(FIRST_LINE_NO_TEXT).length, 2)
     assert.equal(renderPrompt(r.prompt, 'medium').prompt, r.prompt, 'idempotent')
     assert.equal(renderPrompt(r.prompt, 'empty').prompt.split(BAND_NEGATIVE).length, 2, 're-render with another framing: one band line')
+  })
+}
+
+
+{
+  // ---------------- round 13: leftovers ----------------
+  t('abstract performance: emotion phrase → visible acting from the table only; no table word → dropped; gate', () => {
+    assert.equal(visibleForEmotion('硬撑的镇定'), [EMOTION_VISIBLE['硬撑'], EMOTION_VISIBLE['镇定']].join('、').split('、').filter((x, i, a) => a.indexOf(x) === i).join('、'))
+    assert.equal(visibleForEmotion('某种说不清的氛围'), '')
+    // parts already shown are not repeated
+    const first = EMOTION_VISIBLE['不屑'].split('、')[0]
+    assert.ok(!visibleForEmotion('不屑', first).split('、').includes(first))
+    const src = '0–3秒，正常节奏：他靠在门边，神情透出某种说不清的氛围。\n3–6秒，正常节奏：他抬手推门，神情透出不屑。'
+    const r = rewriteAbstractPerformance(src, visibleForEmotion, HOLD_EXPRESSION)
+    assert.ok(!r.prompt.includes('神情透出'), r.prompt)
+    assert.match(r.prompt, /^0–3秒，正常节奏：他靠在门边。$/m)
+    assert.ok(r.prompt.includes(`他抬手推门，${EMOTION_VISIBLE['不屑']}。`), r.prompt)
+    assert.equal(r.notes.length, 2)
+    assert.ok(r.notes.every((n) => n.startsWith(ABSTRACT_PERF_NOTE)))
+    // a segment left with nothing visible holds the expression
+    const e = rewriteAbstractPerformance('0–3秒，正常节奏：神情透出某种说不清的氛围。', visibleForEmotion, HOLD_EXPRESSION)
+    assert.equal(e.prompt, `0–3秒，正常节奏：${HOLD_EXPRESSION}。`)
+    // gate: any surviving 神情透出 is a prompt text risk (repack exit 4 / hold)
+    assert.ok(promptTextRisks('竖屏。\n0–3秒，正常节奏：他神情透出某种氛围。').some((x) => x.includes('神情透出')))
+    // final render: none survives, idempotent
+    const out = renderPrompt('竖屏9:16，6秒单镜。单人。\n' + src + '\n镜头：中景，不切镜。', 'medium')
+    assert.ok(!out.prompt.includes('神情透出'), out.prompt)
+    assert.equal(renderPrompt(out.prompt, 'medium').prompt, out.prompt)
+  })
+  t('text props: a noun used as a modifier (X的手) or after a 的-modifier gets a postposed qualifier, no double 的', () => {
+    const a = qualifyTextProps('0–3秒，正常节奏：他捏着杂志的手停在半空，眼神发直。')
+    assert.equal(a.prompt, '0–3秒，正常节奏：他捏着杂志的手停在半空（杂志封面纯色无字），眼神发直。')
+    assert.deepEqual(a.hits.map((h) => h.mode), ['postposed'])
+    assert.ok(a.negLine.includes('杂志'))
+    const b = qualifyTextProps('0–3秒，正常节奏：散开的卷子被他拢齐。')
+    assert.ok(b.prompt.includes('散开的卷子被他拢齐（卷子'), b.prompt)
+    assert.ok(!/的[^，。（）]{0,8}的卷子/.test(b.prompt), b.prompt)
+    // plain mention keeps the in-place form
+    assert.ok(qualifyTextProps('0–3秒，正常节奏：她翻开旧杂志。').prompt.includes('的旧杂志'))
+    // a counted first mention (一摞杂志) is not "another object" of itself
+    assert.deepEqual(qualifyTextProps('0–3秒，正常节奏：他把一摞旧杂志压在窗台上。').hits.map((h) => !!h.instance), [false])
+    for (const x of [a, b]) {
+      const again = qualifyTextProps(x.prompt)
+      assert.equal(again.prompt, x.prompt)
+      assert.deepEqual(again.hits, x.hits)
+    }
+  })
+  t('text props: a later mention that is clearly another object (一部手机) is qualified too; negative line kept once', () => {
+    const r = qualifyTextProps('0–3秒，正常节奏：他把手机扣在桌上，又掏出一部手机按亮。\n3–6秒，正常节奏：他盯着手机。')
+    const n = (r.prompt.match(/屏幕无界面的手机/g) || []).length
+    assert.equal(n, 2, r.prompt)
+    assert.ok(r.prompt.includes('一部屏幕无界面的手机'))
+    assert.ok(r.prompt.includes('他盯着手机'), 'a plain later mention stays (the negative line covers it)')
+    assert.deepEqual(r.hits.map((h) => [h.mode, !!h.instance]), [['qualified', false], ['qualified', true]])
+    assert.equal(r.negLine.split('；').length, 1)
+    const again = qualifyTextProps(r.prompt)
+    assert.equal(again.prompt, r.prompt)
+    assert.deepEqual(again.hits, r.hits)
+  })
+  t('adjacent segments: a repeated leading time phrase (收声后) is dropped from the next segment', () => {
+    const src = '0–3秒，正常节奏：他正脸朝镜头开口说一句短话；收声后眼神往下落。\n3–6秒，正常节奏：收声后低下头扯了扯衣角。'
+    const r = dropRepeatedTimeLead(src)
+    assert.equal(r.prompt.split('\n')[1], '3–6秒，正常节奏：低下头扯了扯衣角。')
+    assert.deepEqual(r.notes, [`${TIME_REPEAT_NOTE}收声后`])
+    assert.equal(dropRepeatedTimeLead(r.prompt).prompt, r.prompt)
+    // first use stays; a different lead stays
+    const k = '0–3秒，正常节奏：他抬头。\n3–6秒，正常节奏：收声后低下头。'
+    assert.equal(dropRepeatedTimeLead(k).prompt, k)
+    // render pass: 说完 → 收声后 twice → once
+    const out = renderPrompt('竖屏9:16，6秒单镜。单人。\n0–3秒，正常节奏：他正脸朝镜头开口说一句短话；说完眼神往下落。\n3–6秒，正常节奏：说完低下头扯了扯衣角。\n镜头：中景，不切镜。', 'medium')
+    assert.equal((out.prompt.match(/收声后/g) || []).length, 1, out.prompt)
+    assert.equal(renderPrompt(out.prompt, 'medium').prompt, out.prompt)
+  })
+  t('caption words keep their intent visibly: 嘀咕 → lips moving fast, 问话 → questioning face (no 问 char)', () => {
+    const a = rewriteCaptionWords('0–3秒，正常节奏：她低头嘀咕了一句。')
+    assert.ok(a.prompt.includes('嘴唇小幅快速开合'), a.prompt)
+    const b = rewriteCaptionWords('0–3秒，正常节奏：他问话，眼神打量。')
+    assert.ok(b.prompt.includes('他下巴微抬、眉梢上挑'), b.prompt)
+    assert.ok(!/问|嘀咕/.test(a.prompt + b.prompt))
   })
 }
 

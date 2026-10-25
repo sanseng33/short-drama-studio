@@ -53,8 +53,10 @@ export interface TextPropHit {
   /** the noun as written */
   name: string
   kind: TextPropKind
-  /** qualified in place / dropped from a set-dressing list / named only in the negative line */
-  mode: 'qualified' | 'dropped' | 'negOnly'
+  /** qualified in place / postposed (「（杂志封面纯色无字）」 at the clause end, no double 的) / dropped from a set-dressing list / named only in the negative line */
+  mode: 'qualified' | 'postposed' | 'dropped' | 'negOnly'
+  /** a later mention that is another object of the same kind (一部手机) */
+  instance?: boolean
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -97,6 +99,9 @@ export function findTextProps(lines: string[]): Match[] {
       if (hit.e.notBefore?.test(before) || hit.e.notAfter?.test(after)) continue
       if (hit.e.onlyAfter && !hit.e.onlyAfter.test(after)) continue
       // inside a qualifier this table wrote (屏幕无界面的手机 / 纸面空白的卷子): not a prop mention
+      const open = l.lastIndexOf('（', m.index!)
+      const close = l.indexOf('）', m.index!)
+      if (open >= 0 && close > open && !l.slice(open, m.index!).includes('）') && POSTPOSED.has(l.slice(open, close + 1))) continue
       if (QUALIFIERS.some((q) => {
         const k = q.indexOf(m[0])
         return k >= 0 && l.slice(m.index! - k, m.index! - k + q.length + 1) === `${q}的`
@@ -127,66 +132,122 @@ function setDressingItem(line: string, at: number): [number, number] | null {
   return [s, e]
 }
 
+/** a later mention that is clearly another object of the same kind (一部手机 after 手机 / 另一本书) */
+const DISTINCT_BEFORE = /(?:另一|又一|[一两三几另])[部台本张份只个块支封把件条片沓叠摞]$|(?:别人|旁人|对方)的$|另外的?$/
+/** text before the mention's modifiers, without a 「q的」 this table wrote */
+function beforeMention(line: string, m: Match): string {
+  const b = line.slice(0, insertAt(line, m.at))
+  return b.endsWith(`${m.e.q}的`) ? b.slice(0, -m.e.q.length - 1) : b
+}
+/** postposed form (no double 的): 捏着杂志的手停在半空（杂志封面纯色无字） */
+const postposed = (name: string, e: TextPropEntry) => `（${name}${e.q}）`
+const POSTPOSED = new Set(ALL.map((x) => postposed(x.n, x.e)))
+
+/** how the mention is already qualified (prefix 「q的」 before its modifiers, or a postposed note in the clause) */
+function qualMode(line: string, m: Match): 'qualified' | 'postposed' | null {
+  const k = insertAt(line, m.at)
+  if (line.slice(Math.max(0, k - m.e.q.length - 1), k) === `${m.e.q}的`) return 'qualified'
+  const end = clauseEnd(line, m.at)
+  const p = postposed(m.name, m.e)
+  return line.slice(Math.max(0, end - p.length), end) === p ? 'postposed' : null
+}
+/** end of the clause containing `at` (next ，。；, a postposed note stays inside) */
+function clauseEnd(line: string, at: number): number {
+  const r = line.slice(at).search(/[，,。；;]/)
+  return r >= 0 ? at + r : line.length
+}
+/**
+ * Qualify one mention in place (「q的」 before the noun's modifiers); when that would read 「…的…的」 — the noun is a
+ * modifier itself (杂志的手) or already follows a 的-modifier (散开的卷子) — the qualifier is postposed at the clause end.
+ */
+function qualifyOne(lines: string[], m: Match): 'qualified' | 'postposed' {
+  const l = lines[m.line]
+  const k = insertAt(l, m.at)
+  const afterNoun = l.slice(m.at + m.name.length)
+  if (afterNoun.startsWith('的') || l[k - 1] === '的') {
+    const end = clauseEnd(l, m.at)
+    lines[m.line] = `${l.slice(0, end)}${postposed(m.name, m.e)}${l.slice(end)}`
+    return 'postposed'
+  }
+  lines[m.line] = `${l.slice(0, k)}${m.e.q}的${l.slice(k)}`
+  return 'qualified'
+}
+
 /**
  * Qualify the text props of one prompt. Returns the rewritten prompt (lines; the negative line is NOT appended —
- * renderPrompt places it), the negative line ('' when no prop), and one hit per prop noun present.
+ * renderPrompt places it), the negative line ('' when no prop), and one hit per qualified / noted mention.
  */
 export function qualifyTextProps(prompt: string): { prompt: string; negLine: string; hits: TextPropHit[] } {
   const lines = prompt.split('\n').filter((l) => !isPropNegLine(l))
   const hits: TextPropHit[] = []
   const seen = new Map<string, TextPropHit>()
-  // first drawable mention per noun; later mentions stay as written (the negative line covers them)
+  const drawable = (x: Match) => !LIGHT_LINE.test(lines[x.line]) && !(x.e.kind === 'screen' && LIGHT_FORM.test(lines[x.line].slice(x.at + x.name.length)))
+  const after = (x: Match, m: Match) => x.line > m.line || (x.line === m.line && x.at > m.at)
+  // first drawable mention per noun; a later mention is qualified too only when it is clearly another object
   for (let pass = 0; pass < 64; pass++) {
     const ms = findTextProps(lines).filter((m) => !seen.has(m.name))
     if (!ms.length) break
     const m = ms[0]
     const l = lines[m.line]
-    const after = l.slice(m.at + m.name.length)
-    const already = l.slice(0, m.at).endsWith(`${m.e.q}的`) || l.slice(Math.max(0, m.at - 12), m.at).includes(`${m.e.q}的`)
     let mode: TextPropHit['mode']
     // the same qualifier already written for another noun (书 … 课本): once is enough, the negative line names both
-    const sameQ = hits.some((h) => h.mode === 'qualified' && h.name !== m.name && TEXT_PROPS.find((e) => e.names.includes(h.name))?.q === m.e.q)
-    if (already) mode = 'qualified'
-    else if (sameQ) mode = 'negOnly'
-    else if (LIGHT_LINE.test(l) || (m.e.kind === 'screen' && LIGHT_FORM.test(after))) {
-      // a later drawable mention may still need the qualifier
-      const later = findTextProps(lines).find((x) => x.name === m.name && (x.line > m.line || (x.line === m.line && x.at > m.at)) && !LIGHT_LINE.test(lines[x.line]) && !(x.e.kind === 'screen' && LIGHT_FORM.test(lines[x.line].slice(x.at + x.name.length))))
-      if (later) {
-        const ll = lines[later.line]
-        if (!ll.slice(Math.max(0, later.at - 12), later.at).includes(`${later.e.q}的`)) {
-          const k = insertAt(ll, later.at)
-          lines[later.line] = `${ll.slice(0, k)}${later.e.q}的${ll.slice(k)}`
-        }
-        mode = 'qualified'
-      } else mode = 'negOnly'
+    const sameQ = hits.some((h) => (h.mode === 'qualified' || h.mode === 'postposed') && h.name !== m.name && TEXT_PROPS.find((e) => e.names.includes(h.name))?.q === m.e.q)
+    let first: Match | null = m
+    if (sameQ) {
+      mode = 'negOnly'
+      first = null
+    } else if (!drawable(m)) {
+      // a screen as light / the 光线 line: a later drawable mention may still need the qualifier
+      first = findTextProps(lines).find((x) => x.name === m.name && after(x, m) && drawable(x)) || null
+      mode = 'negOnly'
     } else {
       const item = m.e.kind === 'sign' ? setDressingItem(l, m.at) : null
       if (item) {
-        const [s, e] = item
-        let nl = l.slice(0, s) + l.slice(e)
-        nl = nl.replace(/、{2,}/g, '、').replace(/([：:，,])、/g, '$1').replace(/、([。，；])/g, '$1').replace(/([：:])([。])/g, '$1')
-        lines[m.line] = nl
+        const [s0, e0] = item
+        lines[m.line] = (l.slice(0, s0) + l.slice(e0)).replace(/、{2,}/g, '、').replace(/([：:，,])、/g, '$1').replace(/、([。，；])/g, '$1').replace(/([：:])([。])/g, '$1')
         mode = 'dropped'
-      } else {
-        const k = insertAt(l, m.at)
-        lines[m.line] = `${l.slice(0, k)}${m.e.q}的${l.slice(k)}`
-        mode = 'qualified'
-      }
+        first = null
+      } else mode = 'qualified'
+    }
+    if (first) {
+      const had = qualMode(lines[first.line], first)
+      mode = had || qualifyOne(lines, first)
+      // an in-place qualifier just written shifts the mention
+      if (!had && mode === 'qualified') first = { ...first, at: first.at + first.e.q.length + 1 }
     }
     const h: TextPropHit = { name: m.name, kind: m.e.kind, mode }
     seen.set(m.name, h)
     hits.push(h)
+    // later separate objects of the same kind (一部手机 …): each qualified, one hit each
+    if (first) {
+      const f = first
+      const instances = () => findTextProps(lines).filter((x) => x.name === m.name && after(x, f) && drawable(x) && DISTINCT_BEFORE.test(beforeMention(lines[x.line], x)))
+      for (let guard = 0; guard < 16; guard++) {
+        const next = instances().find((x) => !qualMode(lines[x.line], x))
+        if (!next) break
+        qualifyOne(lines, next)
+      }
+      for (const x of instances()) hits.push({ name: m.name, kind: m.e.kind, mode: qualMode(lines[x.line], x) || 'qualified', instance: true })
+    }
   }
   // a dropped set-dressing sign mentioned nowhere else needs no negative; every other prop is named once
   // a device's own negative (手机屏幕只有柔和的光…) covers a bare 屏幕 / 显示屏 mention
-  const device = hits.some((h) => h.kind === 'screen' && TEXT_PROPS.find((e) => e.names.includes(h.name))?.q === '屏幕无界面')
-  const negs = [...new Set(hits
-    .filter((h) => !(device && h.kind === 'screen' && TEXT_PROPS.find((e) => e.names.includes(h.name))?.q === '无界面')).filter((h) => h.mode !== 'dropped' || findTextProps(lines).some((x) => x.name === h.name)).map((h) => negFor(ALL.find((x) => x.n === h.name)!.e, h.name)))]
+  const qOf = (name: string) => TEXT_PROPS.find((e) => e.names.includes(name))?.q
+  const device = hits.some((h) => h.kind === 'screen' && qOf(h.name) === '屏幕无界面')
+  const negs = [
+    ...new Set(
+      hits
+        .filter((h) => !(device && h.kind === 'screen' && qOf(h.name) === '无界面'))
+        .filter((h) => h.mode !== 'dropped' || findTextProps(lines).some((x) => x.name === h.name))
+        .map((h) => negFor(ALL.find((x) => x.n === h.name)!.e, h.name)),
+    ),
+  ]
   return { prompt: lines.join('\n'), negLine: negs.length ? `${negs.join('；')}。` : '', hits }
 }
 
 /** renderReview note prefix (repack-report textProps parses it) */
 export const TEXT_PROP_NOTE = '文字道具表面留白：'
 export function textPropNote(h: TextPropHit): string {
-  return `${TEXT_PROP_NOTE}${h.name}（${h.mode === 'qualified' ? '就地限定' : h.mode === 'dropped' ? '陈设删去' : '仅负面约束'}）`
+  const how = h.mode === 'qualified' ? '就地限定' : h.mode === 'postposed' ? '后置限定' : h.mode === 'dropped' ? '陈设删去' : '仅负面约束'
+  return `${TEXT_PROP_NOTE}${h.name}（${h.instance ? '另一件，' : ''}${how}）`
 }

@@ -36,8 +36,10 @@ import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotatio
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
 import { applyRenderHold, shotMouthRisks } from '../src/lib/renderHold'
-import { CAPTION_NOTE, parseCaptionNote, EMPTY_SCRUB_NOTE, EMPTY_STYLE_NOTE, emptyShotRisks, speechChars, SUBJECT_CARRY_NOTE, SUBJECT_UNRESOLVED_NOTE } from '../src/lib/renderHygiene'
+import { ABSTRACT_PERF_NOTE, TIME_REPEAT_NOTE, CAPTION_NOTE, parseCaptionNote, EMPTY_SCRUB_NOTE, EMPTY_STYLE_NOTE, emptyShotRisks, speechChars, SUBJECT_CARRY_NOTE, SUBJECT_UNRESOLVED_NOTE } from '../src/lib/renderHygiene'
 import { TEXT_PROP_NOTE } from '../src/lib/textProps'
+import { PERFORMANCE_NOTE } from '../src/lib/beatPrompt'
+import { ABSTRACT_PERFORMANCE_RE } from '../src/lib/emotionVisual'
 import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
 import { DEFAULT_DIALOGUE_PAD, dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
@@ -218,6 +220,36 @@ console.log(
           }, []) },
           subjectCarry: { count: total(carry), perShot: carry, unresolved },
           captionWordRewrites: { count: total(caps), perShot: caps },
+          // round 13 leftovers
+          round13: (() => {
+            const perf = exp.shots.map((s) => ({ id: s.id, episode: s.episode, notes: (s.beatTrimmedActions || []).filter((x) => x.startsWith(PERFORMANCE_NOTE)).map((x) => x.slice(PERFORMANCE_NOTE.length)) })).filter((x) => x.notes.length)
+            const flat = perf.flatMap((x) => x.notes)
+            const backstop = notesOf(ABSTRACT_PERF_NOTE)
+            const tl = notesOf(TIME_REPEAT_NOTE)
+            const capOf = (re: RegExp) => caps.map((x) => ({ ...x, notes: x.notes.filter((n) => re.test(n)) })).filter((x) => x.notes.length)
+            const post = props.map((x) => ({ ...x, notes: x.notes.filter((n) => n.includes('后置限定')) })).filter((x) => x.notes.length)
+            const inst = props.map((x) => ({ ...x, notes: x.notes.filter((n) => n.includes('另一件')) })).filter((x) => x.notes.length)
+            const pacing = (w: string) => exp.shots.filter((s) => s.prompt.includes(w)).length
+            return {
+              abstractPerformance: {
+                // the beat rule's emotion → visible acting from the emotion table, or skipped (no table word)
+                mapped: flat.filter((n) => n.includes(' → ')).length,
+                // segments where no emotion of the shot had a table word: nothing written
+                dropped: perf.reduce((a, x) => a + [...new Set(x.notes.map((n) => n.split(' ')[0]))].filter((seg) => !x.notes.some((n) => n.startsWith(`${seg} `) && n.includes(' → '))).length, 0),
+                skippedPhrases: flat.filter((n) => n.includes('略去')).length,
+                perShot: perf,
+                finalBackstop: { count: total(backstop), perShot: backstop },
+                // gate (promptTextRisks → exit 4): must be 0
+                remaining: exp.shots.filter((s) => ABSTRACT_PERFORMANCE_RE.test(s.prompt)).map((s) => s.id),
+              },
+              postposedQualifiers: { count: total(post), perShot: post },
+              separateInstanceQualifiers: { count: total(inst), perShot: inst },
+              timeLeadDedupe: { count: total(tl), perShot: tl },
+              captionIntent: { 嘀咕: total(capOf(/嘀咕[^→]* →/)), 问话: total(capOf(/问话[^→]* →/)), perShot: capOf(/(?:嘀咕|问话)[^→]* →/) },
+              // unchanged by design (they drive H3 beat speed): counts only
+              pacingWordPrompts: { 恢复正常节奏: pacing('恢复正常节奏'), 正常节奏: pacing('正常节奏'), 放慢: pacing('放慢'), 利落快速: pacing('利落快速') },
+            }
+          })(),
           speechChars: {
             before: perShot.reduce((a, x) => a + x.before, 0),
             after: perShot.reduce((a, x) => a + x.after, 0),

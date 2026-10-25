@@ -18,7 +18,7 @@
  *
  * An optional `engine` field on a shot is passed through untouched. Pure + idempotent.
  */
-import { parseRewriteNote, rewriteNote, visualizePrompt } from './emotionVisual'
+import { HOLD_EXPRESSION, parseRewriteNote, rewriteNote, visibleForEmotion, visualizePrompt } from './emotionVisual'
 import { clearMouth, MOUTH_CLEAR_MARK } from './mouthOcclusion'
 import { speechSec, type SpeechRate } from './dialogueTiming'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
@@ -28,7 +28,9 @@ import {
   ACTING_RE,
   BAND_NEGATIVE,
   carrySegmentSubjects,
+  dropRepeatedTimeLead,
   EMPTY_SCRUB_NOTE,
+  rewriteAbstractPerformance,
   rewriteCaptionWords,
   scrubEmptyStyle,
   stripFirstLineNoText,
@@ -446,6 +448,10 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   const vz = visualizePrompt(p)
   p = vz.prompt
   notes.push(...vz.rewrites.map(rewriteNote))
+  // 神情透出<abstract phrase> (any source): its visible acting from the emotion table, else dropped
+  const ap = rewriteAbstractPerformance(p, visibleForEmotion, HOLD_EXPRESSION)
+  p = ap.prompt
+  notes.push(...ap.notes)
   const n = ctx ? ctx.onscreen.length : framing === 'empty' ? 0 : 1
   if (ctx && n >= 2) {
     p = p.replace(/主体[：:][^。\n]*。?/, (old) => {
@@ -481,8 +487,11 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   notes.push(...tp.hits.map(textPropNote))
   // speech meta-words are echoed as burned-in captions: visual-time phrasing
   const cw = rewriteCaptionWords(p)
-  p = withFirstLineNoText(cw.prompt)
   notes.push(...cw.notes)
+  // 收声后 … / 收声后 …: the next segment does not repeat the previous segment's time phrase
+  const tl = dropRepeatedTimeLead(cw.prompt)
+  p = withFirstLineNoText(tl.prompt)
+  notes.push(...tl.notes)
   const tail = [tp.negLine, `景别：${framingWords(framing, n)}。`, BAND_NEGATIVE, NO_TEXT_CONSTRAINT].filter(Boolean).join('\n')
   return { prompt: `${p}\n${tail}`, notes }
 }

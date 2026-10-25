@@ -181,6 +181,26 @@ export function visualizePrompt(prompt: string): { prompt: string; rewrites: Tex
   return { prompt: lines.join('\n'), rewrites }
 }
 
+/** table words in an emotion phrase (longest first, non-overlapping) */
+const VISIBLE_KEYS = Object.keys(EMOTION_VISIBLE).sort((a, b) => b.length - a.length)
+/**
+ * Visible acting for an abstract emotion phrase (越描越黑的慌 / 硬撑的镇定), from EMOTION_VISIBLE only: every table word
+ * in the phrase contributes its parts; parts already in `avoid` are skipped. '' when the phrase has no table word
+ * (异变瞬间的安静): the caller drops it instead of writing 神情透出… (drawn as text / an abstract face).
+ */
+export function visibleForEmotion(phrase: string, avoid = ''): string {
+  let rest = phrase
+  const parts: string[] = []
+  for (const k of VISIBLE_KEYS) {
+    if (!rest.includes(k)) continue
+    rest = rest.split(k).join('|')
+    for (const p of EMOTION_VISIBLE[k].split('、')) if (!parts.includes(p) && !avoid.includes(p)) parts.push(p)
+  }
+  return parts.join('、')
+}
+/** abstract performance marker the beat rule used to write; never in a final prompt (gate) */
+export const ABSTRACT_PERFORMANCE_RE = /神情透出/
+
 /** Gate: what in a final prompt the video model could draw as text (quote marks, emotion words, inner monologue). */
 export function promptTextRisks(prompt: string): string[] {
   const out: string[] = []
@@ -198,6 +218,7 @@ export function promptTextRisks(prompt: string): string[] {
     return m && !m[2].split('；')[0].replace(/^动作放慢[，,]?/, '').replace(/[。，,\s]+$/, '')
   })
   if (empty.length) out.push(`empty segment ${empty.map((l) => l.match(BEAT_LINE)![1]).join(' / ')}`)
+  if (ABSTRACT_PERFORMANCE_RE.test(body)) out.push('abstract 神情透出')
   return out
 }
 

@@ -42,12 +42,12 @@ const CAPTION_RULES: [RegExp, string][] = [
   [/(?:说|喊|问|念|答|讲)完(?:这句话?|那句话?|这一句|话)?(?:之后|以后|后)?[，,]?/g, '收声后'],
   [/说罢[，,]?|话音(?:刚落|落下)?(?:之后|以后|后)?[，,]?/g, '收声后'],
   [/说着说着/g, '渐渐'],
-  [/(?:对着空气)?嘀咕(?:了|着)?(?:一句|一声|几句)?/g, '嘴唇轻轻动了动'],
+  [/(?:对着空气)?嘀咕(?:了|着)?(?:一句|一声|几句)?/g, '嘴唇小幅快速开合'],
   [/([才再])说话/g, '$1开口'],
   [/说话(?=前|之前|时)/g, '开口'],
   [/(?:张大?嘴|大声)喊(?:话)?|喊话/g, '张大嘴'],
   [/喊声|叫喊声/g, '人声'],
-  [/问话/g, '开口'],
+  [/问话/g, '下巴微抬、眉梢上挑'],
   [/开口说话/g, '开口'],
   [/说不清/g, '难以分辨'],
 ]
@@ -75,7 +75,7 @@ export function rewriteCaptionWords(prompt: string): { prompt: string; notes: st
     return s
       .replace(/收声后([。；;])/g, '收声$1')
       .replace(/收声后收声后/g, '收声后')
-      // 才开口，他问话 → 才开口，他开口: the second 开口 repeats the first
+      // 才开口，他开口 (a rewrite landing next to the same word): the second 开口 repeats the first
       .replace(/开口[，,](?:他|她)?开口(?=[，,。；;]|$)/g, '开口')
   })
   // one note per distinct rewrite, ×n when it happened n times (renderReview notes are de-duplicated)
@@ -190,5 +190,58 @@ export function carrySegmentSubjects(prompt: string, empty: boolean): { prompt: 
     }
     prev = (lines[i].match(SEG_RE) || m)[2]
   }
+  return { prompt: lines.join('\n'), notes }
+}
+
+// ---------------- adjacent-segment time phrase ----------------
+
+const TIME_LEAD = /^((?:他|她)?(?:收声|停下|闭上嘴|安静下来|停住|回过神)(?:之后|以后|后))[，,]?/
+export const TIME_REPEAT_NOTE = '相邻分段重复时间短语，删去：'
+/**
+ * A segment that starts with the same time phrase (收声后 …) the previous segment already used: the phrase goes
+ * (the cut between segments already says "after"); the segment keeps its own action.
+ */
+export function dropRepeatedTimeLead(prompt: string): { prompt: string; notes: string[] } {
+  const notes: string[] = []
+  const lines = prompt.split('\n')
+  let prev: string | null = null
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(SEG_RE)
+    if (!m) continue
+    const lead = m[2].match(TIME_LEAD)
+    const phrase = lead?.[1].replace(/^(?:他|她)/, '').replace(/(?:之后|以后)$/, '后')
+    if (lead && prev !== null && phrase && prev.includes(phrase) && m[2].length > lead[0].length + 1) {
+      lines[i] = `${m[1]}${m[2].slice(lead[0].length)}`
+      notes.push(`${TIME_REPEAT_NOTE}${lead[1]}`)
+    }
+    prev = (lines[i].match(SEG_RE) || m)[2]
+  }
+  return { prompt: lines.join('\n'), notes }
+}
+
+// ---------------- abstract performance backstop ----------------
+
+export const ABSTRACT_PERF_NOTE = '抽象表演改写：'
+/**
+ * Final pass backstop for 「神情透出<phrase>」 (any source): the phrase's visible acting from the emotion table, else
+ * the clause is dropped; a timeline segment left with no visible text gets the held expression.
+ */
+export function rewriteAbstractPerformance(prompt: string, visible: (phrase: string, avoid: string) => string, hold: string): { prompt: string; notes: string[] } {
+  const notes: string[] = []
+  const lines = prompt.split('\n').map((line) => {
+    if (!line.includes('神情透出') || /^(?:风格|限制|景别)[：:]/.test(line)) return line
+    let out = line.replace(/([，,；;：:]?)神情透出([^，,。；;\n]*)/g, (_m, sep: string, ph: string) => {
+      const v = visible(ph, line)
+      notes.push(`${ABSTRACT_PERF_NOTE}神情透出${ph} → ${v || '（删去）'}`)
+      return v ? `${sep}${v}` : /[：:]/.test(sep) ? sep : ''
+    })
+    out = out.replace(/[，,]{2,}/g, '，').replace(/[，,]([。；;])/g, '$1').replace(/([：:])[，,]/g, '$1')
+    const m = out.match(SEG_RE)
+    if (m) {
+      const [visual, ...cue] = m[2].split('；')
+      if (!visual.replace(/^动作放慢[，,]?/, '').replace(/[。，,\s]+$/, '')) out = `${m[1]}${/^动作放慢/.test(visual) ? '动作放慢，' : ''}${hold}${cue.length ? `；${cue.join('；')}` : '。'}`
+    }
+    return out
+  })
   return { prompt: lines.join('\n'), notes }
 }
