@@ -3,6 +3,7 @@ import type { Character, Project, Shot } from '../types'
 import { mapNamesToIds, shotCharacterIds } from './shotCast'
 import { cleanField, cleanPrompt } from './placeholder'
 import { postProcessExport, type DialogueLineOut } from './segmentPost'
+import { missingVoices, type VoiceSpec } from './voice'
 import { factsForShotPrompts, tierSettingFactsForPrompt, type SettingFactsByTier } from './settingFacts'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
@@ -118,7 +119,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing'
   message: string
 }
 
@@ -154,6 +155,8 @@ export interface VideoPipelineExport {
     settingFactsByTier?: SettingFactsByTier
     /** world+ongoing, quote-scrubbed: the ONLY facts a video/generation prompt may use */
     settingFactsForPrompt?: string[]
+    /** voices for off-list bit parts (no character id): { speakerName: voice } */
+    voices?: Record<string, VoiceSpec>
   }
   characters: {
     id: string
@@ -171,6 +174,8 @@ export interface VideoPipelineExport {
     /** 定妆负向提示 */
     negative?: string | null
     characterKey?: string | null
+    /** TTS voice: voice-library name or { description, id }; resolved (characterKey-inherited) in the final pack */
+    voice?: VoiceSpec | null
     /** GPU folder name from pack images.dir */
     imagesDir?: string | null
     /** costume for prompts with logo/校徽/刺绣标 triggers removed (only when it differs from costume) */
@@ -957,6 +962,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       ...(c.background?.trim() ? { background: c.background.trim() } : {}),
       ...(c.negative?.trim() ? { negative: c.negative.trim() } : {}),
       ...(c.characterKey?.trim() ? { characterKey: c.characterKey.trim() } : {}),
+      ...(c.voice ? { voice: c.voice } : {}),
       ...(c.imagesDir?.trim() ? { imagesDir: c.imagesDir.trim() } : {}),
       ...(c.wardrobeState?.trim() ? { wardrobeState: c.wardrobeState.trim() } : {}),
       ...(c.wardrobeTimeline?.length ? { wardrobeTimeline: c.wardrobeTimeline } : {}),
@@ -966,7 +972,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     shots,
     warnings,
   }
-  return postProcessExport(base, {
+  const out = postProcessExport(base, {
     mergeToSegments: opts.mergeToSegments,
     segmentMinSec: opts.segmentMinSec,
     segmentMaxSec: opts.segmentMaxSec,
@@ -975,6 +981,13 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     splitCrossCut: opts.splitCrossCut,
     sceneOverrides: opts.sceneOverrides,
   })
+  // a line without a voice cannot be voiced (scripts/repack.ts fails on it; the app export warns)
+  const ep = new Map(out.shots.map((s) => [s.id, s.episode]))
+  for (const m of missingVoices(out.shots)) {
+    const id = m.slice(0, m.indexOf(':'))
+    out.warnings.push({ episode: ep.get(id) ?? 0, shotId: id, code: 'voice_missing', message: `台词没有可用的音色：${m.slice(id.length + 2)}` })
+  }
+  return out
 }
 
 export function videoPipelineFilename(project: Project): string {

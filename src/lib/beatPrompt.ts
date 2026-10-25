@@ -14,10 +14,10 @@
  * Small hand props that compete with face/hands (转鸡蛋…) are dropped and listed in `beatRemovedProps`.
  * Pure; default export behaviour is untouched unless beatMode === 'speed'.
  */
-import { stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './shotAnnotate'
+import { PERSON_DESCRIPTOR, stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
-import { actionCap, actionWeight, countActions, limitActions } from './actionDensity'
+import { actionCap, actionWeight, countActions, expandCompounds, limitActions } from './actionDensity'
 
 export type BeatMode = 'off' | 'speed'
 export type BeatSpeed = '快' | '慢' | '恢复常速'
@@ -68,7 +68,11 @@ type Char = VideoPipelineExport['characters'][number]
 export const BEAT_HEADER = '时间轴（按秒变速）'
 export const BEAT_REALISM = '自然哑光肤质，有毛孔细节，不打蜡不磨皮，真实运动速度，非慢动作'
 export const BEAT_LIMIT = '无任何文字、字幕、汉字、字母、数字、Logo；服装无标志、校徽、刺绣字样'
-export const BEAT_MOUTH_CUE = '正脸朝镜头开口说一句短话，嘴部清晰可见、无遮挡'
+/** a head move whose purpose is a look (抬头看向 / 回头看了一眼): for picking a segment's main action it weighs as gaze */
+const LOOK_MOVE = /(抬头|抬起头|回头|回过头|扭头|转头|侧头|仰头)[^，]{0,3}(看|望|瞥|盯)/
+export const BEAT_MOUTH_LINE = '正脸朝镜头开口说一句短话'
+export const BEAT_MOUTH_CLEAR = '嘴部清晰可见、无遮挡'
+export const BEAT_MOUTH_CUE = `${BEAT_MOUTH_LINE}，${BEAT_MOUTH_CLEAR}`
 /** limit added to solo children of a split cross-cut segment */
 export const SOLO_SPLIT_LIMIT = '画面只出现一个人物，对面窗里的人不入画'
 export const BEAT_FAST_TAIL = '动作利落不拖'
@@ -1051,11 +1055,33 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   })
   // action density (H3 executes one distinct action per 【快】 segment): 快 ≤ 1, 慢/常速 ≤ 2, dialogue ≤ 1 besides speech
   const trimmed: string[] = []
+  // multi-person dialogue segment: the main action tied to the on-screen line (the last beat that carries a line) is
+  // kept over a trailing action of someone else; solo shots keep the latest action (closest to speech)
+  const nameTexts = variants.map((v) => v.text).sort((a, b) => b.length - a.length)
+  // a clause opening with a person marker (multi-person shots): that marker is its subject
+  const leadRef = new RegExp(`^(?:[\\ue100-\\ue1ff]|${PERSON_DESCRIPTOR.source})`)
+  const leadMark = (c: string): string | null => c.match(leadRef)?.[0] ?? null
+  const leadOf = (x: (typeof segTexts)[number]): string | undefined => {
+    const b = [...x.g.beats].reverse().find((y) => y.speech && y.speakers.length)
+    if (!b) return undefined
+    let bt = b.text.replace(MARK_RE, '')
+    for (const n of nameTexts) bt = bt.split(n).join('')
+    bt = bt.replace(/[他她]/g, '')
+    // the strongest action of that beat (a head move that only serves a look — 抬头看向… — counts as a small one);
+    // ties → the later one, closest to speech; a compound (摊手又收回来摸了摸后颈) offers its later half
+    const own = x.cls.filter((y) => {
+      const core = unperson(y).replace(/^的/, '').replace(/[他她]/g, '')
+      return countActions([y]) > 0 && core.length >= 2 && bt.includes(core.slice(0, Math.min(4, core.length)))
+    })
+    const cand = own.map((y) => expandCompounds([y]).filter((z) => actionWeight(z) > 0).pop()!)
+    const score = (y: string) => (LOOK_MOVE.test(y) ? 1 : actionWeight(y))
+    return cand.reduce<string | undefined>((best, y) => (!best || score(y) >= score(best) ? y : best), undefined)
+  }
   segTexts.forEach((x, i) => {
-    const r = limitActions(x.cls, actionCap(speeds[i], x.dlg), { preferLater: x.dlg })
+    const r = limitActions(x.cls, actionCap(speeds[i], x.dlg), { preferLater: x.dlg, lead: x.dlg && !single ? leadOf(x) : undefined, subject: single ? undefined : leadMark })
     if (!r.dropped.length) return
     x.cls = r.kept
-    for (const d of r.dropped) trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒（${speeds[i]}）：${d}`)
+    for (const d of r.dropped) trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒（${speeds[i]}）：${unmark(d)}`)
   })
   // the same beat never repeats in a later segment (merged 动作 + 表演 notes describe one moment twice)
   segTexts.forEach((x, i) => {
@@ -1087,11 +1113,14 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     let body = unmark(dedupeClauses(x.cls).join('，'))
     if (sp === '快') body = fastify(body || '迅速完成动作')
     if (sp === '慢') {
-      const who = !single && x.speakers.length === 1 ? x.speakers[0] : ''
-      const whoRef = who ? stripNames(who, variants, refOf) : ''
-      const cue = x.speech
-        ? `${whoRef && whoRef !== '他' && whoRef !== '她' ? `${whoRef}` : ''}${BEAT_MOUTH_CUE}`
-        : '画外有人说话，画面人物停住倾听，嘴唇闭合不说话'
+      // every on-screen speaker of the segment is named by descriptor (two lines in one segment: one after the other)
+      const refs = single ? [] : [...new Set(x.speakers.map((n) => stripNames(n, variants, refOf)).filter((r) => r && !BARE_PRONOUN_ONLY.test(r)))]
+      if (!single && x.speech && x.speakers.length && !refs.length) todo.push(`台词段说话人无法用造型区分：${x.speakers.join('、')}`)
+      const cue = !x.speech
+        ? '画外有人说话，画面人物停住倾听，嘴唇闭合不说话'
+        : refs.length >= 2
+          ? `${refs.map((r, k) => `${k ? '随后' : ''}${r}${k ? '' : '先'}${BEAT_MOUTH_LINE}`).join('，')}，${BEAT_MOUTH_CLEAR}`
+          : `${refs[0] || ''}${BEAT_MOUTH_CUE}`
       body = `动作放慢${body ? `，${body}` : ''}；${cue}`
     }
     if (!body) body = '保持姿态，呼吸与眼神有细微变化'

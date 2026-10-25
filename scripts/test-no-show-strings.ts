@@ -25,6 +25,7 @@ export function showTerms(p: { characters?: Record<string, unknown>[]; shots?: R
     add('name', c.name)
     add('baseName', c.baseName)
     add('characterKey', c.characterKey)
+    add('voice', typeof c.voice === 'object' && c.voice ? (c.voice as { id?: unknown }).id : c.voice)
     add('prop', c.signatureProp)
     add('prop', c.props)
   }

@@ -66,7 +66,15 @@ export function expandCompounds(cls: string[]): string[] {
   })
 }
 
-export type LimitOpts = { preferLater?: boolean }
+/** preferLater: keep the latest mains (dialogue segment); lead: a clause that must be kept first (the main action of
+ *  the beat carrying the on-screen line), the rest of the cap filled as usual */
+export type LimitOpts = {
+  preferLater?: boolean
+  lead?: string
+  /** person reference at the start of a clause (e.g. a descriptor); a dropped clause hands it to the next kept one
+   *  that has none, so its modifiers keep their owner (眼神 / 喉结 … of the dropped clause's actor) */
+  subject?: (clause: string) => string | null
+}
 
 /** Keep at most `cap` main actions; modifiers always stay, order preserved. */
 export function limitActions(cls: string[], cap: number, opts: LimitOpts = {}): { kept: string[]; dropped: string[] } {
@@ -74,9 +82,10 @@ export function limitActions(cls: string[], cap: number, opts: LimitOpts = {}): 
   const preferLater = Boolean(opts.preferLater)
   const mains = expanded.map((c, i) => ({ i, w: actionWeight(c) })).filter((x) => x.w > 0)
   if (mains.length <= cap) return { kept: expanded, dropped: [] }
+  const li = opts.lead ? expanded.indexOf(opts.lead) : -1
   const keep = new Set(
     [...mains]
-      .sort((a, b) => (preferLater ? b.i - a.i || b.w - a.w : b.w - a.w || a.i - b.i))
+      .sort((a, b) => Number(b.i === li) - Number(a.i === li) || (preferLater ? b.i - a.i || b.w - a.w : b.w - a.w || a.i - b.i))
       .slice(0, cap)
       .map((x) => x.i),
   )
@@ -92,7 +101,19 @@ export function limitActions(cls: string[], cap: number, opts: LimitOpts = {}): 
     if (m && m[1] && actionWeight(m[1]) > 0) return m[1].replace(/^[的地得\s]+/, '') || m[1]
     return c
   })
-  return { kept: polished.filter((_, i) => !dropIdx.has(i)), dropped: expanded.filter((_, i) => dropIdx.has(i)) }
+  let carry: string | null = null
+  const kept: string[] = []
+  polished.forEach((c, i) => {
+    const who = opts.subject?.(c) ?? null
+    if (dropIdx.has(i)) {
+      if (who) carry = who
+      return
+    }
+    if (carry && !who) c = carry + c
+    carry = null
+    kept.push(c)
+  })
+  return { kept, dropped: expanded.filter((_, i) => dropIdx.has(i)) }
 }
 
 export function countActions(cls: string[]): number {

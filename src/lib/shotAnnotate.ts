@@ -19,6 +19,7 @@
  * An optional `engine` field on a shot is passed through untouched. Pure + idempotent.
  */
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
+import { withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
 
 export type Framing = 'closeup_dialogue' | 'medium' | 'full' | 'empty'
 export const FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full', 'empty']
@@ -163,6 +164,8 @@ export interface TimedLine {
   startSec: number
   endSec: number
   voiceOnly?: boolean
+  /** TTS voice resolved from the speaker (characterKey inheritance) or project.voices; null = unresolved (error) */
+  voice?: VoiceSpec | null
 }
 const r2 = (x: number) => Math.round(x * 100) / 100
 const speechLen = (t: string) => Math.max(1, t.replace(/[\s，。！？、…—,.!?「」“”『』（）()]/g, '').length)
@@ -627,8 +630,10 @@ export function withProposedWardrobe(exp: VideoPipelineExport): { exp: VideoPipe
  * Characters without hand wardrobe data first get an auto-proposed timeline (marked autoProposed).
  */
 export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
-  const { exp: e } = withProposedWardrobe(exp)
+  const { exp: e0 } = withProposedWardrobe(exp)
+  const e = { ...e0, characters: withCharacterVoices(e0.characters) }
   const chars = e.characters as WardrobeMeta[]
+  const extraVoices = (e.project?.voices || {}) as Record<string, unknown>
   const ws = wardrobeStates(e.shots, chars)
   const pid = e.project?.id || e.project?.title || ''
   return {
@@ -648,7 +653,7 @@ export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
         framing,
         wardrobeState: ws[i],
         seed: shotSeed(pid, s.id),
-        dialogueLines: timedDialogueLines(s, chars),
+        dialogueLines: withLineVoices(timedDialogueLines(s, chars), e.characters, extraVoices),
         audio: s.audio ?? null,
         prompt: r.prompt,
       }
@@ -703,4 +708,17 @@ export function missingAnnotations(exp: VideoPipelineExport): string[] {
     if (/[【】]/.test(s.prompt) || !s.prompt.endsWith(NO_TEXT_CONSTRAINT)) bad.push(`${s.id}: prompt`)
   }
   return bad
+}
+
+/** FreeVideo first frame takes ONE reference image: a 2+ person medium / full shot renders the others without a ref */
+export const MULTI_REF_LIMITATION =
+  'FreeVideo 首帧只接受一张参考图：多人镜当前只用第一个角色的定妆图，其余角色的一致性待角色 LoRA / 多参考图（后续）'
+
+/** known limitations per shot: every medium / full shot with 2+ on-screen characters (generic, from framing + cast) */
+export function knownLimitations(exp: VideoPipelineExport): { id: string; framing: Framing; onscreen: string[]; firstFrameRef: string; note: string }[] {
+  const chars = exp.characters as WardrobeMeta[]
+  return exp.shots
+    .map((s) => ({ s, on: onscreenCast(s, chars) }))
+    .filter(({ s, on }) => (s.framing === 'medium' || s.framing === 'full') && on.length >= 2)
+    .map(({ s, on }) => ({ id: s.id, framing: s.framing!, onscreen: on, firstFrameRef: on[0], note: MULTI_REF_LIMITATION }))
 }

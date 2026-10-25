@@ -6,6 +6,8 @@
  *                       plus angleKey / carryFromShotId on every shot (runs before beat mode; works with --beat-only)
  *   --split-only      : only the cross-cut split + angle keys on an already final pack (no beat, no re-merge)
  *   --short-ratio 0.3 : rhythm (c) cap of <5 s shots per episode (report + split-child fit); report section rhythmCheck
+ *   --allow-missing-voice : diagnostic only — write the pack even when dialogue lines have no voice (voice: null,
+ *                       listed in report voiceMissing); without it a line without a resolvable voice fails the run (exit 3)
  *   --scene-overrides f.json : with split: explicit { "shotId": "sceneId" } place corrections (win over the home rule);
  *                              the same file's `beatOverrides` { shotId: [{start,end,speed,text,dialogue?}] } replace the
  *                              automatic beats in beat mode (validated). Report: stretchReview (stretched split children)
@@ -22,7 +24,8 @@ import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segment
 import type { VideoPipelineExport } from '../src/lib/videoExport'
 import { applyBeatMode, type BeatOverrides } from '../src/lib/beatPrompt'
 import { checkRhythm, stretchReview } from '../src/lib/rhythm'
-import { annotateShots, missingAnnotations, wardrobeReport } from '../src/lib/shotAnnotate'
+import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotations, wardrobeReport } from '../src/lib/shotAnnotate'
+import { missingVoices } from '../src/lib/voice'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -67,6 +70,13 @@ const missing = missingAnnotations(exp)
 if (missing.length) {
   console.error(`shots missing framing / wardrobeState: ${missing.join(', ')}`)
   process.exit(2)
+}
+// every dialogue line needs a voice: speaker → character voice (characterKey inheritance) or project.voices[speakerName]
+const voiceMissing = missingVoices(exp.shots)
+if (voiceMissing.length && !flags.has('--allow-missing-voice')) {
+  console.error(`dialogue lines without a resolvable voice (${voiceMissing.length}):\n  ${voiceMissing.join('\n  ')}`)
+  console.error('set characters[].voice (variants inherit by characterKey) or project.voices { speakerName: voice } for off-list speakers')
+  process.exit(3)
 }
 const out = outp || inp.replace(/\.json$/, '-p2.json')
 writeFileSync(out, JSON.stringify(exp, null, 2) + '\n')
@@ -118,6 +128,15 @@ console.log(
       promptsWithLogo: exp.shots.filter((s) =>
         /刺绣标|校徽|胸标|logo/i.test(s.prompt.split('服装无任何标志、校徽、刺绣字样').join('')),
       ).length,
+      dialogueLines: exp.shots.reduce((a, s) => a + (s.dialogueLines?.length || 0), 0),
+      dialogueLinesWithVoice: exp.shots.reduce((a, s) => a + (s.dialogueLines || []).filter((l) => l.voice).length, 0),
+      voiceMissing,
+      characterVoices: Object.fromEntries(exp.characters.map((c) => [c.id, c.voice ?? null])),
+      // FreeVideo first frame = one ref image: every 2+ person medium / full shot (generic, not hand-listed)
+      knownLimitations: (() => {
+        const k = knownLimitations(exp)
+        return { multiPersonFirstFrame: { note: MULTI_REF_LIMITATION, count: k.length, shots: k.map(({ note: _n, ...r }) => r) } }
+      })(),
       offscreenLines: exp.shots.filter((s) => s.speakerOffscreen || s.dialogueLines?.some((l) => l.voiceOnly)).length,
       warnings: warn,
       stats,

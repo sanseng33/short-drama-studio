@@ -45,6 +45,8 @@ export interface Character {
   negative?: string
   /** 定妆包角色键，同人多造型共用，e.g. char_a */
   characterKey?: string
+  /** TTS voice: voice-library name, or { description, id }; look variants inherit by characterKey */
+  voice?: string | { description?: string; id?: string }
   /** GPU 定妆图目录名 images.dir（导入定妆包；导出为 characters[].imagesDir） */
   imagesDir?: string
   /** wardrobe state of this look variant (e.g. plain / glowup); default derived from refImage minus characterKey_ */

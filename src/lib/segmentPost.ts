@@ -314,6 +314,8 @@ export interface DialogueLineOut {
   /** seconds relative to the shot start (shotAnnotate.timedDialogueLines; set on every final shot) */
   startSec?: number
   endSec?: number
+  /** TTS voice (voice-library name or { description, id }), resolved in the final pass (shotAnnotate) */
+  voice?: string | { description?: string; id?: string } | null
 }
 
 const PLACES = [

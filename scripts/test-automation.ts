@@ -6,16 +6,17 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { scanPack } from './scan-prompts'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyBeatMode, BEAT_LINE_RE, buildBeatPrompt, charOverlapDup, listToClauses, sharedRunDup, CLOSE_DIALOGUE_FRAMING, dialogueFraming, isNearDup, LONG_SHOT_SEC } from '../src/lib/beatPrompt'
-import { actionCap, countActions } from '../src/lib/actionDensity'
+import { actionCap, countActions, limitActions } from '../src/lib/actionDensity'
 import { applyCrossCutSplit, correctScenes, explicitPlaces } from '../src/lib/crosscutSplit'
 import { postProcessExport } from '../src/lib/segmentPost'
 import {
   annotateShots, baseWardrobeState, castDescription, unclearPronouns, type WardrobeMeta, CLOSEUP_CAMERA, dropContradictions, multiSubjectLine, normalizeCamera, renderPrompt, closeupCamera, finalizePrompt, FRAMINGS, framingOf, missingAnnotations, NO_TEXT_CONSTRAINT, sha1Hex, shotSeed, timedDialogueLines,
-  proposeWardrobeTimelines, wardrobeReport, wardrobeStates } from '../src/lib/shotAnnotate'
+  proposeWardrobeTimelines, wardrobeReport, wardrobeStates, knownLimitations, MULTI_REF_LIMITATION } from '../src/lib/shotAnnotate'
+import { characterVoices, lineVoice, missingVoices, normalizeVoice } from '../src/lib/voice'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 
 let pass = 0
@@ -398,6 +399,24 @@ t('bare 他 in a multi-person shot: resolved from the source beat, else left wit
   const o = buildBeatPrompt({ ...s, speaker: 'a1', speakerName: '甲', prompt: '竖屏9:16。白天，教室。主体：17岁东亚少年甲，米白夹克；17岁东亚少年乙乙，蓝白运动校服。时间轴（一镜8秒，小节拍）：0–3s乙乙抬眼看着窗外；3–8s随后甲把书合上，冲他点了一下头（甲开口说台词）。镜头：中景，固定。' }, chars)
   assert.ok(o.prompt.includes('穿夹克的少年把书合上，冲穿校服的少年点了一下头'), o.prompt)
   assert.ok(!/放慢：；/.test(o.prompt), 'a segment without actions starts with its speech cue')
+  // two speakers in one segment + over-cap trim (synthetic s6-9 shape)
+  {
+    const two = { ...s, id: 'tw', durationSec: 8.5, speaker: 'b1', speakerName: '乙乙', dialogue: '这是什么。',
+      dialogueLines: [{ speaker: 'b1', speakerName: '乙乙', text: '这是什么。' }, { speaker: 'a1', speakerName: '甲', text: '没什么。' }],
+      prompt: '竖屏9:16。白天，教室。主体：17岁东亚少年甲，米白夹克；17岁东亚少年乙乙，蓝白运动校服。时间轴（一镜8.5秒，小节拍）：0–2.5s甲起身时肩线一转，本子从桌上滑到桌角；乙乙的视线跟着移过去，眉头慢慢皱起；2.5–4.5s随后乙乙的手指在笔身上收紧，喉结上下滚了一下，慢慢开口（乙乙开口说台词）；4.5–6.5s随后甲回头的瞬间脚步顿住，视线落到桌角，瞳孔一缩；6.5–8.5s随后甲掌心啪地压住本子，另一只手挡在桌沿外，抬头看向乙乙（甲开口说台词）。镜头：中景，固定。' }
+    const r = buildBeatPrompt(two, chars)
+    const lines = r.prompt.split('\n').filter((l) => BEAT_LINE_RE.test(l))
+    const both = lines.find((l) => l.includes('先正脸朝镜头开口'))
+    assert.ok(both, 'two lines in one segment: ' + lines.join(' / '))
+    assert.ok(both!.includes('穿校服的少年先正脸朝镜头开口说一句短话，随后穿夹克的少年正脸朝镜头开口说一句短话'), both)
+    assert.ok(!/[；：]正脸朝镜头/.test(r.prompt), 'no subjectless speaking clause')
+    // the cap keeps the main action of the beat carrying the last line (压住), not the trailing glance
+    assert.ok(both!.includes('穿夹克的少年掌心啪地压住本子'), both)
+    assert.ok(r.trimmedActions.some((x) => x.includes('抬头看向')), r.trimmedActions.join(' / '))
+    assert.ok(!/[\ue100-\ue1ff]/.test(r.prompt + r.trimmedActions.join('')), 'no internal person markers leak')
+    // modifiers of a dropped clause keep its actor
+    assert.ok(both!.includes('穿校服的少年喉结上下滚了一下'), both)
+  }
   // a garment only one of them wears resolves it
   const g = buildBeatPrompt({ ...s, prompt: s.prompt.replace('6–8s随后他听到哨声顿住，肩膀一僵', '6–8s随后他听到哨声顿住，校服袖口滑下') }, chars)
   assert.ok(g.prompt.includes('穿校服的少年听到哨声'), g.prompt)
@@ -470,11 +489,99 @@ t('annotateShots applies proposals only without hand data; wardrobeReport flags 
 const P2 = '/workspace/h3/projects/小黄鸭砸出个帅系统-video-pipeline-p2-clean.json'
 if (existsSync(P2)) {
   const p2 = JSON.parse(readFileSync(P2, 'utf8')) as VideoPipelineExport
+  t('limitActions: lead clause kept first; a dropped clause hands its person reference to the next subjectless one', () => {
+    const subject = (c: string) => c.match(/^穿.{1,4}的少年/)?.[0] ?? null
+    const r = limitActions(['穿夹克的少年推开门', '眉头一皱', '穿校服的少年举起手', '回头看向窗外'], 1, { preferLater: true, lead: '穿校服的少年举起手', subject })
+    assert.deepEqual(r.dropped, ['穿夹克的少年推开门', '回头看向窗外'])
+    assert.deepEqual(r.kept, ['穿夹克的少年眉头一皱', '穿校服的少年举起手'])
+    // without lead: unchanged behaviour (latest main kept in a dialogue segment)
+    assert.deepEqual(limitActions(['推开门', '举起手', '回头看向窗外'], 1, { preferLater: true }).kept, ['回头看向窗外'])
+  })
+
+  // ---------------- voice (TTS) per dialogue line ----------------
+  {
+    const vc = [
+      PC('a1', '甲（之前）', { baseName: '甲', characterKey: 'key_a', voice: 'voice_a' }),
+      PC('a2', '甲（之后）', { baseName: '甲', characterKey: 'key_a' }),
+      PC('b1', '乙乙', { characterKey: 'key_b', voice: { description: '低沉少年音', id: 'voice_b' } }),
+    ]
+    const two = (cs: PackChar[], lines: { speaker: string | null; speakerName: string; text: string }[], voices?: Record<string, string>) => {
+      const p0 = pack([SH({ id: 'v1', characterIds: ['a2', 'b1'], size: '中景', durationSec: 6, dialogue: lines[0].text, speaker: lines[0].speaker, speakerName: lines[0].speakerName, dialogueLines: lines })], cs)
+      if (voices) p0.project.voices = voices
+      return annotateShots(p0)
+    }
+    const L = [{ speaker: 'a2', speakerName: '甲', text: '我来吧。' }, { speaker: 'b1', speakerName: '乙乙', text: '随你。' }]
+    t('voice: a look variant without voice inherits by characterKey; pack characters carry it; object form kept', () => {
+      const e = two(vc, L)
+      assert.equal(e.characters.find((c) => c.id === 'a2')!.voice, 'voice_a')
+      const ls = e.shots[0].dialogueLines!
+      assert.equal(ls[0].voice, 'voice_a')
+      assert.deepEqual(ls[1].voice, { description: '低沉少年音', id: 'voice_b' })
+      assert.deepEqual(missingVoices(e.shots), [])
+    })
+    t('voice: an explicit voice on the variant overrides the characterKey one', () => {
+      const cs = vc.map((c) => (c.id === 'a2' ? { ...c, voice: 'voice_a_after' } : c))
+      assert.equal(characterVoices(cs).get('a2'), 'voice_a_after')
+      assert.equal(characterVoices(cs).get('a1'), 'voice_a')
+      assert.equal(two(cs, L).shots[0].dialogueLines![0].voice, 'voice_a_after')
+    })
+    t('voice: object form needs id or description; strings are trimmed; empty → none', () => {
+      assert.deepEqual(normalizeVoice({ description: ' 清亮女声 ' }), { description: '清亮女声' })
+      assert.deepEqual(normalizeVoice({ id: 'x1' }), { id: 'x1' })
+      assert.equal(normalizeVoice({}), null)
+      assert.equal(normalizeVoice('  '), null)
+      assert.equal(normalizeVoice(' v '), 'v')
+      // speakerName fallback to a character name; off-list name via project.voices
+      assert.deepEqual(lineVoice({ speaker: null, speakerName: '乙乙', text: 'x' }, vc), { description: '低沉少年音', id: 'voice_b' })
+      assert.equal(lineVoice({ speaker: null, speakerName: '路人', text: 'x' }, vc, { 路人: 'voice_x' }), 'voice_x')
+    })
+    t('voice: missing → error (missingVoices lists the line; repack exits 3 unless --allow-missing-voice)', () => {
+      const cs = vc.map((c) => (c.characterKey === 'key_a' ? { ...c, voice: undefined } : c))
+      const off = [...L, { speaker: null, speakerName: '路人', text: '让一让。' }]
+      const e = two(cs, off)
+      assert.equal(e.shots[0].dialogueLines![0].voice, null)
+      assert.deepEqual(missingVoices(e.shots), ['v1: 甲「我来吧。」', 'v1: 路人「让一让。」'])
+      assert.deepEqual(missingVoices(two(vc, off, { 路人: 'voice_x' }).shots), [])
+      const dir = mkdtempSync(join(tmpdir(), 'voice-'))
+      const inp = join(dir, 'in.json')
+      writeFileSync(inp, JSON.stringify(pack([SH({ id: 'v1', characterIds: ['a2', 'b1'], durationSec: 6, dialogue: '我来吧。', speaker: 'a2', speakerName: '甲', dialogueLines: off })], cs)))
+      let code = 0
+      let err = ''
+      try {
+        execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8', stdio: 'pipe' })
+      } catch (x) {
+        code = (x as { status: number }).status
+        err = String((x as { stderr: string }).stderr)
+      }
+      assert.equal(code, 3)
+      assert.ok(err.includes('甲「我来吧。」') && err.includes('路人「让一让。」'), err)
+      assert.ok(!existsSync(join(dir, 'out.json')), 'no pack written')
+      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice'], { encoding: 'utf8' }))
+      assert.equal(rep.voiceMissing.length, 2)
+      assert.equal(rep.dialogueLinesWithVoice, 1)
+    })
+    t('known limitations: every medium / full shot with 2+ on screen gets the one-ref first-frame note (generic)', () => {
+      const e = annotateShots(pack([
+        SH({ id: 'm2', characterIds: ['a1', 'b1'], size: '中景' }),
+        SH({ id: 'f2', characterIds: ['a1', 'b1'], size: '全景' }),
+        SH({ id: 's1', characterIds: ['a1'], size: '近景', dialogue: '嗯。', speaker: 'a1', speakerName: '甲' }),
+        SH({ id: 'vo', characterIds: ['a1', 'b1'], voiceOnly: ['b1'], size: '中景' }),
+      ]))
+      const k = knownLimitations(e)
+      assert.deepEqual(k.map((x) => [x.id, x.framing, x.firstFrameRef]), [['m2', 'medium', 'a1'], ['f2', 'full', 'a1']])
+      assert.ok(k.every((x) => x.note === MULTI_REF_LIMITATION))
+    })
+  }
+
   t('repack: override file is opt-in only (no flag → nothing read, no beatOverride, rule-only corrections)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'repack-'))
     const out = join(dir, 'pack.json')
-    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', P2, out, '--beat-only', '--split-crosscut'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
+    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', P2, out, '--beat-only', '--split-crosscut', '--allow-missing-voice'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
     assert.equal(rep.overridesFile, null)
+    // every line of a listed character has a voice (look variants via characterKey); only off-list bit parts may lack one
+    const e0 = JSON.parse(readFileSync(out, 'utf8')) as VideoPipelineExport
+    for (const s of e0.shots) for (const l of s.dialogueLines || []) if (l.speaker) assert.ok(l.voice, `${s.id} ${l.speakerName}`)
+    assert.ok(rep.knownLimitations.multiPersonFirstFrame.count > 0)
     assert.ok(rep.sceneCorrections.every((c: { by: string }) => c.by === 'rule'))
     const e = JSON.parse(readFileSync(out, 'utf8')) as VideoPipelineExport
     assert.ok(e.shots.every((s) => !s.beatOverride), 'no hand-written beats')
@@ -586,7 +693,7 @@ if (existsSync(FIX)) {
   t('original pack (no wardrobe data): repack auto-proposes timelines from script cues, marked for review', () => {
     const dir = mkdtempSync(join(tmpdir(), 'repack-'))
     const out = join(dir, 'pack.json')
-    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', FIX, out, '--beat-only', '--split-crosscut'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
+    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', FIX, out, '--beat-only', '--split-crosscut', '--allow-missing-voice'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
     const ap = Object.fromEntries(rep.wardrobeAutoProposed.map((x: { id: string; reviewRequired: boolean; timeline: { state: string; fromShotId: string; autoProposed: boolean }[] }) => {
       assert.equal(x.reviewRequired, true)
       assert.ok(x.timeline.every((e) => e.autoProposed))
