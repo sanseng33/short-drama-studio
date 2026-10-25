@@ -12,6 +12,8 @@
  *                              OPT-IN ONLY: without this flag no override file is read (no implicit / default path);
  *                              hand overrides are bug signals for the generic generator, not part of the automatic pipeline.
  * Every output shot gets `framing` + `wardrobeState` (shotAnnotate); the run fails if any shot lacks either.
+ * Characters without wardrobeTimeline / wardrobeCues get an AUTO-PROPOSED timeline from script cues
+ * (report: wardrobeAutoProposed, reviewRequired) — hand data in the character JSON always wins.
  * Re-apply the deterministic video-pipeline@1 post-processing (style lock, 5–9s merge,
  * time/offlist/logo fixes, sceneId/carryFromPrev) to an already exported pack, and print stats.
  */
@@ -20,7 +22,7 @@ import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segment
 import type { VideoPipelineExport } from '../src/lib/videoExport'
 import { applyBeatMode, type BeatOverrides } from '../src/lib/beatPrompt'
 import { checkRhythm, stretchReview } from '../src/lib/rhythm'
-import { annotateShots, missingAnnotations } from '../src/lib/shotAnnotate'
+import { annotateShots, missingAnnotations, wardrobeReport } from '../src/lib/shotAnnotate'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -125,6 +127,11 @@ console.log(
         for (const [id, st] of Object.entries(s.wardrobeState || {})) a[`${id}:${st}`] = (a[`${id}:${st}`] || 0) + 1
         return a
       }, {}),
+      // per character: base / timeline source (data | auto-proposed (review) | none), states used, missing refs
+      wardrobe: wardrobeReport(exp),
+      wardrobeAutoProposed: exp.characters
+        .filter((c) => c.wardrobeTimeline?.some((e) => e.autoProposed))
+        .map((c) => ({ id: c.id, reviewRequired: true, timeline: c.wardrobeTimeline })),
       ...(beatMode === 'speed'
         ? {
             beatMode,

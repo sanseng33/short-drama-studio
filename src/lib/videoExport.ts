@@ -164,9 +164,11 @@ export interface VideoPipelineExport {
     /** wardrobe state of this character variant (default: refImage minus `${characterKey}_`, else 'default') */
     wardrobeState?: string
     /** wardrobe changes over the story: state starts at fromShotId / fromEpisode */
-    wardrobeTimeline?: { state: string; fromShotId?: string; fromEpisode?: number }[]
+    wardrobeTimeline?: { state: string; fromShotId?: string; fromEpisode?: number; evidence?: string; autoProposed?: boolean }[]
     /** keyword cues in visual/action text that switch the wardrobe state from that shot on */
     wardrobeCues?: { state: string; keywords: string[] }[]
+    /** wardrobe state → character-pack reference set (lora_materials/datasets/<refSet>), null = none yet */
+    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string }>
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]
@@ -944,6 +946,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       ...(c.wardrobeState?.trim() ? { wardrobeState: c.wardrobeState.trim() } : {}),
       ...(c.wardrobeTimeline?.length ? { wardrobeTimeline: c.wardrobeTimeline } : {}),
       ...(c.wardrobeCues?.length ? { wardrobeCues: c.wardrobeCues } : {}),
+      ...(c.wardrobeRefs ? { wardrobeRefs: c.wardrobeRefs } : {}),
     })),
     shots,
     warnings,

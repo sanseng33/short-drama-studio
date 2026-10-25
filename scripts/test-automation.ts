@@ -11,7 +11,7 @@ import { applyBeatMode, buildBeatPrompt, CLOSE_DIALOGUE_FRAMING, dialogueFraming
 import { actionCap, countActions } from '../src/lib/actionDensity'
 import { applyCrossCutSplit, correctScenes, explicitPlaces } from '../src/lib/crosscutSplit'
 import { postProcessExport } from '../src/lib/segmentPost'
-import { annotateShots, baseWardrobeState, FRAMINGS, framingOf, missingAnnotations, wardrobeStates } from '../src/lib/shotAnnotate'
+import { annotateShots, baseWardrobeState, FRAMINGS, framingOf, missingAnnotations, proposeWardrobeTimelines, wardrobeReport, wardrobeStates } from '../src/lib/shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 
 let pass = 0
@@ -184,6 +184,50 @@ t('postProcessExport: every shot gets framing + wardrobeState (default, split, b
   }
 })
 
+// ---------------- auto-proposed wardrobe timeline ----------------
+t('proposeWardrobeTimelines: change-of-clothes cues, base-garment verbs, new-day reset, base-garment revert, attribution', () => {
+  const cs: PackChar[] = [
+    PC('a1', '甲', { wardrobeState: 'base', costume: '米白夹克，白色T恤，黑长裤' }),
+    PC('b1', '乙乙', { wardrobeState: 'uni', costume: '蓝白运动校服外套' }),
+    PC('k1', '丙', { wardrobeTimeline: [{ state: 'x', fromEpisode: 1 }] }),
+  ]
+  const shots = [
+    SH({ id: 'p1', timeOfDay: '早上', characterIds: ['a1', 'b1'], action: '乙乙把鸡蛋换到另一只手上；甲穿着米白夹克站着' }),
+    SH({ id: 'p2', timeOfDay: '黄昏', characterIds: ['a1', 'b1'], action: '甲低头把新换的白衬衫领口抚平；乙乙盯着那件衬衫' }),
+    SH({ id: 'p3', timeOfDay: '黄昏', characterIds: ['a1'], visual: '他胸口的白衬衫沾了墨' }),
+    SH({ id: 'p4', timeOfDay: '早上', characterIds: ['a1'], visual: '卧室晨光' }),
+    SH({ id: 'p5', timeOfDay: '夜', characterIds: ['a1'], visual: '他刚洗完澡站在窗边，白色T恤领口湿了' }),
+    SH({ id: 'p6', timeOfDay: '夜', characterIds: ['a1'], action: '他重新穿好米白夹克' }),
+    SH({ id: 'p7', timeOfDay: '夜', characterIds: ['b1', 'a1'], action: '乙乙走下坡，校服外套搭在臂弯' }),
+  ]
+  const pr = Object.fromEntries(proposeWardrobeTimelines(shots, cs).map((p) => [p.characterId, p.timeline]))
+  assert.ok(!pr.k1, 'hand timeline → no proposal')
+  assert.deepEqual(pr.a1.map((e) => [e.state, e.fromShotId]), [
+    ['base:白衬衫', 'p2'], // 换到另一只手 / 穿着 (no change) ignored; 乙乙's clause not attributed to 甲
+    ['base', 'p4'], // new day (黄昏 → 早上)
+    ['base:刚洗完澡', 'p5'], // base garment (T恤) → labelled by the cue
+    ['base', 'p6'], // base garment named again without a change cue
+  ])
+  assert.deepEqual(pr.b1.map((e) => [e.state, e.fromShotId]), [['uni:搭在臂弯', 'p7']])
+  assert.ok([...pr.a1, ...pr.b1].every((e) => e.autoProposed && e.evidence))
+})
+
+t('annotateShots applies proposals only without hand data; wardrobeReport flags auto-proposed + missing / logo refs', () => {
+  const shot = SH({ id: 'w1', characterIds: ['a1'], action: '他换上一件西装' })
+  const auto = annotateShots(pack([SH({ id: 'w0' }), shot], [PC('a1', '甲', { wardrobeState: 'base', wardrobeRefs: { base: { refSet: 'set_a', logoFree: false } } })]))
+  assert.deepEqual(auto.shots.map((s) => s.wardrobeState), [{ a1: 'base' }, { a1: 'base:西装' }])
+  const r = wardrobeReport(auto).a1
+  assert.equal(r.timelineSource, 'auto-proposed (review)')
+  assert.deepEqual(r.missingRefs, ['base:西装'])
+  assert.deepEqual(r.notLogoFree, ['base'])
+  const hand = annotateShots(pack([shot], [PC('a1', '甲', { wardrobeState: 'base', wardrobeTimeline: [{ state: 'suit', fromShotId: 'w1' }], wardrobeRefs: { suit: { refSet: 's', logoFree: true } } })]))
+  assert.deepEqual(hand.shots[0].wardrobeState, { a1: 'suit' })
+  const hr = wardrobeReport(hand).a1
+  assert.equal(hr.timelineSource, 'data')
+  assert.equal(hr.baseSource, 'data')
+  assert.deepEqual([hr.missingRefs, hr.notLogoFree], [[], []])
+})
+
 // ---------------- the real pack, no override file ----------------
 const P2 = '/workspace/h3/projects/小黄鸭砸出个帅系统-video-pipeline-p2-clean.json'
 if (existsSync(P2)) {
@@ -227,6 +271,48 @@ if (existsSync(P2)) {
     assert.equal(m['s1-1c'].framing, 'closeup_dialogue')
     assert.deepEqual(m['s1-21a'].wardrobeState, { c2: 'glowup' })
     assert.equal(e.shots.filter((s) => new Set(speeds(s)).size < 2).length <= 1, true, 'at most the all-dialogue shot lacks contrast')
+  })
+
+  t('p2-clean character data: wardrobe timeline from the project JSON (hand data, not refImage, not auto)', () => {
+    const e = annotateShots(applyCrossCutSplit(p2).exp)
+    const rep = wardrobeReport(e)
+    for (const id of ['c1', 'c2', 'c3']) {
+      assert.equal(rep[id].baseSource, 'data', `${id} base from data`)
+      assert.equal(rep[id].timelineSource, 'data', `${id} timeline from data`)
+      const refs = (e.characters.find((c) => c.id === id)!.wardrobeRefs || {}) as Record<string, unknown>
+      for (const st of Object.keys(rep[id].states)) assert.ok(refs[st], `${id}:${st} has a wardrobeRefs entry`)
+    }
+    const at = (id: string) => e.shots.find((s) => s.id === id || s.splitFrom === id)!.wardrobeState!
+    assert.equal(at('s1-15').c1, 'plain')
+    assert.equal(at('s1-18').c1 ?? at('s1-18').c2, at('s1-18').c1 ? 'plain' : 'glowup')
+    assert.equal(at('s2-20').c2, 'glowup')
+    assert.equal(at('s2-24').c2, 'glowup_white_shirt')
+    assert.equal(at('s3-1').c2, 'glowup')
+    assert.equal(at('s4-1').c1, 'glowup_hoodie')
+    assert.equal(at('s4-23').c2, 'glowup_tee_wet')
+    assert.equal(at('s5-27').c2, 'glowup_wig')
+    assert.equal(at('s6-1').c2, 'glowup')
+    assert.equal(at('s6-30').c3, 'uniform_jacket_off')
+    assert.equal(at('s6-21').c3, 'uniform')
+  })
+}
+
+const FIX = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p2-clean.json'
+if (existsSync(FIX)) {
+  t('original pack (no wardrobe data): repack auto-proposes timelines from script cues, marked for review', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'repack-'))
+    const out = join(dir, 'pack.json')
+    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', FIX, out, '--beat-only', '--split-crosscut'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
+    const ap = Object.fromEntries(rep.wardrobeAutoProposed.map((x: { id: string; reviewRequired: boolean; timeline: { state: string; fromShotId: string; autoProposed: boolean }[] }) => {
+      assert.equal(x.reviewRequired, true)
+      assert.ok(x.timeline.every((e) => e.autoProposed))
+      return [x.id, x.timeline.map((e) => e.fromShotId)]
+    }))
+    assert.deepEqual(ap.c2, ['s2-22a', 's3-1', 's4-21', 's5-1', 's5-27', 's6-1'])
+    assert.deepEqual(ap.c3, ['s6-26'])
+    assert.equal(rep.wardrobe.c2.timelineSource, 'auto-proposed (review)')
+    const e = JSON.parse(readFileSync(out, 'utf8')) as VideoPipelineExport
+    assert.deepEqual(missingAnnotations(e), [])
   })
 }
 

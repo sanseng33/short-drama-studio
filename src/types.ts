@@ -50,9 +50,11 @@ export interface Character {
   /** wardrobe state of this look variant (e.g. plain / glowup); default derived from refImage minus characterKey_ */
   wardrobeState?: string
   /** wardrobe changes over the story: { state, fromShotId? | fromEpisode? } (exported to the video pack) */
-  wardrobeTimeline?: { state: string; fromShotId?: string; fromEpisode?: number }[]
+  wardrobeTimeline?: { state: string; fromShotId?: string; fromEpisode?: number; evidence?: string; autoProposed?: boolean }[]
   /** keyword cues in shot visual/action text that switch the wardrobe state from that shot on */
   wardrobeCues?: { state: string; keywords: string[] }[]
+    /** wardrobe state → character-pack reference set (lora_materials/datasets/<refSet>), null = none yet */
+    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string }>
   /**
    * LoRA / Omni multi-ref training materials from 定妆包.
    * Training-only: never inject into visual prompts, characterBrief, or inject_character_meta.
