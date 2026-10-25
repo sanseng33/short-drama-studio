@@ -113,13 +113,18 @@ export interface VideoPipelineShot {
   wardrobeState?: Record<string, string>
   /** optional renderer engine hint; passed through untouched */
   engine?: string
+  /**
+   * castConsistency: this shot was re-cast from look variant `from` to `to` (same characterKey) because the wardrobe
+   * timeline at this point implies `to`; `wardrobeState` is the timeline state kept for `to` in this shot.
+   */
+  castCorrection?: { from: string; to: string; characterKey: string; wardrobeState: string }
 }
 
 export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing' | 'cast_consistency'
   message: string
 }
 

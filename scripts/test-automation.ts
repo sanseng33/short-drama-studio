@@ -18,6 +18,7 @@ import {
   proposeWardrobeTimelines, wardrobeReport, wardrobeStates, knownLimitations, MULTI_REF_LIMITATION } from '../src/lib/shotAnnotate'
 import { autoVoiceDescription, autoVoiceId, characterVoices, lineVoice, missingVoices, normalizeVoice } from '../src/lib/voice'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
+import { applyCastConsistency } from '../src/lib/castConsistency'
 
 let pass = 0
 const t = (name: string, fn: () => void) => {
@@ -618,6 +619,79 @@ if (existsSync(P2)) {
       assert.equal(n.basis.age, null)
       assert.ok(n.description.startsWith('普通路人，中性音色'), n.description)
     })
+    // ---- cast consistency (look variants sharing a characterKey; synthetic before / after pair)
+    const VB = PC('x1', '阿乙（前）', { baseName: '阿乙', characterKey: 'kk', refImage: 'kk_before', wardrobeState: 'before', visualLock: '东亚少年，圆脸，短发乱', costume: '灰色卫衣',
+      wardrobeTimeline: [{ state: 'after_coat', fromShotId: 'k3' }],
+      wardrobeRefs: { before: { refSet: 'kk_before' }, after_coat: { refSet: null, fallbackRefSet: 'kk_after', look: '下颌利落，短发整齐', costume: '墨绿长大衣' } } } as Partial<PackChar>)
+    const VA = PC('x2', '阿乙（后）', { baseName: '阿乙', characterKey: 'kk', refImage: 'kk_after', wardrobeState: 'after', visualLock: '东亚少年，下颌利落，短发整齐', costume: '黑色夹克',
+      wardrobeRefs: { after: { refSet: 'kk_after', logoFree: true } } } as Partial<PackChar>)
+    const VO = PC('o1', '丙丙', { characterKey: 'oo', refImage: 'oo' } as Partial<PackChar>)
+    const vcs = [VB, VA, VO]
+    const kshots = () => [
+      SH({ id: 'k1', characterIds: ['x1'], visual: '阿乙（前）坐在床边' }),
+      SH({ id: 'k2', characterIds: ['x1', 'x2'], visual: '阿乙（前）的脸变成阿乙（后）' }),
+      SH({ id: 'k3', episode: 2, characterIds: ['x1', 'o1'], voiceOnly: [], visual: '阿乙（前）揉着眼睛坐起', action: '阿乙（前）打了个哈欠', prompt: '竖屏9:16。主体：阿乙（前），圆脸，短发乱。', dialogue: '早。', speaker: 'x1', speakerName: '阿乙', dialogueLines: [{ speaker: 'x1', speakerName: '阿乙', text: '早。' }] }),
+      SH({ id: 'k4', episode: 2, characterIds: ['x1'], visual: '他下床', prompt: '竖屏9:16。主体：17岁东亚少年，圆脸，短发乱。' }),
+      SH({ id: 'k5', episode: 2, characterIds: ['x2'], visual: '教室里' }),
+    ]
+    t('cast consistency: timeline state pointing at the other variant → re-cast (cast, speaker, lines, names), report + wardrobe state kept', () => {
+      const r = applyCastConsistency(pack(kshots(), vcs))
+      assert.deepEqual(r.corrections.map((c) => `${c.shotId}:${c.from}>${c.to}:${c.wardrobeState}`), ['k3:x1>x2:after_coat', 'k4:x1>x2:after_coat'])
+      assert.ok(r.corrections[0].evidence.some((e) => e.includes('kk_after')), r.corrections[0].evidence.join())
+      assert.ok(r.corrections[0].textConflict, 'stale text naming the replaced variant is reported')
+      assert.equal(r.corrections[1].textConflict, undefined)
+      assert.deepEqual(r.warnings, [])
+      const [k1, k2, k3, k4] = r.exp.shots
+      assert.deepEqual([k1.characterIds, k2.characterIds], [['x1'], ['x1', 'x2']], 'before the switch / the transformation shot untouched')
+      assert.deepEqual(k3.characterIds, ['x2', 'o1'])
+      assert.equal(k3.speaker, 'x2')
+      assert.equal(k3.dialogueLines![0].speaker, 'x2')
+      assert.ok(!k3.visual.includes('阿乙（前）') && k3.visual.includes('阿乙（后）') && k3.action.includes('阿乙（后）'))
+      assert.deepEqual(k4.castCorrection, { from: 'x1', to: 'x2', characterKey: 'kk', wardrobeState: 'after_coat' })
+      const x2 = r.exp.characters.find((c) => c.id === 'x2') as WardrobeMeta
+      assert.equal(x2.wardrobeRefs!.after_coat.costume, '墨绿长大衣', 'state refs copied to the target variant')
+      // final pass: wardrobe state + solo subject from the pack data (not the stale upstream subject)
+      const e = annotateShots(r.exp)
+      assert.deepEqual(e.shots[3].wardrobeState, { x2: 'after_coat' })
+      assert.deepEqual(e.shots[4].wardrobeState, { x2: 'after' }, 'only the corrected shot keeps the timeline state')
+      assert.ok(e.shots[3].prompt.includes('墨绿长大衣') && e.shots[3].prompt.includes('下颌利落') && !e.shots[3].prompt.includes('圆脸'), e.shots[3].prompt)
+      assert.ok(e.shots[3].renderReview!.some((n) => n.includes('x1 改为 x2')))
+      assert.ok(e.shots[2].prompt.includes('墨绿长大衣'), 'multi-person subject uses the kept state')
+      // idempotent
+      const again = applyCastConsistency(r.exp)
+      assert.deepEqual([again.corrections, again.warnings], [[], []])
+      // no shared characterKey → no-op
+      assert.deepEqual(applyCastConsistency(pack(kshots(), [{ ...VB, characterKey: 'k_only' } as PackChar, VA, VO])).corrections, [])
+    })
+    t('cast consistency: ambiguous / text-only / continuity-only signals → unchanged + cast_consistency warning', () => {
+      // the state points at two different variants (refs → x2, name → x3) → conflicting
+      const VC = PC('x3', '阿乙（中）', { baseName: '阿乙', characterKey: 'kk', refImage: 'kk_mid', wardrobeState: 'after' } as Partial<PackChar>)
+      const VA2 = { ...VA, wardrobeState: 'later' } as PackChar
+      const r1 = applyCastConsistency(pack(kshots(), [VB, VA2, VC, VO]))
+      assert.deepEqual(r1.corrections, [])
+      assert.deepEqual([...new Set(r1.warnings.map((w) => `${w.reason}:${w.implied.join('/')}`))], ['conflicting_timeline:x2/x3'])
+      assert.deepEqual(r1.exp.shots[2].characterIds, ['x1', 'o1'], 'not changed')
+      assert.ok(r1.exp.warnings.some((w) => w.code === 'cast_consistency' && w.shotId === 'k3'))
+      // no timeline: text names the other variant → warning only
+      const noTl = { ...VB, wardrobeTimeline: [] } as PackChar
+      const sh = [SH({ id: 'm1', characterIds: ['x2'] }), SH({ id: 'm2', characterIds: ['x1'], visual: '阿乙（后）站在门口' }), SH({ id: 'm3', characterIds: ['x1'] }), SH({ id: 'm4', characterIds: ['x2'] })]
+      const r2 = applyCastConsistency(pack(sh, [noTl, VA, VO]))
+      assert.deepEqual(r2.corrections, [])
+      assert.deepEqual(r2.warnings.map((w) => `${w.shotId}:${w.reason}`), ['m2:text_names_other_variant', 'm3:continuity_island'])
+      assert.deepEqual(r2.exp.shots.map((s) => s.characterIds[0]), ['x2', 'x1', 'x1', 'x2'])
+      // warnings are not duplicated on a re-run
+      assert.equal(applyCastConsistency(r2.exp).exp.warnings.filter((w) => w.code === 'cast_consistency').length, 2)
+    })
+    t('cast consistency: repack reports castCorrections / castConsistency', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'cast-'))
+      const inp = join(dir, 'in.json')
+      writeFileSync(inp, JSON.stringify(pack(kshots(), vcs)))
+      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice'], { encoding: 'utf8' }))
+      assert.deepEqual(rep.castCorrections.map((c: { shotId: string }) => c.shotId), ['k3', 'k4'])
+      assert.deepEqual(rep.castConsistency, [])
+      const out = JSON.parse(readFileSync(join(dir, 'out.json'), 'utf8')) as VideoPipelineExport
+      assert.deepEqual(out.shots.find((s) => s.id === 'k4')!.characterIds, ['x2'])
+    })
     t('known limitations: every medium / full shot with 2+ on screen gets the one-ref first-frame note (generic)', () => {
       const e = annotateShots(pack([
         SH({ id: 'm2', characterIds: ['a1', 'b1'], size: '中景' }),
@@ -636,6 +710,9 @@ if (existsSync(P2)) {
     const out = join(dir, 'pack.json')
     const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', P2, out, '--beat-only', '--split-crosscut'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
     assert.deepEqual(rep.voiceMissing, [], 'default repack passes: every line voiced')
+    // look variants: shots re-cast by the wardrobe timeline; the output pack has no remaining contradiction
+    assert.ok(rep.castCorrections.length > 0 && rep.castCorrections.every((c: { from: string; to: string; evidence: string[] }) => c.from !== c.to && c.evidence.length))
+    assert.deepEqual(applyCastConsistency(JSON.parse(readFileSync(out, 'utf8'))).corrections, [])
     assert.equal(rep.overridesFile, null)
     // every line of a listed character has a voice (look variants via characterKey); only off-list bit parts may lack one
     const e0 = JSON.parse(readFileSync(out, 'utf8')) as VideoPipelineExport

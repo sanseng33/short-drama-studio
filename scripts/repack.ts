@@ -13,6 +13,8 @@
  *                              automatic beats in beat mode (validated). Report: stretchReview (stretched split children)
  *                              OPT-IN ONLY: without this flag no override file is read (no implicit / default path);
  *                              hand overrides are bug signals for the generic generator, not part of the automatic pipeline.
+ * Cast consistency: look variants sharing a characterKey — a shot casting one variant while the wardrobe timeline
+ * there implies another is re-cast (report castCorrections); ambiguous cases only warn (castConsistency).
  * Every output shot gets `framing` + `wardrobeState` (shotAnnotate); the run fails if any shot lacks either.
  * Characters without wardrobeTimeline / wardrobeCues get an AUTO-PROPOSED timeline from script cues
  * (report: wardrobeAutoProposed, reviewRequired) — hand data in the character JSON always wins.
@@ -26,6 +28,7 @@ import { applyBeatMode, type BeatOverrides } from '../src/lib/beatPrompt'
 import { checkRhythm, stretchReview } from '../src/lib/rhythm'
 import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotations, wardrobeReport } from '../src/lib/shotAnnotate'
 import { missingVoices } from '../src/lib/voice'
+import { applyCastConsistency } from '../src/lib/castConsistency'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -48,6 +51,8 @@ if (!inp) {
   process.exit(1)
 }
 const pack = JSON.parse(readFileSync(inp, 'utf8')) as VideoPipelineExport
+// look variants (shared characterKey): re-cast shots whose wardrobe timeline unambiguously implies the other variant
+const cast = applyCastConsistency(pack)
 const splitCrossCut = flags.has('--split-crosscut') || flags.has('--split-only')
 let splits: SplitInfo[] | null = null
 let sceneCorrections: SceneCorrection[] | null = null
@@ -55,7 +60,7 @@ let rhythmNotes: string[] | null = null
 const lite = flags.has('--beat-only') || flags.has('--split-only')
 const { exp, stats } = lite
   ? (() => {
-      let e = pack
+      let e = cast.exp
       if (splitCrossCut) {
         const r = applyCrossCutSplit(e, { sceneOverrides, rhythm })
         e = r.exp
@@ -134,6 +139,9 @@ console.log(
       // off-list speakers with an auto-designed voice ({ description, id }): review before TTS
       voiceNeedsReview: Object.values(exp.autoVoices || {}).map((a) => ({ speakerName: a.speakerName, voice: a.voice, basis: a.basis, lines: a.lines, shots: a.shots })),
       dialogueLinesAutoVoice: exp.shots.reduce((a, s) => a + (s.dialogueLines || []).filter((l) => l.autoVoice).length, 0),
+      // look-variant cast checks: auto-corrected (timeline unambiguous) / left as is with a cast_consistency warning
+      castCorrections: cast.corrections,
+      castConsistency: cast.warnings,
       characterVoices: Object.fromEntries(exp.characters.map((c) => [c.id, c.voice ?? null])),
       // FreeVideo first frame = one ref image: every 2+ person medium / full shot (generic, not hand-listed)
       knownLimitations: (() => {

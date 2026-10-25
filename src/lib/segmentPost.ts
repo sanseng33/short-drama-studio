@@ -19,6 +19,7 @@ import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } 
 import { applyBeatMode, type BeatOverrides } from './beatPrompt'
 import { applyCrossCutSplit } from './crosscutSplit'
 import { annotateShots } from './shotAnnotate'
+import { applyCastConsistency } from './castConsistency'
 import type { RhythmOptions } from './rhythm'
 
 export interface PostProcessOptions {
@@ -610,6 +611,8 @@ export function postProcessExportWithStats(
   exp: VideoPipelineExport,
   opts: PostProcessOptions = {},
 ): { exp: VideoPipelineExport; stats: PostProcessStats } {
+  // look variants (shared characterKey) re-cast where the wardrobe timeline unambiguously implies the other variant
+  exp = applyCastConsistency(exp).exp
   const style = exp.project.style
   const genre = opts.genre ?? ''
   const minSec = opts.segmentMinSec ?? SEGMENT_MIN_SEC

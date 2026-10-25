@@ -486,6 +486,9 @@ export function wardrobeStates(shots: VideoPipelineShot[], chars: WardrobeMeta[]
     }
     const out: Record<string, string> = {}
     for (const id of s.characterIds || []) out[id] = cur.get(id) ?? baseWardrobeState(byId.get(id))
+    // a cast-corrected shot keeps the timeline state that implied the variant (this shot only)
+    const cc = s.castCorrection
+    if (cc && out[cc.to] != null && byId.get(cc.to)?.wardrobeRefs?.[cc.wardrobeState]) out[cc.to] = cc.wardrobeState
     return out
   })
 }
@@ -614,7 +617,19 @@ export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
     ...(Object.keys(auto).length ? { autoVoices: auto } : {}),
     shots: e.shots.map((s, i) => {
       const framing = framingOf(s, chars)
-      const r = renderPrompt(s.prompt, framing, { onscreen: onscreenCast(s, chars), wardrobeState: ws[i], chars })
+      const onscreen = onscreenCast(s, chars)
+      const r = renderPrompt(s.prompt, framing, { onscreen, wardrobeState: ws[i], chars })
+      const cc = s.castCorrection
+      if (cc) {
+        // re-cast shot: the upstream subject text describes the replaced variant → solo subject from the pack data
+        const c = chars.find((x) => x.id === cc.to)
+        if (c && onscreen.length === 1 && onscreen[0] === cc.to) {
+          const d = castDescription(c, ws[i][cc.to] || baseWardrobeState(c), chars)
+          r.prompt = r.prompt.replace(/主体[：:][^。\n]*。/, `主体：${d.text}。`)
+          if (d.note) r.notes.push(d.note)
+        }
+        r.notes.push(`选角按服装时间线由 ${cc.from} 改为 ${cc.to}（${cc.characterKey}，状态 ${cc.wardrobeState}）`)
+      }
       // unresolved pronouns found by the beat prompt (source beat without a known actor), when still in the prompt
       const beatPron = (s.beatTodo || []).filter((x) => x.startsWith(UNCLEAR_PRONOUN_NOTE)).filter((x) => {
         const c = x.slice(UNCLEAR_PRONOUN_NOTE.length)
