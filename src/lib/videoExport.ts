@@ -65,6 +65,8 @@ export interface VideoPipelineShot {
   beatTodo?: string[]
   /** beats come from an explicit beatOverrides entry (hand-written), not the automatic split */
   beatOverride?: boolean
+  /** main actions dropped by the beat action-density cap (快 ≤ 1, 慢/常速 ≤ 2, dialogue segment ≤ 1) */
+  beatTrimmedActions?: string[]
   /** beat mode: the default (non-beat) prompt, kept for comparison / re-conversion */
   promptDefault?: string
   /** place slug of sceneId (sceneContinuity), e.g. villa_bedroom */

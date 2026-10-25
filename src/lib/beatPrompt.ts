@@ -16,6 +16,7 @@
  */
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
+import { actionCap, countActions, limitActions } from './actionDensity'
 
 export type BeatMode = 'off' | 'speed'
 export type BeatSpeed = '快' | '慢' | '恢复常速'
@@ -37,6 +38,8 @@ export interface BeatPromptResult {
   removedProps: string[]
   /** human review notes (beat split looked questionable) */
   todo: string[]
+  /** main actions dropped by the action-density cap (`0–2秒【快】：clause`) */
+  trimmedActions: string[]
 }
 
 export interface BeatModeOptions {
@@ -68,6 +71,25 @@ export const BEAT_MOUTH_CUE = '正脸朝镜头开口说一句短话，嘴部清�
 /** limit added to solo children of a split cross-cut segment */
 export const SOLO_SPLIT_LIMIT = '画面只出现一个人物，对面窗里的人不入画'
 export const BEAT_FAST_TAIL = '动作利落不拖'
+/** explicit garment state for zip jackets (render test: an unspecified zip drifts open / closed between shots) */
+export const ZIP_OPEN = '前襟拉链拉开'
+/** framing for on-screen dialogue in a 近景 shot */
+export const CLOSE_DIALOGUE_FRAMING = '近景（胸口以上）'
+
+/** Add the explicit zip state after the first zip jacket in a wardrobe / subject text (once). */
+export function withZipState(text: string): string {
+  if (!text || /拉链(?:已|全|半)?(?:拉开|拉上|拉到|敞开|拉好)/.test(text)) return text
+  return text.replace(/(拉链(?:短|长|运动|连帽)?(?:夹克|外套|卫衣|开衫|上衣))(.?)/, (_m, g: string, nx: string) =>
+    !nx || /[（(。；;]/.test(nx) ? `${g}，${ZIP_OPEN}${nx}` : `${g}（${ZIP_OPEN}）${nx}`,
+  )
+}
+
+/** On-screen dialogue + 近景 → 近景（胸口以上） (the first shot-size word of the camera line decides; else `size`). */
+export function dialogueFraming(camLine: string, size: string | undefined): string {
+  const m = camLine.match(/大全景|中全景|全景|中近景|近景特写|近景|中景|特写/)
+  if (m) return m[0] === '近景' ? camLine.slice(0, m.index) + CLOSE_DIALOGUE_FRAMING + camLine.slice(m.index! + 2) : camLine
+  return (size || '').trim() === '近景' ? `${CLOSE_DIALOGUE_FRAMING}，${camLine}` : camLine
+}
 /** two characters in facing windows / cross-cut inside one segment (split candidates) */
 export const CROSSCUT_RE = /两窗|对窗|越窗|隔窄巷|对切/
 
@@ -552,6 +574,9 @@ export function validateBeatOverride(s: VideoPipelineShot, segs: BeatOverrideSeg
     const flat = (g.text || '').replace(/[，。！？、；…,.!?;~～\s]+/g, '')
     for (const f of frags) if (flat.includes(f.replace(/[，。！？、；…,.!?;~～\s]+/g, ''))) e.push(`第 ${i + 1} 段含台词原文「${f}」`)
     if (/另一人|两人|双人|同框/.test(g.text || '')) e.push(`第 ${i + 1} 段出现第二个人物`)
+    const n = countActions(splitClauses((g.text || '').replace(/、/g, '，')))
+    const cap = actionCap(g.speed, Boolean(g.dialogue))
+    if (n > cap) e.push(`第 ${i + 1} 段【${g.speed}】${g.dialogue ? '（台词段）' : ''}含 ${n} 个主动作，上限 ${cap}`)
   })
   const dl = segs.filter((g) => g.dialogue)
   if (lines.length) {
@@ -737,6 +762,14 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const kept = x.cls.filter((c) => !HESITATE.test(c))
     if (kept.length) x.cls = kept
   })
+  // action density (H3 executes one distinct action per 【快】 segment): 快 ≤ 1, 慢/常速 ≤ 2, dialogue ≤ 1 besides speech
+  const trimmed: string[] = []
+  segTexts.forEach((x, i) => {
+    const r = limitActions(x.cls, actionCap(speeds[i], x.dlg), { preferLater: x.dlg })
+    if (!r.dropped.length) return
+    x.cls = r.kept
+    for (const d of r.dropped) trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒【${speeds[i]}】：${d}`)
+  })
   if (speeds.filter((x) => x === '慢').length > 1) todo.push('多段含台词，均标为【慢】，请核对节奏')
   if (speeds.every((x) => x === '慢')) todo.push('所有分段都是【慢】，与「非慢动作」冲突，建议拆镜')
   else if (speeds.every((x) => x === speeds[0])) todo.push(`所有分段都是【${speeds[0]}】，无变速对比`)
@@ -761,13 +794,13 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   const slowSec = segMeta.filter((m) => m.speed === '慢').reduce((a, m) => a + m.end - m.start, 0)
   if (hasDialogue && dlgSec + DIALOGUE_PAD_SEC > slowSec + 1e-9) todo.push(`台词约需 ${dlgSec.toFixed(1)}秒，【慢】段仅 ${fmt(slowSec)}秒`)
   if (cast.length >= 2 && CROSSCUT_RE.test(src)) todo.push('原段为对窗/对切双空间，单镜不切镜难以同时拍到两人，建议拆为单人镜')
-  return finish(segLines, segMeta)
+  return finish(segLines, segMeta, trimmed)
 
   // ---- header / footer
-  function finish(segLines: string[], segMeta: BeatSegmentMeta[]): BeatPromptResult {
+  function finish(segLines: string[], segMeta: BeatSegmentMeta[], trimmedActions: string[] = []): BeatPromptResult {
     const head = sceneHeader(s)
     const who = cast.length === 0 ? '空镜无人物' : single ? '单人' : cast.length === 2 ? '双人' : `${cast.length}人`
-    const subj = subjects.join('；另一人：')
+    const subj = withZipState(subjects.join('；另一人：'))
     const solo = single ? `全程只有${pron}一人，不出现第二个人物。` : ''
     let light = clause(src, /光线/)
     if (!light) {
@@ -788,7 +821,10 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
       subj ? `主体：${subj}。${solo}` : solo,
       `${BEAT_HEADER}：`,
       ...segLines,
-      `镜头：${stripNames(cameraLine(s.camera), variants, refOf)}。`,
+      `镜头：${(() => {
+        const cam = stripNames(cameraLine(s.camera), variants, refOf)
+        return segMeta.some((m) => m.lipSync) ? dialogueFraming(cam, s.size) : cam
+      })()}。`,
       `光线：${light.replace(/[。\s]+$/, '')}。`,
       `风格：${styleLineFor(src, opts.style)}。`,
       `限制：${limits.join('；')}。`,
@@ -798,7 +834,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     // final guards: no names, no dialogue text
     const leftover = variants.filter((v) => v.text.length >= 2 && prompt.includes(v.text)).map((v) => v.text)
     if (leftover.length) todo.push(`提示词仍含人名：${leftover.join('、')}`)
-    return { prompt, segments: segMeta, removedProps, todo }
+    return { prompt, segments: segMeta, removedProps, todo, trimmedActions }
   }
 }
 
@@ -832,6 +868,8 @@ export function applyBeatMode(exp: VideoPipelineExport, opts: BeatModeOptions = 
     else delete out.beatRemovedProps
     if (r.todo.length) out.beatTodo = r.todo
     else delete out.beatTodo
+    if (r.trimmedActions.length) out.beatTrimmedActions = r.trimmedActions
+    else delete out.beatTrimmedActions
     return out
   })
   return { ...exp, shots }

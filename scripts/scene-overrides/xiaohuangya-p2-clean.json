@@ -8,7 +8,7 @@
     "s6-13": "两人隔着课桌站着，背景是后排窗；窗外旧楼只是窗景 → 教室，不是旧楼窗",
     "s6-16": "紧接 s6-13 的教室正反打（视线落向画外的对方，白天窗侧柔光）；文本只有窗外旧楼倒影，规则会误判为别墅卧室"
   },
-  "beatOverridesNote": "Hand-written beats for split children the rhythm fit stretched well beyond their source beats (idle-actor risk). Grounded in the source segment's visual/action/表演 text: same story content, one subject, no names / dialogue text. Validated by beatPrompt.validateBeatOverride; durations must match the fitted split (s1-1a 5, s1-1b 3, s1-1c 6, s1-21a 6, s3-6b 4.5, s1-30a 5).",
+  "beatOverridesNote": "Hand-written beats for split children the rhythm fit stretched well beyond their source beats (idle-actor risk). Grounded in the source segment's visual/action/表演 text: same story content, one subject, no names / dialogue text. Action density (H3): 【快】 ≤1 distinct physical action; 【慢】/【恢复常速】 ≤2; dialogue segment ≤1 besides speaking. Validated by beatPrompt.validateBeatOverride; durations must match the fitted split (s1-1a 5, s1-1b 3, s1-1c 6, s1-21a 6, s3-6b 4.5, s1-30a 5).",
   "beatOverrides": {
     "s1-1a": [
       {
@@ -49,7 +49,7 @@
         "start": 0,
         "end": 2,
         "speed": "恢复常速",
-        "text": "他重新低头写卷子，笔尖在纸上继续划，另一只手把翘起的卷子角压平，呼吸平稳，像什么都没发生"
+        "text": "他重新低头写卷子，笔尖在纸上继续划，呼吸平稳，像什么都没发生"
       },
       {
         "start": 2,
@@ -82,7 +82,7 @@
         "start": 1.5,
         "end": 2.5,
         "speed": "快",
-        "text": "他指尖在玻璃上虚点了一下下颌，又飞快地拨了拨额前的头发，满意地眯了下眼"
+        "text": "他飞快地拨了拨额前的头发，满意地眯了下眼"
       },
       {
         "start": 2.5,

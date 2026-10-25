@@ -7,6 +7,7 @@ import {
   BEAT_MOUTH_CUE,
   BEAT_REALISM,
   buildBeatPrompt,
+  CLOSE_DIALOGUE_FRAMING,
   fastify,
   isActionHeavy,
   isBeatPrompt,
@@ -14,7 +15,10 @@ import {
   parseMergedTimeline,
   smallPropIn,
   stripNames,
+  ZIP_OPEN,
+  splitClauses,
 } from '../src/lib/beatPrompt'
+import { actionCap, actionWeight, countActions, expandCompounds, limitActions } from '../src/lib/actionDensity'
 import { buildVideoPipelineExport, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
 import { postProcessExport } from '../src/lib/segmentPost'
 import type { Character, Project, Shot } from '../src/types'
@@ -76,7 +80,7 @@ t('s1-24-like merged shot → header / 时间轴 / 快-慢-恢复常速 / footer
   assert.ok(/2–4\.5秒【慢】：动作放慢/.test(p), '/2–4\\.5秒【慢】：动作放慢/.test(p)')
   assert.ok(p.includes(BEAT_MOUTH_CUE), 'p.includes(BEAT_MOUTH_CUE)')
   assert.ok(p.includes('全程只有他一人，不出现第二个人物'), "p.includes('全程只有他一人，不出现第二个人物')")
-  assert.ok(/镜头：近景，轻微手持，最后一秒缓慢微推，不切镜。/.test(p), p)
+  assert.ok(/镜头：近景（胸口以上），轻微手持，最后一秒缓慢微推，不切镜。/.test(p), p)
   assert.ok(p.includes(BEAT_REALISM) && !p.includes('自然肤质，') && p.includes('禁止二次元漫画脸'), "p.includes(BEAT_REALISM) && !p.includes('自然肤质，') && p.includ")
   assert.ok(/限制：无任何文字、字幕、汉字、字母、数字、Logo；服装无标志、校徽、刺绣字样/.test(p), '/限制：无任何文字、字幕、汉字、字母、数字、Logo；服装无标志、校徽、刺绣字样/.test(p)')
   assert.ok(p.includes('（无任何标志）'), "p.includes('（无任何标志）')")
@@ -236,6 +240,36 @@ t('buildVideoPipelineExport beatMode=speed → every shot beat-converted, durati
     assert.equal(s.beatSegments![s.beatSegments!.length - 1].end, s.durationSec)
   })
   assert.ok(sp.shots.some((s) => s.beatSegments!.some((x) => x.lipSync)), 'sp.shots.some((s) => s.beatSegments!.some((x) => x.lipSync))')
+})
+
+
+t('action density: 快 drops chest-tap; dialogue drops 摊手 keeps 摸后颈; zip + 近景（胸口以上）', () => {
+  const r = buildBeatPrompt(merged, packChars, { style: '真人都市' })
+  assert.ok(r.trimmedActions.some((x) => x.includes('胸口')), String(r.trimmedActions))
+  assert.ok(r.trimmedActions.some((x) => x.includes('摊手')), String(r.trimmedActions))
+  assert.ok(!/点了点自己的胸口|手指点/.test(r.prompt), 'chest-tap gone')
+  assert.ok(!r.prompt.includes('摊手'), 'hand-spread gone')
+  assert.ok(r.prompt.includes('摸了摸后颈'), 'neck touch kept')
+  assert.ok(r.prompt.includes(ZIP_OPEN), 'zip open')
+  assert.ok(r.prompt.includes(CLOSE_DIALOGUE_FRAMING), 'dialogue close-up framing')
+  assert.ok(!r.prompt.includes('收回来摸'), 'return prefix polished away')
+})
+
+t('actionDensity helpers: caps, compounds, preferLater, 虚点+下颌 counts as small', () => {
+  assert.equal(actionCap('快', false), 1)
+  assert.equal(actionCap('慢', false), 2)
+  assert.equal(actionCap('恢复常速', false), 2)
+  assert.equal(actionCap('慢', true), 1)
+  assert.equal(actionWeight('他指尖在玻璃上虚点了一下下颌'), 1, 'SMALL before MICRO')
+  assert.equal(actionWeight('又飞快地拨了拨额前的头发'), 1)
+  const compound = expandCompounds(['他摊手又收回来摸了摸后颈'])
+  assert.deepEqual(compound, ['他摊手', '收回来摸了摸后颈'])
+  const dlg = limitActions(compound, 1, { preferLater: true })
+  assert.deepEqual(dlg.dropped, ['他摊手'])
+  assert.ok(dlg.kept.some((x) => x.includes('摸了摸后颈')), String(dlg.kept))
+  const fast = limitActions(splitClauses('他猛地扭头看身后，手指点了点自己的胸口'), 1)
+  assert.ok(fast.dropped.some((x) => x.includes('胸口')), String(fast.dropped))
+  assert.equal(countActions(splitClauses('他重新低头写卷子，笔尖在纸上继续划，另一只手把翘起的卷子角压平')), 3)
 })
 
 const P2 = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p2-clean.json'

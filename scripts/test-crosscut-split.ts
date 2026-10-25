@@ -1,7 +1,8 @@
 /** npx tsx scripts/test-crosscut-split.ts — opt-in cross-cut split + angleKey / carryFromShotId */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
-import { applyBeatMode, BEAT_MOUTH_CUE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, SOLO_SPLIT_LIMIT, validateBeatOverride, type BeatOverrideSegment } from '../src/lib/beatPrompt'
+import { applyBeatMode, BEAT_MOUTH_CUE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, SOLO_SPLIT_LIMIT, splitClauses, validateBeatOverride, type BeatOverrideSegment } from '../src/lib/beatPrompt'
+import { actionCap, countActions } from '../src/lib/actionDensity'
 import {
   allocateSplitDurations,
   angleKeyOf,
@@ -547,6 +548,11 @@ if (existsSync(P2)) {
       assert.ok(!/白朴|吴耐|另一人|双人/.test(s.prompt), `${id} names`)
       assert.equal(s.beatSegments![s.beatSegments!.length - 1].end, s.durationSec, `${id} coverage`)
       assert.equal(s.beatSegments!.some((g) => g.lipSync), Boolean(s.dialogue), `${id} lip-sync iff speaker`)
+      for (const g of BO[id]) {
+        const n = countActions(splitClauses((g.text || '').replace(/、/g, '，')))
+        const cap = actionCap(g.speed, Boolean(g.dialogue))
+        assert.ok(n <= cap, `${id} ${g.start}–${g.end} 【${g.speed}】 actions ${n} > cap ${cap}`)
+      }
     }
     assert.ok(m['s1-1a'].prompt.includes('小石子') && m['s1-1b'].prompt.includes('栏杆') && m['s1-1c'].prompt.includes('鼻翼'), 'grounded in s1-1 source')
     assert.ok(!m['s1-1a'].prompt.includes('安静听'), 'no phantom listening beat before anyone speaks')
