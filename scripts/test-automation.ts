@@ -633,6 +633,7 @@ t('annotateShots applies proposals only without hand data; wardrobeReport flags 
   })
   t('closeup_dialogue framing guard: chest-up held, no push-in to an extreme close-up', () => {
     assert.ok(!/推/.test(closeupCamera('近景缓推，不切镜')) && closeupCamera('近景缓推，不切镜').includes('不切镜'))
+    assert.equal(closeupCamera('近景，轻微手持，最后一秒微推，不切镜'), `${CLOSEUP_CAMERA}，轻微手持，不切镜`)
     const o = annotateShots(applyBeatMode(pack([merged]))).shots[0]
     assert.equal(o.framing, 'closeup_dialogue')
     assert.ok(o.prompt.includes(CLOSEUP_FRAMING_GUARD), o.prompt)

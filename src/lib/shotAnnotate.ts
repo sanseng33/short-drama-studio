@@ -189,7 +189,7 @@ export const HALF_BODY_ANGLE_WORDS = ['侧打', '侧拍', '侧身', '侧面', '�
 /** closeup_dialogue drift guard: the model must not push into an extreme face close-up cropping forehead / chin */
 export const CLOSEUP_FRAMING_GUARD = '镜头全程保持胸口以上近景，不推到大特写，头顶和下巴完整入画'
 /** camera moves that push a dialogue close-up into an extreme close-up */
-const PUSH_IN = /推近|推到|推向|推进|轻推|缓推|慢推|推镜|拉近|变焦|逼近/
+const PUSH_IN = /推|拉近|变焦|逼近/
 const FRAMING_WORDS: Record<Framing, string> = {
   closeup_dialogue: `${CLOSEUP_CAMERA}，单人，${CLOSEUP_FRAMING_GUARD}`,
   medium: '中景',
