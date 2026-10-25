@@ -54,7 +54,7 @@ export interface VideoPipelineShot {
   mergedFrom?: string[]
   /** stable place+time slug for FL2V chaining, e.g. villa_bedroom_night */
   sceneId?: string
-  /** short Chinese label for humans, e.g. 江景别墅卧室·夜 */
+  /** short Chinese label for humans, e.g. 别墅卧室·夜 */
   sceneLabel?: string
   /** true when this shot continues the previous shot (same episode + sceneId, not a hard cut) */
   carryFromPrev?: boolean
@@ -365,7 +365,7 @@ export function parseDialogue(dialogue: string, chars: Character[] = []): Dialog
       const p1 = m[2]?.trim() || ''
       const p2 = m[3]?.trim() || ''
       let tag: string | null = p1 || null
-      // variant names contain parentheses: 白朴（变帅前）（小声）→ name 白朴（变帅前）, tag 小声
+      // variant names contain parentheses: 甲（之前）（小声）→ name 甲（之前）, tag 小声
       const variant = p1 && chars.find((c) => c.name.replace(/\(/g, '（').replace(/\)/g, '）') === `${name}（${p1}）`)
       if (variant) {
         name = variant.name
@@ -567,7 +567,7 @@ function buildShotSegs(
     const m = x.match(/^([^：:]{1,12})\s*[：:]\s*([\s\S]+)$/)
     return m && (SYSTEM.test(m[1]) || sysNames.includes(m[1])) ? m[2].trim().replace(/^[「“"]([\s\S]*)[」”"]$/, '$1') : x
   }
-  // overlay entries that are really a human character's line (「白朴（变帅后）（轻声）：……行。」) → dialogue
+  // overlay entries that are really a human character's line (「甲（之后）（轻声）：……行。」) → dialogue
   const movedLines: string[] = []
   const overlayIn: string[] = []
   for (const raw of s.overlayText || []) {

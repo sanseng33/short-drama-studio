@@ -267,7 +267,7 @@ export function Characters({ api }: { api: ProjectApi }) {
               <input
                 className="field !w-auto min-w-[6rem] text-xs"
                 placeholder="本名 baseName（造型变体用）"
-                title="同一角色的不同造型（如 白朴（变帅前）/白朴（变帅后））填相同本名，字幕显示本名"
+                title="同一角色的不同造型（如 甲（之前）/甲（之后））填相同本名，字幕显示本名"
                 value={c.baseName || ''}
                 onChange={(e) => updateChar(c.id, { baseName: e.target.value || undefined })}
               />
@@ -320,7 +320,7 @@ export function Characters({ api }: { api: ProjectApi }) {
                   value={c.refImage || ''}
                   title="定妆图文件名/前缀；填写后视觉锁定/服装视为权威，重新生成不会覆盖"
                   onChange={(e) => updateChar(c.id, { refImage: e.target.value || undefined })}
-                  placeholder="定妆图文件名/前缀，如 bai_pu_plain"
+                  placeholder="定妆图文件名/前缀，如 char_a_plain"
                 />
               </div>
               <div>
@@ -338,7 +338,7 @@ export function Characters({ api }: { api: ProjectApi }) {
                   className="field"
                   value={c.characterKey || ''}
                   onChange={(e) => updateChar(c.id, { characterKey: e.target.value || undefined })}
-                  placeholder="如 bai_pu"
+                  placeholder="如 char_a"
                 />
               </div>
               <div>

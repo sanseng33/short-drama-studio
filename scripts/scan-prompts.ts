@@ -5,7 +5,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { isNearDup, splitClauses, BEAT_LINE_RE } from '../src/lib/beatPrompt'
-import { CLOSEUP_CAMERA, castDescription, onscreenCast, type WardrobeMeta } from '../src/lib/shotAnnotate'
+import { CLOSEUP_CAMERA, castDescription, onscreenCast, unclearPronouns, type WardrobeMeta } from '../src/lib/shotAnnotate'
 import type { VideoPipelineExport } from '../src/lib/videoExport'
 
 const GARMENTS = /夹克|卫衣|校服|衬衫|西装|T恤|外套|连衣裙|毛衣|风衣|大衣|睡衣|背心|制服|围裙|运动服/g
@@ -53,11 +53,8 @@ export function scanPack(e: VideoPipelineExport): { id: string; kind: string; de
     const body = lines.slice(1).filter((l) => !/^(?:风格|限制|景别|光线)/.test(l)).join('\n')
     if (n > 0 && /无人物|空镜|没有人物/.test(body)) add(s.id, 'contradiction', '无人物 / 空镜 with people on screen')
     if (n === 0 && /(?<!其)他|她|少年|神情|眼神|嘴角|开口/.test(body.replace(/没有人物|无人物/g, ''))) add(s.id, 'contradiction', 'person words in an empty shot')
-    // ---- a bare 他/她 in a multi-person segment does not say who acts (info, not an error)
-    if (n >= 2) {
-      const amb = lines.filter((l) => BEAT_LINE_RE.test(l) && /(?<!其)[他她](?!们)/.test(l.split('；')[0]))
-      if (amb.length) add(s.id, 'pronoun', `${amb.length} segment(s) use a bare 他/她 with ${n} on screen`)
-    }
+    // ---- a bare 他/她 in a multi-person segment with no descriptor before it: nobody says who acts
+    if (n >= 2) for (const c of unclearPronouns(s.prompt)) add(s.id, 'pronoun', `unresolved 他/她 with ${n} on screen: ${c}`)
     // ---- repeated phrases inside a segment / across the timeline
     const segs = lines.filter((l) => BEAT_LINE_RE.test(l)).map((l) => l.replace(/^[^：]*：/, ''))
     for (const seg of segs) {

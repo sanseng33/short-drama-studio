@@ -7,9 +7,12 @@
  */
 import type { VideoPipelineShot } from './videoExport'
 
-/** Carry-shot wardrobe constraint (one place): keep prev last-frame costume/props/staging. */
+/**
+ * Carry-shot wardrobe constraint (one place): keep prev last-frame costume/props/staging.
+ * No prop example: src carries no show data, and the rule reads clearly without one.
+ */
 export const CARRY_WARDROBE_CONSTRAINT =
-  '服装/道具/站位：保持与上一镜末帧一致，禁止换装、禁止换回定妆静帧服装、禁止引入定妆包道具（如小黄鸭）除非上一镜已有'
+  '服装/道具/站位：保持与上一镜末帧一致，禁止换装、禁止换回定妆静帧服装、禁止引入定妆包道具除非上一镜已有'
 
 /** Coarse time bands used in sceneId suffixes. */
 export type TimeBand = 'night' | 'day' | 'dusk' | 'unknown'
@@ -17,7 +20,7 @@ export type TimeBand = 'night' | 'day' | 'dusk' | 'unknown'
 export interface PlaceHit {
   /** English slug, e.g. villa_bedroom */
   key: string
-  /** Short Chinese label without time, e.g. 江景别墅卧室 */
+  /** Short Chinese label without time, e.g. 别墅卧室 */
   labelZh: string
   /** Match weight (higher = more specific) */
   weight: number
@@ -47,7 +50,7 @@ export type ContinuityShot = Pick<
 const PLACE_RULES: { key: string; labelZh: string; re: RegExp; weight: number }[] = [
   {
     key: 'villa_bedroom',
-    labelZh: '江景别墅卧室',
+    labelZh: '别墅卧室',
     re: /(江景)?别墅[^。；\n]{0,12}(卧室|二楼|床|床头|枕头|被子|地毯)|别墅卧室|卧室[^。；\n]{0,8}(落地窗|江景|别墅)/,
     weight: 40,
   },
@@ -57,18 +60,18 @@ const PLACE_RULES: { key: string; labelZh: string; re: RegExp; weight: number }[
     re: /(江景)?别墅[^。；\n]{0,10}(落地窗|窗前|窗玻璃|开窗)|落地窗[^。；\n]{0,8}(别墅|江景|窗台)|别墅窗前|别墅落地窗/,
     weight: 35,
   },
-  { key: 'villa', labelZh: '江景别墅', re: /(江景)?别墅|智能窗帘|衣帽间|嵌入式灯带/, weight: 20 },
+  { key: 'villa', labelZh: '别墅', re: /(江景)?别墅|智能窗帘|衣帽间|嵌入式灯带/, weight: 20 },
   // bedroom anchors without the word 别墅 (rich interior)
   {
     key: 'villa_bedroom',
-    labelZh: '江景别墅卧室',
+    labelZh: '别墅卧室',
     re: /(穿衣镜|床头柜|枕头|枕上|被子|床沿|冰袋).{0,40}(落地窗|江景|哑光|床头)|落地窗.{0,30}(穿衣镜|床头|枕头|卧室)|床头柜/,
     weight: 28,
   },
   {
     key: 'alley_window',
-    labelZh: '旧楼窗',
-    re: /(旧楼|老楼|对面楼)[^。；\n]{0,12}(窗|铁栏|栏杆)|铁栏杆窗|旧楼窗|对窗旧楼|旧楼窗前|晾衣绳[^。；\n]{0,8}(窗|栏|旧)/,
+    labelZh: '老楼窗边',
+    re: /(旧楼|老楼|对面楼)[^。；\n]{0,12}(窗|铁栏|栏杆)|铁栏杆窗|对窗旧楼|晾衣绳[^。；\n]{0,8}(窗|栏|旧)/,
     weight: 40,
   },
   // bare 窄巷 alone is weak — only used when no villa/classroom header won
@@ -76,13 +79,13 @@ const PLACE_RULES: { key: string; labelZh: string; re: RegExp; weight: number }[
   { key: 'classroom', labelZh: '教室', re: /教室|课桌|讲台|同桌|后排座位|靠窗座位|粉笔|黑板/, weight: 35 },
   {
     key: 'school_corridor',
-    labelZh: '教学楼走廊',
+    labelZh: '学校走廊',
     re: /(教学楼)?走廊|水磨石|公告栏|储物柜|班级牌|教室门/,
     weight: 30,
   },
   { key: 'school_gate', labelZh: '校门口', re: /校门口|校门/, weight: 30 },
   { key: 'milk_tea_shop', labelZh: '奶茶店', re: /奶茶店|点单台|封口机|扫码盒/, weight: 35 },
-  { key: 'schoolyard', labelZh: '楼下花坛', re: /花坛|操场|球场|楼下/, weight: 25 },
+  { key: 'schoolyard', labelZh: '校园楼下', re: /花坛|操场|球场|楼下/, weight: 25 },
   { key: 'dorm', labelZh: '宿舍', re: /宿舍|寝室/, weight: 30 },
   { key: 'cafeteria', labelZh: '食堂', re: /食堂|小卖部/, weight: 30 },
   { key: 'library', labelZh: '图书馆', re: /图书馆/, weight: 30 },
@@ -162,12 +165,12 @@ export function classifyPlace(blob: string): PlaceHit | null {
     const hit: PlaceHit = { key: r.key, labelZh: r.labelZh, weight: r.weight }
     if (r.key === 'villa_window' && /卧室|床头|枕头|被子|地毯上/.test(blob)) {
       hit.key = 'villa_bedroom'
-      hit.labelZh = '江景别墅卧室'
+      hit.labelZh = '别墅卧室'
       hit.weight = 42
     }
     if (r.key === 'alley' && /窗|栏杆|铁栏/.test(blob)) {
       hit.key = 'alley_window'
-      hit.labelZh = '旧楼窗'
+      hit.labelZh = '老楼窗边'
       hit.weight = 38
     }
     if (r.key === 'school_gate' && /奶茶/.test(blob)) continue
@@ -189,8 +192,8 @@ export function canonicalPlaceKey(key: string): string {
 
 const LABEL_FOR: Record<string, string> = {
   ...Object.fromEntries(PLACE_RULES.map((r) => [r.key, r.labelZh])),
-  villa_bedroom: '江景别墅卧室',
-  alley_window: '旧楼窗',
+  villa_bedroom: '别墅卧室',
+  alley_window: '老楼窗边',
   unknown: '未识别场景',
 }
 

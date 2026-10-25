@@ -367,6 +367,30 @@ export function multiSubjectLine(ids: string[], ws: Record<string, string>, char
   return { line: `主体：${count}同框，外形与服装各不相同——${descs.map((d, i) => `${order[i] || `其${i + 1}`}：${d}`).join('；')}。`, notes }
 }
 
+/** note prefix for a 他/她 the source does not resolve (beatPrompt writes it to beatTodo; copied to renderReview) */
+export const UNCLEAR_PRONOUN_NOTE = '多人同框，「他/她」指代不明：'
+/** a person descriptor the beat prompt uses for one of several on-screen characters (穿夹克的少年) */
+export const PERSON_DESCRIPTOR = /穿[^，。；、\s]{1,8}?的(?:少年|少女|男生|女生|男人|女人|男孩|女孩|青年|学生|同学|人)/
+/**
+ * Clauses of a multi-person shot's timeline whose bare 他/她 has no descriptor earlier in the same segment
+ * (the pronoun cannot be resolved by the reader / the video model).
+ */
+export function unclearPronouns(prompt: string): string[] {
+  const out: string[] = []
+  for (const line of prompt.split('\n')) {
+    if (!BEAT_SEG.test(line)) continue
+    const body = line.replace(/^[^：]*：/, '').split('；')[0]
+    let seen = false
+    for (const c of body.split(/[，,。]/)) {
+      const d = c.search(PERSON_DESCRIPTOR)
+      const p = c.search(/(?<![其吉利])[他她](?![们人乡处日])/)
+      if (p >= 0 && !seen && (d < 0 || p < d)) out.push(c)
+      if (d >= 0) seen = true
+    }
+  }
+  return out
+}
+
 /** drop clauses that contradict the on-screen count (无人物 with people on screen / person words in an empty shot) */
 export function dropContradictions(prompt: string, onscreen: number): { prompt: string; notes: string[] } {
   const notes: string[] = []
@@ -437,6 +461,7 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
     p = r.prompt
     notes.push(...r.notes)
   }
+  if (ctx && n >= 2) notes.push(...unclearPronouns(p).map((c) => `${UNCLEAR_PRONOUN_NOTE}${c}`))
   p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${normalizeCamera(cam, framing, n)}`)
   return { prompt: `${p}\n景别：${framingWords(framing, n)}。\n${NO_TEXT_CONSTRAINT}`, notes }
 }
@@ -611,7 +636,13 @@ export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
     shots: e.shots.map((s, i) => {
       const framing = framingOf(s, chars)
       const r = renderPrompt(s.prompt, framing, { onscreen: onscreenCast(s, chars), wardrobeState: ws[i], chars })
-      const review = [...new Set(r.notes)]
+      // unresolved pronouns found by the beat prompt (source beat without a known actor), when still in the prompt
+      const beatPron = (s.beatTodo || []).filter((x) => x.startsWith(UNCLEAR_PRONOUN_NOTE)).filter((x) => {
+        const c = x.slice(UNCLEAR_PRONOUN_NOTE.length)
+        const k = c.search(/[他她]/)
+        return k >= 0 && r.prompt.includes(c.slice(k, k + 4))
+      })
+      const review = [...new Set([...r.notes, ...beatPron])]
       const out: VideoPipelineShot = {
         ...s,
         framing,

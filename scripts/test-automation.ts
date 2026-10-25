@@ -14,7 +14,7 @@ import { actionCap, countActions } from '../src/lib/actionDensity'
 import { applyCrossCutSplit, correctScenes, explicitPlaces } from '../src/lib/crosscutSplit'
 import { postProcessExport } from '../src/lib/segmentPost'
 import {
-  annotateShots, baseWardrobeState, castDescription, CLOSEUP_CAMERA, dropContradictions, multiSubjectLine, normalizeCamera, renderPrompt, closeupCamera, finalizePrompt, FRAMINGS, framingOf, missingAnnotations, NO_TEXT_CONSTRAINT, sha1Hex, shotSeed, timedDialogueLines,
+  annotateShots, baseWardrobeState, castDescription, unclearPronouns, type WardrobeMeta, CLOSEUP_CAMERA, dropContradictions, multiSubjectLine, normalizeCamera, renderPrompt, closeupCamera, finalizePrompt, FRAMINGS, framingOf, missingAnnotations, NO_TEXT_CONSTRAINT, sha1Hex, shotSeed, timedDialogueLines,
   proposeWardrobeTimelines, wardrobeReport, wardrobeStates } from '../src/lib/shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 
@@ -350,6 +350,8 @@ t('paraphrase repeats inside a segment: character-overlap rule, with false-posit
     ['眼神压向对面又迅速移开', '视线压向对面'],
     ['开口前先哼出一口气', '说完鼻子里哼出一口气'],
     ['对面窗灯灭的同一刻', '对面窗灯灭下去的瞬间'],
+    ['指尖收回来时还在抖', '落下后手收回来还在微微发颤'], // 抖/颤, 指尖/手
+    ['抬起的手停在半空悬了半拍才落下点了一下', '指尖先悬停半拍'], // 悬/悬停, short run = whole clause
   ])
     assert.ok(sharedRunDup(a, b), `${a} / ${b}`)
   for (const [a, b] of [
@@ -357,6 +359,13 @@ t('paraphrase repeats inside a segment: character-overlap rule, with false-posit
     ['指尖在台面上多停了一拍', '指尖在台面轻轻蹭了一下'],
     ['他抬手看向窗外', '他转头看向窗外'],
     ['把杯子放回桌上', '把书放回桌上'],
+    ['手停在半空', '手停在桌上'],
+    ['指尖轻轻发抖', '指尖敲了敲桌面'],
+    ['喉结滚动', '喉咙发紧'],
+    ['他抬手', '他低头'],
+    ['侧脸微微避向穿校服的少年', '穿校服的少年斜眼扫过来'], // a shared person descriptor is not a shared action
+    ['视线在杯子上钉了三秒', '眼神先落在杯子上'], // a shared place phrase (在杯子上) is not a shared action
+    ['穿校服的少年的视线在杯子上钉了三秒', '穿校服的少年偏头，眼神先落在杯子上'],
   ])
     assert.ok(!sharedRunDup(a, b), `false positive: ${a} / ${b}`)
   const s = SH({
@@ -368,6 +377,31 @@ t('paraphrase repeats inside a segment: character-overlap rule, with false-posit
   })
   const r = buildBeatPrompt(s, chars)
   assert.ok(r.prompt.includes('说完嘴角没忍住翘起来') && !r.prompt.includes('压不住地翘'), r.prompt)
+})
+
+t('bare 他 in a multi-person shot: resolved from the source beat, else left with a renderReview note', () => {
+  const s = SH({
+    id: 'pr', characterIds: ['a1', 'b1'], durationSec: 8, dialogue: '好。', speaker: 'b1', speakerName: '乙乙',
+    prompt: '竖屏9:16。白天，教室。主体：17岁东亚少年甲，米白夹克；17岁东亚少年乙乙，蓝白运动校服。时间轴（一镜8秒，小节拍）：0–2s他抬眼看向乙乙，手停在半空；2–4s随后他把书推过去，嘴角压着（乙乙开口说台词）；4–6s随后甲转身，冲他点了一下头；6–8s随后他听到哨声顿住，肩膀一僵。镜头：中景，固定。',
+  })
+  const r = buildBeatPrompt(s, chars)
+  const segs = r.prompt.split('\n').filter((l) => BEAT_LINE_RE.test(l))
+  assert.ok(segs.some((l) => l.includes('穿夹克的少年抬眼看向穿校服的少年')), 'before the only other name → the other one')
+  assert.ok(segs.some((l) => l.includes('穿校服的少年把书推过去')), "the beat's speaker mark")
+  assert.ok(segs.some((l) => /(?<!的少年)他听到哨声/.test(l)), 'unresolved: left as is')
+  const out = renderPrompt(r.prompt, 'medium', { onscreen: ['a1', 'b1'], wardrobeState: {}, chars: chars as WardrobeMeta[] })
+  assert.ok(r.todo.includes('多人同框，「他/她」指代不明：他听到哨声顿住'), r.todo.join(' / '))
+  const ann = annotateShots(pack([{ ...s, ...applyBeatMode(pack([s])).shots[0] }]))
+  assert.ok(ann.shots[0].renderReview?.includes('多人同框，「他/她」指代不明：他听到哨声顿住'), JSON.stringify(ann.shots[0].renderReview))
+  void out
+  // object position (冲他): the other one of the beat's actor
+  const o = buildBeatPrompt({ ...s, speaker: 'a1', speakerName: '甲', prompt: '竖屏9:16。白天，教室。主体：17岁东亚少年甲，米白夹克；17岁东亚少年乙乙，蓝白运动校服。时间轴（一镜8秒，小节拍）：0–3s乙乙抬眼看着窗外；3–8s随后甲把书合上，冲他点了一下头（甲开口说台词）。镜头：中景，固定。' }, chars)
+  assert.ok(o.prompt.includes('穿夹克的少年把书合上，冲穿校服的少年点了一下头'), o.prompt)
+  assert.ok(!/放慢：；/.test(o.prompt), 'a segment without actions starts with its speech cue')
+  // a garment only one of them wears resolves it
+  const g = buildBeatPrompt({ ...s, prompt: s.prompt.replace('6–8s随后他听到哨声顿住，肩膀一僵', '6–8s随后他听到哨声顿住，校服袖口滑下') }, chars)
+  assert.ok(g.prompt.includes('穿校服的少年听到哨声'), g.prompt)
+  assert.deepEqual(unclearPronouns('0–2秒，正常节奏：穿夹克的少年抬手，他又放下。'), [], 'a 他 after a descriptor in the segment reads')
 })
 
 t('camera size words follow the framing; angle and movement words stay', () => {

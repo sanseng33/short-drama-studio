@@ -14,7 +14,7 @@
  * Small hand props that compete with face/hands (转鸡蛋…) are dropped and listed in `beatRemovedProps`.
  * Pure; default export behaviour is untouched unless beatMode === 'speed'.
  */
-import { stripRenderLines } from './shotAnnotate'
+import { stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
 import { actionCap, actionWeight, countActions, limitActions } from './actionDensity'
@@ -85,6 +85,8 @@ export function segmentLine(start: number, end: number, speed: BeatSpeed, index:
     .replace(/^动作放慢[，,]?/, '')
     .replace(new RegExp(`[，,]?${BEAT_FAST_TAIL}`, 'g'), '')
     .replace(/[，；。\s]+$/, '')
+    // a body whose actions were all dropped keeps only its speech cue
+    .replace(/^[，；\s]+/, '')
   return `${fmt(start)}–${fmt(end)}秒，${pacePhrase(speed, index, prev)}：${b || '保持姿态，呼吸与眼神有细微变化'}。`
 }
 /** matches a timeline segment line of a beat prompt */
@@ -169,9 +171,11 @@ function sameShortBeat(x: string, y: string): boolean {
  * particles and filler adverbs removed) overlap ≥ 75 % of the shorter clause, ≥ 5 shared characters, and both clauses
  * open with the same two characters (guards 抬起头看向窗外 / 低下头看向窗外 and other same-frame, different-verb pairs).
  */
+/** person references (穿夹克的少年, resolved-pronoun markers) are who, not what: they never make two clauses alike */
+const unperson = (s: string) => s.replace(/穿[^，。；、\s]{1,8}?的(?:少年|少女|男生|女生|男人|女人|男孩|女孩|青年|学生|同学|人)/g, '').replace(/[\ue100-\ue1ff]/g, '').trim()
 export const CHAR_OVERLAP_MIN = 0.75
 export function charOverlapDup(x: string, y: string): boolean {
-  const core = (s: string) => s.replace(/^(?:他|她|它)/, '').replace(/一下|[的了着地得还又也仍都就再\s，,。；;、]/g, '')
+  const core = (s: string) => unperson(s).replace(/^(?:他|她|它)/, '').replace(/一下|[的了着地得还又也仍都就再\s，,。；;、]/g, '')
   const a = core(x)
   const b = core(y)
   if (a.length < 5 || b.length < 5 || a.slice(0, 2) !== b.slice(0, 2)) return false
@@ -191,14 +195,21 @@ export function charOverlapDup(x: string, y: string): boolean {
  * (转身走向门口 / 转身走向窗边 stays, 手指在桌面敲了两下 / 手指在桌面上划了一下 stays).
  */
 export const SHARED_RUN_MIN = 4
+export const SHORT_RUN_RATIO = 0.75
 export function sharedRunDup(x: string, y: string): boolean {
   const norm = (s: string) =>
-    s
+    unperson(s)
       .replace(/^(?:他|她|它)/, '')
       .replace(/^(?:开口前|出手前|说完|喊完|话音落下?|随后|然后|接着|[^，]{1,3}[时后](?=.{4}))/, '')
       .replace(/眼神|视线|目光/g, '眼')
+      // near-synonyms: 抖/颤, 悬/悬停, hand parts; degree adverb 微微; 时 inside a clause (收回来时还在抖)
+      .replace(/发颤|发抖|颤抖|颤/g, '抖')
+      .replace(/悬停|悬着/g, '悬')
+      .replace(/指尖|手指|指节/g, '手')
+      .replace(/微微/g, '')
       .replace(/一下|[的了着地得还又也仍都就再先\s，,。；;、]/g, '')
-      .replace(/(?:同一刻|那一刻|一刻|瞬间|时候|时)$/, '')
+      .replace(/(?:同一刻|那一刻|一刻|瞬间|时候)$/, '')
+      .replace(/时/g, '')
   const a = norm(x)
   const b = norm(y)
   // longest common run
@@ -211,10 +222,14 @@ export function sharedRunDup(x: string, y: string): boolean {
       while (i + k < a.length && j + k < b.length && a[i + k] === b[j + k]) k++
       if (k > best) [best, ia, ib] = [k, i, j]
     }
-  if (best < SHARED_RUN_MIN || best / Math.min(a.length, b.length) < 0.4) return false
+  // a 3-char run counts only when it is nearly the whole shorter clause (手先悬停半拍 inside 手停在半空悬了半拍…)
+  const ratio = best / Math.min(a.length, b.length)
+  if (best < SHARED_RUN_MIN - 1 || ratio < 0.4 || (best < SHARED_RUN_MIN && ratio < SHORT_RUN_RATIO)) return false
   const [pa, pb] = [a.slice(0, ia), b.slice(0, ib)]
   const [ta, tb] = [a.slice(ia + best), b.slice(ib + best)]
   const within = (u: string, v: string) => !u || !v || u.includes(v) || v.includes(u)
+  // a shared run that is only a place phrase (在鸭子上 / 向窗外) is not a shared action unless the lead-in is the same
+  if (/^[在向往朝到从于对]/.test(a.slice(ia)) && pa !== pb) return false
   return within(pa, pb) && (!ta || !tb || within(ta, tb))
 }
 
@@ -379,11 +394,19 @@ export function nameVariants(chars: Char[], extra: string[] = []): { text: strin
   return out.filter((o) => paced(o.text) >= 1).sort((a, b) => b.text.length - a.text.length)
 }
 
+/** private-use marker chars for resolved pronouns (one per cast index; not counted by paced) */
+const PRON_MARK0 = 0xe100
+/** 他/她 as a person pronoun (not 其他 / 他们 / 他人 / 他乡 …) */
+const BARE_PRONOUN = /(?<![其吉利])[他她](?![们人乡处日])/
+const BARE_PRONOUN_ONLY = /^[他她]$/
+/** text before a pronoun that puts it in subject position (clause start or after a short lead-in) */
+const SUBJECT_SLOT = /(?:^|[，,。；;：:、]|^\s*)(?:(?:随后|然后|接着|同时|这时|此时|最后|说完|喊完|开口前|话音落下?|[^，。；]{0,4}[时后]|又|也|才|便|就)\s*)?$/
+
 const DESC_BEFORE = /(少年|少女|男生|女生|男人|女人|男孩|女孩|青年|学生|同学|人)\s*$/
 
 /**
  * Replace names with a pronoun (single cast) / a wardrobe descriptor (multi cast).
- * When a name directly follows a descriptor noun (「17岁东亚少年白朴」) it is simply removed.
+ * When a name directly follows a descriptor noun (「17岁东亚少年甲」) it is simply removed.
  */
 export function stripNames(
   text: string,
@@ -394,17 +417,22 @@ export function stripNames(
   if (!variants.length) return t
   const re = new RegExp(variants.map((v) => esc(v.text)).join('|'), 'g')
   let last = ''
+  let lastEnd = 0
   t = t.replace(re, (m, off: number, all: string) => {
     const v = variants.find((x) => x.text === m)!
-    // optional variant parenthetical right after the bare name (白朴（变帅后）)
+    // optional variant parenthetical right after the bare name (甲（之后）)
     if (DESC_BEFORE.test(all.slice(Math.max(0, off - 4), off))) return ''
     const r = refOf(v.id, v.ids)
-    const out = r === last && r.length > 1 ? (r.startsWith('穿') ? '他' : r) : r
+    // a repeated descriptor shortens to 他 only inside one clause; across clauses it is repeated, so a dropped
+    // clause can never leave an orphan pronoun and an object mention in between cannot capture it
+    const sameClause = !/[，,。；;]/.test(all.slice(lastEnd, off))
+    const out = r === last && r.length > 1 ? (r.startsWith('穿') ? (sameClause ? '他' : r) : r) : r
     last = r
+    lastEnd = off + m.length
     return out
   })
-  // leftover variant notes 「（变帅后）」 etc.
-  t = t.replace(/[（(](?:变帅前|变帅后|[^（）()]{0,6}前|[^（）()]{0,6}后)[）)]/g, '')
+  // leftover variant notes 「（之后）」 etc.
+  t = t.replace(/[（(](?:[^（）()]{0,6}前|[^（）()]{0,6}后)[）)]/g, '')
   return t.replace(/他的?他/g, '他').replace(/她的?她/g, '她')
 }
 
@@ -570,7 +598,7 @@ function sceneHeader(s: VideoPipelineShot): string {
   if (!head || paced(head) > 30) {
     head = [s.timeOfDay?.trim(), labelPlace].filter(Boolean).join('，')
   } else if (labelPlace && !head.includes(labelPlace) && !head.includes(labelPlace.slice(-2))) {
-    // 「早上，别墅落地窗前」+ 江景别墅卧室 → 「早上，江景别墅卧室落地窗前」
+    // 「早上，别墅落地窗前」+ 别墅卧室 → 「早上，别墅卧室落地窗前」
     let bestSub = ''
     for (let i = 0; i < labelPlace.length; i++)
       for (let j = i + 2; j <= labelPlace.length; j++) {
@@ -760,16 +788,89 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   }
   const distinct = new Set([...garmentOf.values()].filter(Boolean)).size === cast.length
   if (cast.length >= 2 && !distinct) todo.push('多人同框且服装关键词无法区分，人名已统一替换为「他」，请人工核对指代')
-  const refOf = (id0: string | null, ids?: string[]): string => {
-    // a shared baseName (白朴 → 变帅前/变帅后) resolves to the variant that is on screen
-    // …and when several variants are on screen, to the one that speaks in this shot
+  // a shared baseName (甲 → 甲（之前）/甲（之后）) resolves to the variant that is on screen
+  // …and when several variants are on screen, to the one that speaks in this shot
+  const resolveId = (id0: string | null, ids?: string[]): string | null => {
     const on = (ids || []).filter((x) => cast.includes(x))
-    const id = (on.length > 1 ? on.find((x) => lines.some((l) => l.speaker === x)) : undefined) ?? on[0] ?? id0
+    return (on.length > 1 ? on.find((x) => lines.some((l) => l.speaker === x)) : undefined) ?? on[0] ?? id0
+  }
+  const refOf = (id0: string | null, ids?: string[]): string => {
+    const id = resolveId(id0, ids)
     if (!id) return '有人'
     if (!cast.includes(id)) return '有人'
     if (single) return pron
     const g = garmentOf.get(id)
     return distinct && g ? `穿${g}的${nounFor(byId.get(id))}` : isFemale(byId.get(id)) ? '她' : '他'
+  }
+
+  // ---- bare 他/她 in a multi-person shot → the actor's descriptor (resolved from the source beat).
+  // Subject position (clause start / after a lead-in): the person last named earlier in this beat, else the beat's
+  // single speaker (（甲开口说台词）), else — two on screen and the beat names only one later (他…看向甲) — the other.
+  // Object position (看着他 / 冲他): with exactly two on screen, the other one of the beat's actor. No guess from
+  // earlier beats: unresolved pronouns stay and shotAnnotate adds a renderReview note.
+  const marks = !single && distinct && cast.length >= 2
+  const markOf = (id: string) => String.fromCharCode(PRON_MARK0 + cast.indexOf(id))
+  const markPronouns = (text: string, speakers: string[]): string => {
+    if (!marks) return text
+    const spk = [...new Set(speakers.map((n) => variants.find((v) => v.text === n)).map((v) => (v ? resolveId(v.id, v.ids) : null)).filter((x): x is string => Boolean(x) && cast.includes(x!)))]
+    let local: string | null = null
+    const re = new RegExp(`${variants.map((v) => esc(v.text)).join('|')}${variants.length ? '|' : ''}${BARE_PRONOUN.source}`, 'g')
+    return text.replace(re, (m: string, ...rest: unknown[]) => {
+      const off = rest[rest.length - 2] as number
+      const all = rest[rest.length - 1] as string
+      if (!BARE_PRONOUN_ONLY.test(m)) {
+        const v = variants.find((x) => x.text === m)
+        const id = v ? resolveId(v.id, v.ids) : null
+        if (id && cast.includes(id)) local = id
+        return m
+      }
+      const before = all.slice(0, off)
+      if (SUBJECT_SLOT.test(before)) {
+        // 「他…，视线落在甲脸上」: with two on screen, a pronoun before the only other name in the beat is the other one
+        const ahead = [...new Set(
+          variants
+            .filter((v) => all.slice(off + 1).replace(MARK_RE, '').includes(v.text))
+            .map((v) => resolveId(v.id, v.ids))
+            .filter((x): x is string => Boolean(x) && cast.includes(x!)),
+        )]
+        const other = cast.length === 2 && ahead.length === 1 && !spk.includes(ahead[0]) ? cast.find((x) => x !== ahead[0])! : null
+        // …else the beat names exactly one on-screen character's garment (校服袖口滑下) → that character
+        const rest = all.slice(off + 1)
+        const worn = cast.filter((x) => garmentOf.get(x) && rest.includes(garmentOf.get(x)!))
+        const id = local ?? (spk.length === 1 ? spk[0] : null) ?? other ?? (worn.length === 1 ? worn[0] : null)
+        if (!id) {
+          todo.push(`${UNCLEAR_PRONOUN_NOTE}${all.slice(off).split(/[，,。；;]/)[0]}`)
+          return m
+        }
+        local = id
+        return markOf(id)
+      }
+      const actor = local
+      if (cast.length === 2 && actor) return markOf(cast.find((x) => x !== actor)!)
+      todo.push(`${UNCLEAR_PRONOUN_NOTE}${all.slice(0, off).split(/[，,。；;]/).pop()}${all.slice(off).split(/[，,。；;]/)[0]}`)
+      return m
+    })
+  }
+  // final pass per segment: a marker right after the same person's reference reads 他/她, otherwise the descriptor
+  const unmark = (body: string): string => {
+    if (!marks) return body
+    const refs = cast.map((id) => refOf(id))
+    let prev = ''
+    let prevEnd = 0
+    const re = new RegExp(`${refs.map(esc).join('|')}|[${cast.map(markOf).join('')}]`, 'g')
+    return body.replace(re, (m, off: number) => {
+      const same = !/[，,。；;]/.test(body.slice(prevEnd, off))
+      prevEnd = off + m.length
+      if (refs.includes(m)) {
+        prev = m
+        return m
+      }
+      const id = cast[m.charCodeAt(0) - PRON_MARK0]
+      const r = refOf(id)
+      const out = r === prev && same ? (isFemale(byId.get(id)) ? '她' : '他') : r
+      prev = r
+      return out
+    })
   }
 
   // ---- explicit beats (beatOverrides) replace the automatic split
@@ -843,7 +944,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const speech = g.beats.some((b) => b.speech)
     const voice = g.beats.some((b) => b.voice)
     const speakers = [...new Set(g.beats.flatMap((b) => b.speakers))]
-    let raw = g.beats.map((b) => b.text).join('，')
+    let raw = g.beats.map((b) => markPronouns(b.text, b.speakers)).join('，')
     raw = raw
       .replace(MARK_RE, '')
       .replace(/表演[：:]/g, '')
@@ -983,7 +1084,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   const segLines = segTexts.map((x, i) => {
     const sp = speeds[i]
     // last pass: the performance rule can re-add a beat the action already said in other words
-    let body = dedupeClauses(x.cls).join('，')
+    let body = unmark(dedupeClauses(x.cls).join('，'))
     if (sp === '快') body = fastify(body || '迅速完成动作')
     if (sp === '慢') {
       const who = !single && x.speakers.length === 1 ? x.speakers[0] : ''

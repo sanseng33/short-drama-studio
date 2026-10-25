@@ -10,7 +10,7 @@ export interface SettingFactsByTier {
 
 /** Ending / spoiler cues (checked first). */
 const ENDING_RE =
-  /最后|结局|从对头变成|变成死党|全剧收尾|最终|真相是|发现白朴一直|还债/
+  /最后|结局|从对头变成|变成死党|全剧收尾|最终|真相是|发现[^，。]{1,6}一直|还债/
 
 /** Stable world / identity / place cues (avoid 忍不住／不是／但是 false hits). */
 const WORLD_RE = /(?<![不只但还正])是(?!的)|家住|住在|同住|租住|同班|邻居|富三代|家里穷|世界观|设定/
@@ -48,7 +48,7 @@ export const QUOTE_MARK_RE = /[“”「」『』‘’"]/
  * Remove quoted dialogue/plot lines from a fact (prompt-facing copy only).
  * Short keyword quotes (≤6 chars, no sentence punctuation) are unquoted; longer spans are dropped
  * together with the colon that introduced them.
- * 「忍不住许愿：“让我变帅一点吧，少点钱也行。”」→「忍不住许愿。」; 「正向只能选“变帅”」→「正向只能选变帅」.
+ * 「忍不住许愿：“……”」→「忍不住许愿。」; 「只能选“A”」→「只能选A」.
  * Same rule as fixed/ref2va/convert_shot_to_ref2va.py scrub_quoted.
  */
 export function scrubQuotedFact(fact: string): string {

@@ -29,7 +29,7 @@ export interface Character {
   costume: string
   signatureProp: string
   /** Optional personality / arc (filled by 从想法一键生成) */
-  /** Shared real name for look variants, e.g. 白朴 for 白朴（变帅前）/白朴（变帅后）; used for subtitles */
+  /** Shared real name for look variants, e.g. 甲 for 甲（之前）/甲（之后）; used for subtitles */
   baseName?: string
   personality?: string
   arc?: string
@@ -37,13 +37,13 @@ export interface Character {
   background?: string
   /** Age (number or text like 17) — injected into prompts; never invent conflicting ages */
   age?: string
-  /** 定妆图文件名/前缀, e.g. bai_pu_plain — exported as characters[].refImage */
+  /** 定妆图文件名/前缀, e.g. char_a_plain — exported as characters[].refImage */
   refImage?: string
   /** visualLock/costume are authoritative (also implied by refImage): regeneration must not overwrite */
   locked?: boolean
   /** 定妆负向提示（导入定妆包） */
   negative?: string
-  /** 定妆包角色键，同人多造型共用，e.g. bai_pu */
+  /** 定妆包角色键，同人多造型共用，e.g. char_a */
   characterKey?: string
   /** GPU 定妆图目录名 images.dir（导入定妆包；导出为 characters[].imagesDir） */
   imagesDir?: string
@@ -168,7 +168,7 @@ export interface Shot {
   voiceOnly?: string[]
   /** Scene time of day carried from script, e.g. 清晨 / 白天 / 黄昏 / 夜 */
   timeOfDay?: string
-  /** Optional short location tag, e.g. 江景别墅卧室 / 教室 (helps sceneId; post-process still derives when absent) */
+  /** Optional short location tag, e.g. 别墅卧室 / 教室 (helps sceneId; post-process still derives when absent) */
   location?: string
 }
 
@@ -185,7 +185,7 @@ export interface Project {
   customGenre?: string
   /** World / setting text from idea pipeline */
   worldSetting?: string
-  /** Key setting facts (hard constraints for LLM prompts), e.g. 白朴是富三代，住高档小区 */
+  /** Key setting facts (hard constraints for LLM prompts), e.g. 甲家境富裕，住高档小区 */
   settingFacts?: string[]
   /** 'idea' when created by 从想法一键生成 — genre template tropes are not injected */
   source?: 'idea'
