@@ -136,6 +136,38 @@
 
 测试：`npx tsx scripts/test-video-export.ts`（长台词、多说话人、无台词、音效、OS、电话画外音、内心画内保留、系统视窗、随后、1s/1.5s 镜头、造型变体、>10s 台词拆分、durationSec 均为 0.5 倍数；约束/描述不进 overlay、引号 UI 保留、提示线索仅限 UI 段、系统角色台词仅 overlay、多人同框警告、龙套 speakerName；并从真实导出《每天变帅一点点》`scripts/fixtures/real-export-meitian.json` 重建项目回归：overlay 27 条、无约束文本）。生成侧提示词要求优先单人镜头（过肩/正反打代替双人同框，最多2人）、龙套写身份前缀。
 
+### 可选：按秒变速节拍 + 对窗/对切拆单人镜（opt-in，默认关闭）
+
+默认导出不变。两个开关都是可选的（`buildVideoPipelineExport(project, { beatMode: 'speed', splitCrossCut: true })`，或 `postProcessExport(exp, { … })`）：
+
+- `beatMode: 'speed'`（`src/lib/beatPrompt.ts`）：把每段 prompt 改写为 `竖屏9:16，N秒单镜` + `时间轴（按秒变速）` 2–3 段【快】/【慢】/【恢复常速】，台词段【慢】且正脸嘴部无遮挡，不含人名与台词原文；附 `beatSegments` / `beatTodo` / `beatRemovedProps` / `beatTrimmedActions` / `promptDefault`。
+- **动作密度**（`src/lib/actionDensity.ts`，H3 实测约 2 秒【快】只能执行 1 个主动作）：【快】段 ≤ **1** 个独立肢体动作；【慢】/【恢复常速】 ≤ **2**；台词段除开口外 ≤ **1**。自动分段会丢掉超额主动作并写入 `beatTrimmedActions`；手写 `beatOverrides` 由 `validateBeatOverride` 按同一上限校验。拉链夹克主体描述补「前襟拉链拉开」；有画内台词的近景镜头写「近景（胸口以上）」。
+- `splitCrossCut: true`（`src/lib/crosscutSplit.ts`）：把「≥2 人 + 对窗/两窗/越窗/隔窄巷/对切」的合并段拆成单人镜 `<id>a`、`<id>b`…（按节拍/画面顺序；每镜 ≥3s，原段允许时 ≥5s，台词镜按 4.5 字/秒+1s 留足；总时长≈原段，必要时略增）。每个子镜只有一个 `characterIds`、自己的节拍、`splitFrom: "<id>"`；台词归说这句的角色所在子镜，其余子镜无台词（安静听、嘴唇闭合）。子镜的 sceneId 取该角色单人镜最常出现的对窗地点（如吴耐 → `alley_window_*`）。拆分在节拍改写之前执行。
+
+**angleKey / carryFromShotId**（开启 splitCrossCut 时，整包每一镜都有）：
+
+- `angleKey = ${sceneId}_${characterIds 排序后用 + 连接 | empty}`，例如 `villa_bedroom_day_c2`、`classroom_day_c2+c3`。
+- `carryFromShotId` = 输出顺序中**更早**、**同一集内**、angleKey 相同的最近一镜的 id；该 angleKey 在每一集的第一次出现为 `null`（承接链永不跨集）。
+- **Runner 规则（首帧来源）**：① `carryFromShotId` 为字符串 → 用该镜的末帧（优先于 carryFromPrev）；② 字段存在且为 `null` → 从定妆包角色参考图起；③ 字段不存在（旧包）→ 按 `carryFromPrev`（true 用上一镜末帧，否则定妆参考图）。**承接帧一律用该镜 LatentSync 之前的干净无声末帧**（不要用对口型后的成片帧）。
+- 非拆分镜的 `carryFromPrev` 保持不变（向后兼容）；拆分子镜的 `carryFromPrev` 仅当 `carryFromShotId` 恰为上一镜时为 true。
+- 校验 `validateCarryChain(shots)`：每个 carryFromShotId 指向更早、同一集、angleKey 相同的镜头，无环、id 唯一。`reviewCarryChains` 供人工核对：`crossEpisode`（应为空）、`placeConflict`（单人镜在他人常驻窗，应为空）、`splitResolved`（拆分后上一镜换成了对方子镜，新链按机位跳过，属预期）、`legacyMismatch`（原有的 carryFromPrev 跨机位/人数变化，runner 以 carryFromShotId 为准）。
+- **地点纠正**（拆分前执行，`correctScenes`）：规则——单人镜被标在「另一角色的对窗常驻地点」（如白朴单人镜标成 `alley_window_*`）且该角色自己的常驻窗明确（单人镜过半数），改为自己的常驻地点、同一时段（目标 sceneId 必须已存在）。文本没有可靠地点线索的镜头用显式覆盖表 `{ shotId: sceneId }`（优先于规则），例如 `scripts/scene-overrides/xiaohuangya-p2-clean.json`（s6-13/s6-16 → 教室）。
+- 台词时长：【慢】台词段 ≥ 台词字数/4.5 + 0.5s；三段放不下时把较短的相邻段并入台词段；拆分子镜按此再留 ≥1s 给另一段，必要时子镜加长。
+- **节奏规则**（`src/lib/rhythm.ts`，同集内）：(a) 不允许连续两镜都 < 4.5s；(b) 每个拆分组前后紧邻镜应 ≥ 6s——不新增镜头，邻镜偏短时把组内最长子镜加长到 ≥ 6s，做不到只报警告；(c) 每集 < 5s 的镜头 ≤ 30%（`--short-ratio` 可调）。`fitSplitRhythm` 在拆分后自动执行，只加长拆分子镜（0.5s 网格、≤ 9s，同步改写子镜时间轴），非拆分镜不动；`applyCrossCutSplit(exp, { rhythm: false })` 可关闭。`checkRhythm` 生成 repack 报告的 `rhythmCheck`（`ok`、`consecutiveShort`、`episodeShortRatio`、`brackets`、`warnings`），拆分时另有 `rhythmFit`（每次加长的说明）。
+- **拉长审查与手写节拍**：报告 `stretchReview` 列出被节奏补齐拉长、且比原节拍自然时长（`sourceSec`）多 ≥ 1.5s 的子镜（`idleSec` = 时长 − max(原节拍, 台词所需)，越大越容易「演员干站」）。对这些镜头可在覆盖文件里写 `beatOverrides: { "s1-1a": [{ start, end, speed, text, dialogue? }] }`，节拍模式下替换自动分段。`validateBeatOverride` 校验：2–4 段、0.5s 网格、每段 ≥ 1s、从 0 连续到镜头时长、有变速对比、text 不含人名/台词原文/第二个人物、动作密度不超过上限（快 ≤1 / 慢·常速 ≤2 / 台词段 ≤1）；有台词的镜头恰好一段 `dialogue: true`，必须【慢】且 ≥ 台词字数/4.5 + 0.5s、不遮嘴；无台词镜头不得有台词段。不合法或 shotId 不存在直接报错；生效的镜头带 `beatOverride: true`。时长变了（如改了节奏参数）旧覆盖会因覆盖不全而报错，需要重写。
+
+命令行（对已定稿的包，不重新合并）：
+
+```bash
+npx tsx scripts/repack.ts in.json out.json --beat-only                    # 只改写节拍
+npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut   # 先拆对窗段再改写节拍
+npx tsx scripts/repack.ts in.json out.json --split-only                   # 只拆分 + angleKey，不改写节拍
+npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut --scene-overrides scripts/scene-overrides/xiaohuangya-p2-clean.json
+npx tsx scripts/repack.ts in.json out.json --beat-only --split-crosscut --short-ratio 0.25   # 节奏 (c) 上限
+```
+
+测试：`npx tsx scripts/test-beat-prompt.ts`、`npx tsx scripts/test-crosscut-split.ts`。
+
 ### 定妆包 h3-character-pack@1（含 LoRA / Omni 训练字段）
 
 Schema 常量：`h3-character-pack@1`（`src/lib/characterPack.ts`）。旧包（无训练字段）仍可导入。

@@ -55,6 +55,43 @@ export interface VideoPipelineShot {
   carryFromPrev?: boolean
   /** optional storyboard location short tag (fed into scene classification when present) */
   location?: string
+  /** 'speed' when the prompt was rewritten as per-second speed beats (opt-in beatMode) */
+  beatMode?: 'speed'
+  /** beat mode: the timeline segments of `prompt` (seconds, speed tag, dialogue/lip-sync flags) */
+  beatSegments?: { start: number; end: number; speed: '快' | '慢' | '恢复常速'; dialogue: boolean; lipSync: boolean }[]
+  /** beat mode: small hand-prop clauses dropped from the prompt (TODO: re-add in post if story-critical) */
+  beatRemovedProps?: string[]
+  /** beat mode: review notes where the beat split looked questionable */
+  beatTodo?: string[]
+  /** beats come from an explicit beatOverrides entry (hand-written), not the automatic split */
+  beatOverride?: boolean
+  /** main actions dropped by the beat action-density cap (快 ≤ 1, 慢/常速 ≤ 2, dialogue segment ≤ 1) */
+  beatTrimmedActions?: string[]
+  /** beat mode: the default (non-beat) prompt, kept for comparison / re-conversion */
+  promptDefault?: string
+  /** place slug of sceneId (sceneContinuity), e.g. villa_bedroom */
+  placeKey?: string
+  /** time band of sceneId (sceneContinuity), e.g. day */
+  timeBand?: string
+  /** opt-in splitCrossCut: id of the two-person cross-cut segment this solo child was split from */
+  splitFrom?: string
+  /**
+   * opt-in splitCrossCut: camera-angle continuity key = `${sceneId}_${sorted characterIds joined '+' | 'empty'}`,
+   * e.g. villa_bedroom_day_c2. Set on every shot of a split pack.
+   */
+  angleKey?: string
+  /**
+   * opt-in splitCrossCut: most recent earlier shot (output order) IN THE SAME EPISODE with the same angleKey;
+   * null = first shot of that angleKey within its episode (chains never cross an episode boundary).
+   * Runner rule (FL2V first frame):
+   *  1. key present and a string → start from that shot's last frame (wins over carryFromPrev);
+   *  2. key present and null → start from the character-pack ref image (ignore carryFromPrev);
+   *  3. key absent (legacy pack) → carryFromPrev=true uses the previous shot's last frame, else the pack ref.
+   * The carried frame is always the clean, silent, pre-LatentSync last frame of the source shot (never the lip-synced render).
+   * carryFromPrev is kept unchanged on non-split shots for backward compat; on split children it is true only when
+   * carryFromShotId is the immediately previous shot.
+   */
+  carryFromShotId?: string | null
 }
 
 export interface VideoPipelineWarning {
@@ -74,6 +111,12 @@ export interface VideoPipelineOptions {
   segmentMinSec?: number
   /** merged segment max seconds (default 9) */
   segmentMaxSec?: number
+  /** 'speed' = opt-in per-second speed-beat prompts (时间轴（按秒变速）); default 'off' keeps the existing prompts */
+  beatMode?: 'off' | 'speed'
+  /** opt-in: split two-person facing-window / cross-cut segments into solo shots + set angleKey/carryFromShotId (default false) */
+  splitCrossCut?: boolean
+  /** with splitCrossCut: explicit { shotId: sceneId } place corrections */
+  sceneOverrides?: Record<string, string>
 }
 
 export interface VideoPipelineExport {
@@ -895,6 +938,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     segmentMinSec: opts.segmentMinSec,
     segmentMaxSec: opts.segmentMaxSec,
     genre: project.genre,
+    beatMode: opts.beatMode,
+    splitCrossCut: opts.splitCrossCut,
+    sceneOverrides: opts.sceneOverrides,
   })
 }
 

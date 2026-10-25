@@ -1,24 +1,62 @@
 /**
- * npx tsx scripts/repack.ts <in-pack.json> [out.json] [--no-merge] [--genre 都市逆袭]
+ * npx tsx scripts/repack.ts <in-pack.json> [out.json] [--no-merge] [--genre 都市逆袭] [--beat-mode speed] [--beat-only]
+ *   --beat-mode speed : opt-in per-second speed-beat prompts (时间轴（按秒变速）) as the last pass
+ *   --beat-only       : only convert prompts to speed beats (no re-merge / re-sanitize of an already final pack)
+ *   --split-crosscut  : opt-in split of two-person facing-window / cross-cut segments into solo shots <id>a/<id>b…,
+ *                       plus angleKey / carryFromShotId on every shot (runs before beat mode; works with --beat-only)
+ *   --split-only      : only the cross-cut split + angle keys on an already final pack (no beat, no re-merge)
+ *   --short-ratio 0.3 : rhythm (c) cap of <5 s shots per episode (report + split-child fit); report section rhythmCheck
+ *   --scene-overrides f.json : with split: explicit { "shotId": "sceneId" } place corrections (win over the home rule);
+ *                              the same file's `beatOverrides` { shotId: [{start,end,speed,text,dialogue?}] } replace the
+ *                              automatic beats in beat mode (validated). Report: stretchReview (stretched split children)
  * Re-apply the deterministic video-pipeline@1 post-processing (style lock, 5–9s merge,
  * time/offlist/logo fixes, sceneId/carryFromPrev) to an already exported pack, and print stats.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segmentPost'
 import type { VideoPipelineExport } from '../src/lib/videoExport'
+import { applyBeatMode, type BeatOverrides } from '../src/lib/beatPrompt'
+import { checkRhythm, stretchReview } from '../src/lib/rhythm'
+import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
 const flags = new Set(args.filter((a) => a.startsWith('--')))
 const gi = args.indexOf('--genre')
 const genre = gi >= 0 ? args[gi + 1] : ''
-const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1))
+const bi = args.indexOf('--beat-mode')
+const beatMode = bi >= 0 && args[bi + 1] === 'speed' ? 'speed' : flags.has('--beat-only') ? 'speed' : 'off'
+const ri = args.indexOf('--short-ratio')
+const rhythm = ri >= 0 ? { maxShortRatio: Number(args[ri + 1]) } : {}
+const oi = args.indexOf('--scene-overrides')
+const overridesFile = oi >= 0 ? JSON.parse(readFileSync(args[oi + 1], 'utf8')) : {}
+const sceneOverrides: Record<string, string> | undefined = overridesFile.overrides
+// explicit per-shot beats (beat mode only), validated in applyBeatMode
+const beatOverrides: BeatOverrides | undefined = overridesFile.beatOverrides
+const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1))
 const [inp, outp] = pos
 if (!inp) {
-  console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G]')
+  console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G] [--beat-mode speed] [--beat-only]')
   process.exit(1)
 }
 const pack = JSON.parse(readFileSync(inp, 'utf8')) as VideoPipelineExport
-const { exp, stats } = postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre })
+const splitCrossCut = flags.has('--split-crosscut') || flags.has('--split-only')
+let splits: SplitInfo[] | null = null
+let sceneCorrections: SceneCorrection[] | null = null
+let rhythmNotes: string[] | null = null
+const lite = flags.has('--beat-only') || flags.has('--split-only')
+const { exp, stats } = lite
+  ? (() => {
+      let e = pack
+      if (splitCrossCut) {
+        const r = applyCrossCutSplit(e, { sceneOverrides, rhythm })
+        e = r.exp
+        splits = r.splits
+        sceneCorrections = r.corrections
+        rhythmNotes = r.rhythmNotes
+      }
+      return { exp: flags.has('--beat-only') ? applyBeatMode(e, { beatOverrides }) : e, stats: null }
+    })()
+  : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides })
 const out = outp || inp.replace(/\.json$/, '-p2.json')
 writeFileSync(out, JSON.stringify(exp, null, 2) + '\n')
 
@@ -72,6 +110,33 @@ console.log(
       offscreenLines: exp.shots.filter((s) => s.speakerOffscreen || s.dialogueLines?.some((l) => l.voiceOnly)).length,
       warnings: warn,
       stats,
+      ...(beatMode === 'speed'
+        ? {
+            beatMode,
+            beatShots: exp.shots.filter((s) => s.beatMode === 'speed').length,
+            beatTodoShots: exp.shots.filter((s) => s.beatTodo?.length).map((s) => ({ id: s.id, todo: s.beatTodo })),
+            beatRemovedProps: exp.shots.filter((s) => s.beatRemovedProps?.length).map((s) => ({ id: s.id, removed: s.beatRemovedProps })),
+          }
+        : {}),
+      ...(splitCrossCut
+        ? {
+            crossCutSplits: (splits ?? exp.shots.filter((s) => s.splitFrom).reduce<{ id: string; children: string[] }[]>((acc, s) => {
+              const g = acc.find((x) => x.id === s.splitFrom)
+              if (g) g.children.push(s.id)
+              else acc.push({ id: s.splitFrom!, children: [s.id] })
+              return acc
+            }, [])),
+            sceneCorrections,
+            carryChainErrors: validateCarryChain(exp.shots),
+            carryChainReview: reviewCarryChains(exp.shots),
+            rhythmFit: rhythmNotes,
+            stretchReview: splits ? stretchReview(splits, beatMode === 'speed' ? Object.keys(beatOverrides || {}) : []) : null,
+          }
+        : {}),
+      rhythmCheck: (() => {
+        const r = checkRhythm(exp.shots, rhythm)
+        return { ok: r.ok, options: r.options, episodeShortRatio: r.episodeShortRatio, consecutiveShort: r.consecutiveShort, brackets: r.brackets, warnings: r.warnings }
+      })(),
     },
     null,
     2,
