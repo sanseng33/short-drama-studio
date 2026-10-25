@@ -24,6 +24,8 @@ import { applyCastConsistency } from '../src/lib/castConsistency'
 import { EMOTION_RE, HOLD_EXPRESSION, isVoiceClause, parseRewriteNote, promptTextRisks, QUOTE_RE, splitVoice, stripVoiceAdverbs, visualizePrompt } from '../src/lib/emotionVisual'
 import { dialogueNeedSec, dialogueOverruns, dialogueSegmentNeeds, speechSec } from '../src/lib/dialogueTiming'
 import { CONTEXTUAL_EMOTION, EMOTION_VISIBLE } from '../src/lib/emotionVocab'
+import { BAND_NEGATIVE, carrySegmentSubjects, emptyShotRisks, FIRST_LINE_NO_TEXT, rewriteCaptionWords, scrubEmptyStyle, speechChars, withFirstLineNoText } from '../src/lib/renderHygiene'
+import { isPropNegLine, qualifyTextProps } from '../src/lib/textProps'
 
 let pass = 0
 const t = (name: string, fn: () => void) => {
@@ -217,7 +219,7 @@ t('finalizePrompt: no 【】, pacing words, framing words + fixed no-text line o
   assert.ok(c.includes('0–2秒，动作利落快速：他转身') && c.includes('2–4秒，恢复正常节奏：他坐下注意'), c)
   assert.ok(c.includes(`镜头：${CLOSEUP_CAMERA}。`), c) // push-in dropped (framing guard)
   assert.ok(!/侧打|半身|过肩/.test(c), c)
-  assert.ok(c.endsWith(`\n景别：${CLOSEUP_CAMERA}，单人，${CLOSEUP_FRAMING_GUARD}。\n${NO_TEXT_CONSTRAINT}`), c)
+  assert.ok(c.endsWith(`\n景别：${CLOSEUP_CAMERA}，单人，${CLOSEUP_FRAMING_GUARD}。\n${BAND_NEGATIVE}\n${NO_TEXT_CONSTRAINT}`), c)
   assert.equal(finalizePrompt(c, 'closeup_dialogue'), c, 'idempotent')
   const m = finalizePrompt(finalizePrompt(raw, 'closeup_dialogue'), 'medium')
   assert.ok(m.includes('景别：中景。') && !m.includes('景别：近景') && m.split(NO_TEXT_CONSTRAINT).length === 2, m)
@@ -522,7 +524,7 @@ t('annotateShots applies proposals only without hand data; wardrobeReport flags 
   t('dialogue segment order: lead-in → speaking cue → 说完…; a line starting at 0 s drops 开口前… (logged)', () => {
     const o = annotateShots(applyBeatMode(pack([merged]))).shots[0]
     const d = o.prompt.split('\n').find((l) => l.includes(BEAT_MOUTH_CUE))!
-    assert.ok(d.indexOf('说完') > d.indexOf(BEAT_MOUTH_CUE), d)
+    assert.ok(d.indexOf('收声后') > d.indexOf(BEAT_MOUTH_CUE), d) // 说完… → 收声后… in the final render pass (caption-echo)
     assert.equal(o.beatSegments!.find((g) => g.lipSync)!.start, 0)
     assert.ok(!o.prompt.includes('开口前'), 'no time before speech at 0 s')
     assert.ok(o.beatTrimmedActions!.some((x) => x.includes('无开口前时间') && x.includes('开口前眼神先飘远')))
@@ -609,7 +611,7 @@ t('annotateShots applies proposals only without hand data; wardrobeReport flags 
     })
     const o = annotateShots(applyBeatMode(pack([sh]))).shots[0]
     const d = o.prompt.split('\n').find((l) => l.includes(BEAT_MOUTH_CUE))!
-    assert.ok(!d.includes('拢在嘴边') && /张大?嘴喊/.test(d) && d.includes('下巴前伸'), d)
+    assert.ok(!d.includes('拢在嘴边') && /张大?嘴/.test(d) && !d.replace(BEAT_MOUTH_CUE, '').includes('喊') && d.includes('下巴前伸'), d) // 张嘴喊 → 张大嘴 (caption echo)
     assert.ok(o.beatTodo!.some((x) => x.includes('遮挡嘴部') && x.includes('拢在嘴边')), JSON.stringify(o.beatTodo))
     assert.ok(o.prompt.split('\n').some((l) => BEAT_LINE_RE.test(l) && !l.includes(BEAT_MOUTH_CUE) && l.includes('喝水')), 'outside the line it stays')
     assert.deepEqual(mouthOcclusionRisks(o.prompt), [])
@@ -883,7 +885,8 @@ if (existsSync(P2)) {
       const r = renderPrompt(raw, 'medium')
       const lines = r.prompt.split('\n')
       assert.equal(lines[lines.length - 1], NO_TEXT_CONSTRAINT)
-      assert.ok(lines[lines.length - 2].startsWith('景别：'))
+      assert.equal(lines[lines.length - 2], BAND_NEGATIVE)
+      assert.ok(lines[lines.length - 3].startsWith('景别：'))
       assert.deepEqual(promptTextRisks(r.prompt), [], r.prompt)
       assert.ok(r.notes.some((n) => n.startsWith('情绪词改为可见动作：')) && r.notes.some((n) => n.startsWith('删去心理活动：')) && r.notes.some((n) => n.startsWith('删去引号内容：')), r.notes.join('|'))
       assert.deepEqual(parseRewriteNote(r.notes.find((n) => n.startsWith('删去心理活动：'))!), { kind: 'inner', from: '心里打鼓', to: '' })
@@ -1195,6 +1198,120 @@ if (existsSync(FIX)) {
     assert.equal(rep.wardrobe.c2.timelineSource, 'auto-proposed (review)')
     const e = JSON.parse(readFileSync(out, 'utf8')) as VideoPipelineExport
     assert.deepEqual(missingAnnotations(e), [])
+  })
+}
+
+// ---------------- round 12: text-bearing props, empty-shot hygiene, subject carry, caption-echo words ----------------
+{
+  t('textProps: first drawable mention qualified in place, one consolidated negative line, guards, idempotent', () => {
+    const r = qualifyTextProps('0–2秒，正常节奏：他把一摞卷边旧杂志压在桌上，又翻了翻杂志。')
+    assert.equal(r.prompt, '0–2秒，正常节奏：他把一摞封面纯色无字的卷边旧杂志压在桌上，又翻了翻杂志。')
+    assert.equal(r.negLine, '杂志封面与纸页空白无印刷。')
+    assert.ok(isPropNegLine(r.negLine))
+    assert.deepEqual(qualifyTextProps(r.prompt).prompt, r.prompt, 'idempotent')
+    // look-alikes are not props: 纸巾 / 书包 / 自信 / 笔记本电脑 is a device, not a notebook
+    for (const x of ['他用纸巾擦手。', '他背起书包。', '他自信地笑。']) assert.deepEqual(qualifyTextProps(x).hits, [], x)
+    assert.ok(qualifyTextProps('他合上笔记本电脑。').prompt.includes('屏幕无界面的笔记本电脑'))
+    // a device qualifier never re-qualifies its own 屏幕; the device negative covers a bare 屏幕
+    const ph = qualifyTextProps('他把手机举到眼前，盯着屏幕。')
+    assert.equal(ph.prompt, '他把屏幕无界面的手机举到眼前，盯着无界面的屏幕。')
+    assert.equal(ph.negLine, '手机屏幕只有柔和的光、无界面。')
+    // a screen used as light / the 光线 line: negative only
+    const lt = qualifyTextProps('屏幕的光扫过他的眼皮。\n光线：手机微光贴脸。')
+    assert.ok(!lt.prompt.includes('无界面') && lt.hits.every((h) => h.mode === 'negOnly') && lt.negLine.includes('手机屏幕只有柔和的光'), JSON.stringify(lt))
+    // a sign inside the 环境陈设 list is dropped; 纸 counts only as 纸上 / 纸面
+    const sd = qualifyTextProps('环境陈设：旧书架、霓虹招牌、窗台。')
+    assert.equal(sd.prompt, '环境陈设：旧书架、窗台。')
+    assert.equal(sd.negLine, '')
+    assert.ok(qualifyTextProps('笔尖在纸上划。').prompt.includes('空白的纸上'))
+    // two nouns sharing one qualifier: written once, both named in the negative line
+    const two = qualifyTextProps('他翻开书，又按住课本边角。')
+    assert.equal(two.prompt, '他翻开封面纯色、内页空白的书，又按住课本边角。')
+    assert.equal(two.negLine, '书封面与内页空白无字；课本封面与内页空白无字。')
+    // whole render pass: the negative line sits before 景别, re-render does not duplicate it
+    const rp = renderPrompt('竖屏9:16，5秒单镜。白天，房间，单人。\n0–5秒，正常节奏：他翻开一本课本。', 'medium')
+    const ls = rp.prompt.split('\n')
+    assert.equal(ls[ls.length - 4], '课本封面与内页空白无字。', rp.prompt)
+    assert.equal(renderPrompt(rp.prompt, 'medium').prompt, rp.prompt)
+  })
+
+  const EMPTY_SRC = '竖屏9:16，6秒单镜。夜，窗外特写，空镜无人物。\n时间轴（按秒变速）：\n0–3秒，正常节奏：雨水顺着玻璃往下淌，无人物，挑眉、下巴一抬。\n3–6秒，正常节奏：纸箱砰地落到窗台上，盖子弹开一角。\n镜头：特写，固定机位。\n风格：真人实拍质感，自然哑光肤质，有毛孔细节，不打蜡不磨皮，真实运动速度，禁止二次元漫画脸。\n限制：无任何文字、字幕；服装无标志、校徽、刺绣字样。'
+  const EMPTY_CTX = { onscreen: [] as string[], wardrobeState: {}, chars: [] }
+  t('empty shot: acting fragments, skin / face style words and the wardrobe limit dropped; gate clean; idempotent', () => {
+    const r = renderPrompt(EMPTY_SRC, 'empty', EMPTY_CTX)
+    assert.ok(!/挑眉|下巴/.test(r.prompt), r.prompt)
+    assert.ok(r.prompt.includes('风格：真人实拍质感，真实运动速度。'), r.prompt)
+    assert.ok(r.prompt.includes('限制：无任何文字、字幕。'), r.prompt)
+    assert.ok(r.prompt.includes('无人物'), 'the no-person negation stays')
+    assert.deepEqual(emptyShotRisks(r.prompt), [])
+    assert.ok(r.notes.some((n) => n.startsWith('空镜，删去人物表演：挑眉')), r.notes.join('|'))
+    assert.equal(renderPrompt(r.prompt, 'empty', EMPTY_CTX).prompt, r.prompt)
+    // the wardrobe carry constraint keeps only its prop part in an empty shot
+    assert.ok(scrubEmptyStyle('限制：服装/道具/站位：保持与上一镜末帧一致，禁止换装、禁止换回定妆静帧服装、禁止引入定妆包道具除非上一镜已有。').prompt.includes('道具：保持与上一镜末帧一致，禁止引入定妆包道具除非上一镜已有'))
+    // a person shot keeps its style / acting text
+    const p = renderPrompt(EMPTY_SRC.replace('空镜无人物', '单人').replace('无人物，', ''), 'medium', { onscreen: ['a1'], wardrobeState: {}, chars: [] })
+    assert.ok(p.prompt.includes('挑眉') && p.prompt.includes('自然哑光肤质'), p.prompt)
+  })
+  t('empty-shot gate: person / acting tokens left in an empty shot hold it (exit-4 class); person shots unaffected', () => {
+    assert.deepEqual(emptyShotRisks('竖屏9:16，5秒单镜。空镜无人物。\n0–5秒，正常节奏：窗帘晃动，眼神一沉。'), ['眼神'])
+    assert.deepEqual(emptyShotRisks('竖屏9:16，5秒单镜。空镜无人物。\n0–5秒，正常节奏：杯子倒下，靠液体流动表现冲击。\n风格：禁止二次元漫画脸。'), [])
+    const bad = SH({ id: 'em', characterIds: [], framing: 'empty', wardrobeState: {}, prompt: '竖屏9:16，5秒单镜。空镜无人物。\n0–5秒，正常节奏：窗帘晃动，他抬头。' })
+    const ok = SH({ id: 'pe', framing: 'medium', wardrobeState: {}, prompt: '竖屏9:16，5秒单镜。单人。\n0–5秒，正常节奏：他抬头。' })
+    const h = applyRenderHold(pack([bad, ok])).renderHold
+    assert.deepEqual(h.map((x) => x.shotId), ['em'])
+    assert.ok(h[0].reasons.some((x) => x.startsWith('empty:')), JSON.stringify(h))
+  })
+  t('performance rule: an empty shot (no cast) never gets a 神情透出… clause', () => {
+    const src = SH({ id: 'pf', characterIds: [], durationSec: 6, emotion: '升级的挑衅→越来越离谱', camera: '特写', size: '特写', prompt: '竖屏9:16。夜，窗外特写。主体：窗玻璃。时间轴（一镜6秒，小节拍）：0–3s雨水顺着玻璃往下淌；3–6s随后纸箱砰地落到窗台上。镜头：特写。' })
+    const r = buildBeatPrompt(src, [])
+    assert.ok(!r.prompt.includes('神情透出'), r.prompt)
+    const person = buildBeatPrompt({ ...src, characterIds: ['a1'], prompt: src.prompt.replace('主体：窗玻璃', '主体：17岁东亚少年，米白夹克') }, chars)
+    assert.ok(person.prompt.includes('神情透出'), 'person shots keep the rule: ' + person.prompt)
+  })
+  t('subject carry: a subjectless motion segment inherits the previous object subject; unresolved flagged, nothing invented', () => {
+    const r = carrySegmentSubjects('0–2秒，正常节奏：纸箱砰地落到地上，盖子弹开一角，靠纸板抖动表现力度。\n2–4秒，正常节奏：顺着台阶往下滚。', true)
+    assert.equal(r.prompt.split('\n')[1], '2–4秒，正常节奏：纸箱顺着台阶往下滚。')
+    assert.deepEqual(r.notes, ['分段补主语：顺着台阶往下滚 ← 纸箱'])
+    assert.deepEqual(carrySegmentSubjects(r.prompt, true).notes, [], 'idempotent')
+    const u = carrySegmentSubjects('0–2秒，正常节奏：画面静止，只有细微的光影与物件动态。\n2–4秒，正常节奏：往下滑。', true)
+    assert.ok(u.prompt.endsWith('：往下滑。') && u.notes[0].startsWith('空镜分段主语不明：'), JSON.stringify(u))
+    // person shot: a path phrase is the person's own move (no carry); an object falling carries the object
+    assert.deepEqual(carrySegmentSubjects('0–2秒，正常节奏：他推开门。\n2–4秒，正常节奏：顺着走廊往前走。', false).notes, [])
+    assert.equal(carrySegmentSubjects('0–2秒，正常节奏：他手一松，钥匙啪地砸在桌沿。\n2–4秒，正常节奏：顺着桌腿往下掉。', false).prompt.split('\n')[1], '2–4秒，正常节奏：钥匙顺着桌腿往下掉。')
+  })
+  t('caption-echo words: 说完/喊完/嘀咕/画外有人说话… → visual-time phrasing; the lip-sync cue keeps its 说', () => {
+    const cue = '正脸朝镜头开口说一句短话，嘴部清晰可见、无遮挡'
+    const cases: [string, string][] = [
+      [`${cue}；说完嘴角往下压了一下。`, `${cue}；收声后嘴角往下压了一下。`],
+      [`${cue}；他说完。`, `${cue}；他收声。`],
+      ['喊完低下头。', '收声后低下头。'],
+      ['说完这句嘴唇抿了一下。', '收声后嘴唇抿了一下。'],
+      ['他抬头对着空气嘀咕，偏了下头。', '他抬头嘴唇轻轻动了动，偏了下头。'],
+      ['画外有人说话，画面人物停住倾听，嘴唇闭合不说话。', '画外传来人声，画面人物停住倾听，嘴唇闭合。'],
+      ['嘴唇闭合安静听对面说话。', '嘴唇闭合安静听着对面。'],
+      ['笔尖点了一下才说话。', '笔尖点了一下才开口。'],
+      ['他双手撑在栏杆上喊话。', '他双手撑在栏杆上张大嘴。'],
+      ['眉头先皱起半拍才开口，他问话，眼神打量。', '眉头先皱起半拍才开口，眼神打量。'],
+      ['说着说着笑了。', '渐渐笑了。'],
+      ['一点说不清的情绪。', '一点难以分辨的情绪。'],
+    ]
+    for (const [a, b] of cases) assert.equal(rewriteCaptionWords(a).prompt, b, a)
+    const rr = rewriteCaptionWords(`说完低头；${cue}；说完抬头。`)
+    assert.deepEqual(rr.notes, ['台词元词改写：说完 → 收声后 ×2'])
+    assert.equal(speechChars(rr.prompt), 1)
+    assert.equal(rewriteCaptionWords(rr.prompt).prompt, rr.prompt, 'idempotent')
+  })
+  t('render tail: 实拍画面，无字幕 on the first line, band negative right before the no-text line, 景别 contents unchanged', () => {
+    assert.equal(withFirstLineNoText('竖屏9:16，5秒单镜。白天，房间，单人。'), `竖屏9:16，5秒单镜。${FIRST_LINE_NO_TEXT}白天，房间，单人。`)
+    assert.equal(withFirstLineNoText('竖屏9:16。白天，房间。'), `竖屏9:16。${FIRST_LINE_NO_TEXT}白天，房间。`)
+    assert.equal(withFirstLineNoText('白天，房间。'), '白天，房间。', 'no header: unchanged')
+    const r = renderPrompt('竖屏9:16，5秒单镜。白天，房间，单人。\n0–5秒，正常节奏：他抬头。', 'medium')
+    const ls = r.prompt.split('\n')
+    assert.ok(ls[0].startsWith(`竖屏9:16，5秒单镜。${FIRST_LINE_NO_TEXT}`), ls[0])
+    assert.deepEqual(ls.slice(-3), ['景别：中景。', BAND_NEGATIVE, NO_TEXT_CONSTRAINT])
+    assert.equal(r.prompt.split(FIRST_LINE_NO_TEXT).length, 2)
+    assert.equal(renderPrompt(r.prompt, 'medium').prompt, r.prompt, 'idempotent')
+    assert.equal(renderPrompt(r.prompt, 'empty').prompt.split(BAND_NEGATIVE).length, 2, 're-render with another framing: one band line')
   })
 }
 

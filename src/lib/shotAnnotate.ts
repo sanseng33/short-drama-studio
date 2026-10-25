@@ -23,6 +23,17 @@ import { clearMouth, MOUTH_CLEAR_MARK } from './mouthOcclusion'
 import { speechSec, type SpeechRate } from './dialogueTiming'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { sha1Hex } from './hash'
+import { isPropNegLine, qualifyTextProps, textPropNote } from './textProps'
+import {
+  ACTING_RE,
+  BAND_NEGATIVE,
+  carrySegmentSubjects,
+  EMPTY_SCRUB_NOTE,
+  rewriteCaptionWords,
+  scrubEmptyStyle,
+  stripFirstLineNoText,
+  withFirstLineNoText,
+} from './renderHygiene'
 import { autoVoices, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
 
 export type Framing = 'closeup_dialogue' | 'medium' | 'full' | 'empty'
@@ -200,9 +211,9 @@ const SPEED_TAG_WORDS: Record<string, string> = { 快: '动作利落快速', 慢
 
 /** remove the lines this module appends (idempotent re-annotation) */
 export function stripRenderLines(prompt: string): string {
-  return (prompt || '')
+  return stripFirstLineNoText(prompt || '')
     .split('\n')
-    .filter((l) => !l.startsWith('景别：') && l.trim() !== NO_TEXT_CONSTRAINT)
+    .filter((l) => !l.startsWith('景别：') && l.trim() !== NO_TEXT_CONSTRAINT && l.trim() !== BAND_NEGATIVE && !isPropNegLine(l))
     .join('\n')
     .replace(new RegExp(NO_TEXT_CONSTRAINT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '')
     .trimEnd()
@@ -391,11 +402,12 @@ export function dropContradictions(prompt: string, onscreen: number): { prompt: 
       if (lab) guarded = /^(?:风格|限制|光线|景别)$/.test(lab)
       const body = lab ? tok.replace(/^\s*[^：:，。]{1,8}[：:]/, '') : tok
       const text = body.replace(/[，,；;。]$/, '').trim()
-      if (guarded || !text || !bad.test(text) || (onscreen === 0 && /没有人物|无人物|不出现人物/.test(text))) {
+      const acting = onscreen === 0 && !bad.test(text) && ACTING_RE.test(text)
+      if (guarded || !text || !(bad.test(text) || acting) || (onscreen === 0 && /没有人物|无人物|不出现人物/.test(text))) {
         kept.push(tok)
         continue
       }
-      notes.push(`${onscreen > 0 ? '有人物入画，删去' : '空镜，删去人物描述'}：${text}`)
+      notes.push(acting ? `${EMPTY_SCRUB_NOTE}${text}` : `${onscreen > 0 ? '有人物入画，删去' : '空镜，删去人物描述'}：${text}`)
       changed = true
       const sep = tok.slice(-1)
       if (lab) kept.push(tok.slice(0, tok.length - body.length))
@@ -453,7 +465,26 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   notes.push(...mo.notes)
   if (ctx && n >= 2) notes.push(...unclearPronouns(p).map((c) => `${UNCLEAR_PRONOUN_NOTE}${c}`))
   p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${normalizeCamera(cam, framing, n)}`)
-  return { prompt: `${p}\n景别：${framingWords(framing, n)}。\n${NO_TEXT_CONSTRAINT}`, notes }
+  // empty shot: no skin / face style words, no wardrobe limits (nothing to wear them)
+  if (framing === 'empty') {
+    const es = scrubEmptyStyle(p)
+    p = es.prompt
+    notes.push(...es.notes)
+  }
+  // a subjectless motion segment (顺着…往下溜) inherits the previous segment's object subject
+  const sc = carrySegmentSubjects(p, n === 0)
+  p = sc.prompt
+  notes.push(...sc.notes)
+  // text-bearing props: blank surface in place + one consolidated negative line
+  const tp = qualifyTextProps(p)
+  p = tp.prompt
+  notes.push(...tp.hits.map(textPropNote))
+  // speech meta-words are echoed as burned-in captions: visual-time phrasing
+  const cw = rewriteCaptionWords(p)
+  p = withFirstLineNoText(cw.prompt)
+  notes.push(...cw.notes)
+  const tail = [tp.negLine, `景别：${framingWords(framing, n)}。`, BAND_NEGATIVE, NO_TEXT_CONSTRAINT].filter(Boolean).join('\n')
+  return { prompt: `${p}\n${tail}`, notes }
 }
 function framingWords(f: Framing, n: number): string {
   if (f === 'medium' && n >= 2) return `${n === 2 ? '双人' : '多人'}中景，${n === 2 ? '两人' : '多人'}同框`

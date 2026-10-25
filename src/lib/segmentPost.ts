@@ -49,7 +49,7 @@ export interface PostProcessOptions {
 export const SEGMENT_MIN_SEC = 5
 export const SEGMENT_MAX_SEC = 9
 export const NO_BADGE_CONSTRAINT = '服装无任何标志、校徽、刺绣字样'
-export const OFFSCREEN_VOICE_CONSTRAINT = '画外人声的说话人不出镜，画面只出现指定角色'
+export const OFFSCREEN_VOICE_CONSTRAINT = '画外人声的来源不出镜，画面只出现指定角色'
 /** Hard no-glyph ban: the model paints dialogue / UI as on-screen text otherwise. */
 export const NO_GLYPH_CONSTRAINT = '画面禁止出现任何字幕、汉字、字母、数字、Logo、系统面板文字'
 /** Dialogue substrings shorter than this are not stripped (avoid eating names / common words). */

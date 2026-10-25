@@ -114,7 +114,7 @@ t('系统视窗 → overlayText, prompt indirect, 系统 not speaker', () => {
 t('随后 → sequential segments with action parts', () => {
   const p = parent('t9')
   assert.deepEqual(p.map((s) => s.action), ['林川拿起芯片', '插入电脑'])
-  assert.ok(p[1].prompt.includes('插入电脑') && !p[1].prompt.includes('随后'))
+  assert.ok(/插入(?:屏幕无界面的)?电脑/.test(p[1].prompt) && !p[1].prompt.includes('随后')) // text-bearing prop qualified in place (textProps)
   p.forEach((s) => assert.ok(s.durationSec >= 2))
 })
 t('【音效】 removed from dialogue', () => { const [s] = parent('t10'); assert.deepEqual(s.sfx, ['玻璃碎裂']); assert.equal(s.dialogue, '谁？'); assert.equal(s.speaker, 'c2') })

@@ -138,7 +138,7 @@ t('off-screen voice: 慢 but mouth closed, no lip-sync', () => {
   assert.equal(slow[0].lipSync, false)
   assert.ok(r.prompt.includes('嘴唇闭合不说话'), "r.prompt.includes('嘴唇闭合不说话')")
   assert.ok(!r.prompt.includes('王阿姨'), 'bit-part name stripped')
-  assert.ok(r.prompt.includes('画外人声的说话人不出镜'), "r.prompt.includes('画外人声的说话人不出镜')")
+  assert.ok(r.prompt.includes('画外人声的来源不出镜'), "r.prompt.includes('画外人声的来源不出镜')") // round 12: no 说 in the off-screen constraint (caption echo)
 })
 
 t('mouth-blocking clause removed from the talking segment only', () => {

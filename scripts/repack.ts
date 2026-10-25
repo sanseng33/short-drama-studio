@@ -36,6 +36,8 @@ import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotatio
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
 import { applyRenderHold, shotMouthRisks } from '../src/lib/renderHold'
+import { CAPTION_NOTE, parseCaptionNote, EMPTY_SCRUB_NOTE, EMPTY_STYLE_NOTE, emptyShotRisks, speechChars, SUBJECT_CARRY_NOTE, SUBJECT_UNRESOLVED_NOTE } from '../src/lib/renderHygiene'
+import { TEXT_PROP_NOTE } from '../src/lib/textProps'
 import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
 import { DEFAULT_DIALOGUE_PAD, dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
@@ -96,6 +98,12 @@ if (missing.length) {
 const textRisks = exp.shots.map((s) => ({ id: s.id, risks: promptTextRisks(s.prompt) })).filter((x) => x.risks.length)
 if (textRisks.length) {
   console.error(`prompts with drawable text (${textRisks.length}):\n  ${textRisks.map((x) => `${x.id}: ${x.risks.join('; ')}`).join('\n  ')}`)
+  process.exit(4)
+}
+// an empty shot whose final prompt still asks for a person / acting (exit-4 class: drawable text / faces)
+const emptyRisks = exp.shots.filter((s) => s.framing === 'empty').map((s) => ({ id: s.id, risks: emptyShotRisks(s.prompt) })).filter((x) => x.risks.length)
+if (emptyRisks.length) {
+  console.error(`empty shots with person / acting tokens (${emptyRisks.length}):\n  ${emptyRisks.map((x) => `${x.id}: ${x.risks.join('/')}`).join('\n  ')}`)
   process.exit(4)
 }
 // nothing may hide the mouth while a line is spoken (lip-sync)
@@ -185,6 +193,39 @@ console.log(
       deliveryHints: exp.shots.flatMap((s) => (s.dialogueLines || []).filter((l) => l.delivery).map((l) => ({ id: s.id, episode: s.episode, text: l.text, delivery: l.delivery }))),
       // shots with a blocking issue left after every rule (shot.hold); the GPU runner defers them
       renderHold,
+      // round 12 caption / text hygiene (final render pass; counts parsed from renderReview notes)
+      ...(() => {
+        const notesOf = (pre: string) =>
+          exp.shots.map((s) => ({ id: s.id, episode: s.episode, notes: (s.renderReview || []).filter((x) => x.startsWith(pre)).map((x) => x.slice(pre.length)) })).filter((x) => x.notes.length)
+        const total = (xs: { notes: string[] }[]) => xs.reduce((a, x) => a + x.notes.reduce((b, n) => b + Number(n.match(/ ×(\d+)$/)?.[1] || 1), 0), 0)
+        const props = notesOf(TEXT_PROP_NOTE)
+        const scrub = [...notesOf(EMPTY_SCRUB_NOTE), ...notesOf(EMPTY_STYLE_NOTE), ...notesOf('空镜，删去人物描述：')]
+        const carry = notesOf(SUBJECT_CARRY_NOTE)
+        const unresolved = notesOf(SUBJECT_UNRESOLVED_NOTE)
+        const caps = notesOf(CAPTION_NOTE)
+        const perShot = exp.shots.map((s) => {
+          const after = speechChars(s.prompt)
+          const removed = (s.renderReview || []).map(parseCaptionNote).reduce((a, x) => (x ? a + x.times * (speechChars(x.from) - speechChars(x.to)) : a), 0)
+          return { id: s.id, episode: s.episode, before: after + removed, after }
+        })
+        return {
+          textProps: { count: total(props), shots: props.length, perShot: props },
+          emptyShotScrub: { count: total(scrub), perShot: scrub.reduce<{ id: string; notes: string[] }[]>((a, x) => {
+            const g = a.find((y) => y.id === x.id)
+            if (g) g.notes.push(...x.notes)
+            else a.push({ id: x.id, notes: [...x.notes] })
+            return a
+          }, []) },
+          subjectCarry: { count: total(carry), perShot: carry, unresolved },
+          captionWordRewrites: { count: total(caps), perShot: caps },
+          speechChars: {
+            before: perShot.reduce((a, x) => a + x.before, 0),
+            after: perShot.reduce((a, x) => a + x.after, 0),
+            prompts: perShot.length,
+            perShot: perShot.filter((x) => x.before || x.after),
+          },
+        }
+      })(),
       // estimated speech (chars / rate + pauses) longer than the line's slot: warning only
       speechRate: { ...DEFAULT_SPEECH_RATE, ...speechRate },
       dialogueOverrun: dialogueOverruns(exp.shots, speechRate),

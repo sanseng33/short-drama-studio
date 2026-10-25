@@ -18,6 +18,7 @@ import { EMOTION_VISIBLE } from './emotionVocab'
 import { promptTextRisks } from './emotionVisual'
 import { onscreenCast, unclearPronouns } from './shotAnnotate'
 import { mouthOcclusionRisks, MOUTH_CLEAR_MARK } from './mouthOcclusion'
+import { emptyShotRisks } from './renderHygiene'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 
 export interface RenderHoldEntry {
@@ -66,6 +67,8 @@ export function renderHoldReasons(exp: VideoPipelineExport, opts: { speechRate?:
     if (n >= 2) for (const c of unclearPronouns(s.prompt)) add(s.id, `pronoun: unresolved 他/她 with ${n} on screen: ${c}`)
     for (const d of densityIssues(s)) add(s.id, d)
     for (const r of promptTextRisks(s.prompt)) add(s.id, `text: ${r}`)
+    // an empty shot must not ask for acting / faces (the model draws a person or caption-like text)
+    if (s.framing === 'empty') for (const r of emptyShotRisks(s.prompt)) add(s.id, `empty: person / acting token in an empty shot: ${r}`)
     for (const c of shotMouthRisks(s)) add(s.id, `mouth: occluded while speaking: ${c}`)
     for (const t of s.beatTodo || []) if (t.startsWith(SPEAKER_TODO)) add(s.id, `speaker: ${t}`)
   }

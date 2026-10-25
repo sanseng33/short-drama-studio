@@ -1187,8 +1187,9 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     x.cls = x.cls.filter((c) => !earlier.some((y) => isNearDup(c, y)))
   })
   // performance rule: a segment with no performance (no action, no micro-expression — empty, a hold or only listening)
-  // gets one drawn from the shot's own emotion text; on long shots (≥ LONG_SHOT_SEC) every segment needs one
-  const emo = (s.emotion || '').split(/→|->/).map((x) => stripNames(x.trim(), variants, refOf)).filter((x) => paced(x) >= 2)
+  // gets one drawn from the shot's own emotion text; on long shots (≥ LONG_SHOT_SEC) every segment needs one.
+  // An empty shot (no cast) has nobody to perform it: no 神情 clause (it would surface as face acting).
+  const emo = cast.length === 0 ? [] : (s.emotion || '').split(/→|->/).map((x) => stripNames(x.trim(), variants, refOf)).filter((x) => paced(x) >= 2)
   segTexts.forEach((x, i) => {
     const perf = x.cls.some((c) => !/安静听/.test(c) && (actionWeight(c) > 0 || MICRO_RE.test(c)))
     const idle = !x.cls.length || x.cls.every((c) => /安静听|保持姿态/.test(c))
@@ -1252,7 +1253,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const limits = [BEAT_LIMIT]
     if (src.includes(CARRY_WARDROBE_CONSTRAINT) || carry) limits.push(CARRY_WARDROBE_CONSTRAINT)
     if (s.splitFrom && src.includes(SOLO_SPLIT_LIMIT)) limits.push(SOLO_SPLIT_LIMIT)
-    if (s.speakerOffscreen || lines.some((l) => l.voiceOnly)) limits.push('画外人声的说话人不出镜，画面只出现指定角色')
+    if (s.speakerOffscreen || lines.some((l) => l.voiceOnly)) limits.push('画外人声的来源不出镜，画面只出现指定角色')
     const prompt = [
       `竖屏9:16，${fmt(total)}秒单镜。${head ? `${head}，` : ''}${who}。`,
       subj ? `主体：${subj}。${solo}` : solo,
