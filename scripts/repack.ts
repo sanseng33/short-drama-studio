@@ -36,7 +36,7 @@ import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotatio
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
 import { applyRenderHold, shotMouthRisks } from '../src/lib/renderHold'
-import { ABSTRACT_PERF_NOTE, TIME_REPEAT_NOTE, CAPTION_NOTE, parseCaptionNote, EMPTY_SCRUB_NOTE, EMPTY_STYLE_NOTE, emptyShotRisks, speechChars, SUBJECT_CARRY_NOTE, SUBJECT_UNRESOLVED_NOTE } from '../src/lib/renderHygiene'
+import { META_NOTE, metaRisks, ORPHAN_NOTE, ABSTRACT_PERF_NOTE, TIME_REPEAT_NOTE, CAPTION_NOTE, parseCaptionNote, EMPTY_SCRUB_NOTE, EMPTY_STYLE_NOTE, emptyShotRisks, speechChars, SUBJECT_CARRY_NOTE, SUBJECT_UNRESOLVED_NOTE } from '../src/lib/renderHygiene'
 import { TEXT_PROP_NOTE } from '../src/lib/textProps'
 import { PERFORMANCE_NOTE } from '../src/lib/beatPrompt'
 import { ABSTRACT_PERFORMANCE_RE } from '../src/lib/emotionVisual'
@@ -248,6 +248,25 @@ console.log(
               captionIntent: { 嘀咕: total(capOf(/嘀咕[^→]* →/)), 问话: total(capOf(/问话[^→]* →/)), perShot: capOf(/(?:嘀咕|问话)[^→]* →/) },
               // unchanged by design (they drive H3 beat speed): counts only
               pacingWordPrompts: { 恢复正常节奏: pacing('恢复正常节奏'), 正常节奏: pacing('正常节奏'), 放慢: pacing('放慢'), 利落快速: pacing('利落快速') },
+            }
+          })(),
+          // round 14: orphan acting + director meta-clauses
+          round14: (() => {
+            const orphan = notesOf(ORPHAN_NOTE)
+            const meta = notesOf(META_NOTE)
+            const left = exp.shots.map((s) => ({ id: s.id, episode: s.episode, clauses: metaRisks(s.prompt) })).filter((x) => x.clauses.length)
+            return {
+              orphanActing: {
+                count: total(orphan),
+                prefixed: orphan.reduce((a, x) => a + x.notes.filter((n) => n.includes('加主语')).length, 0),
+                moved: orphan.reduce((a, x) => a + x.notes.filter((n) => n.includes('移到')).length, 0),
+                dropped: orphan.reduce((a, x) => a + x.notes.filter((n) => n.endsWith('删去')).length, 0),
+                perShot: orphan,
+              },
+              // before → after per rewritten segment (render-pass text at that point)
+              directorMeta: { count: total(meta), perShot: meta },
+              // gate (hold): director meta / bare 情绪 left in a timeline segment — must be 0
+              metaLeft: { count: left.length, perShot: left },
             }
           })(),
           speechChars: {

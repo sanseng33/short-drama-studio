@@ -24,6 +24,7 @@ import { applyCastConsistency } from '../src/lib/castConsistency'
 import { EMOTION_RE, HOLD_EXPRESSION, isVoiceClause, parseRewriteNote, promptTextRisks, QUOTE_RE, splitVoice, stripVoiceAdverbs, visualizePrompt } from '../src/lib/emotionVisual'
 import { dialogueNeedSec, dialogueOverruns, dialogueSegmentNeeds, speechSec } from '../src/lib/dialogueTiming'
 import { CONTEXTUAL_EMOTION, EMOTION_VISIBLE } from '../src/lib/emotionVocab'
+import { fixOrphanActing, metaRisks, META_NOTE, ORPHAN_NOTE, rewriteDirectorMeta } from '../src/lib/renderHygiene'
 import { ABSTRACT_PERF_NOTE, dropRepeatedTimeLead, rewriteAbstractPerformance, TIME_REPEAT_NOTE } from '../src/lib/renderHygiene'
 import { visibleForEmotion } from '../src/lib/emotionVisual'
 import { BAND_NEGATIVE, carrySegmentSubjects, emptyShotRisks, FIRST_LINE_NO_TEXT, rewriteCaptionWords, scrubEmptyStyle, speechChars, withFirstLineNoText } from '../src/lib/renderHygiene'
@@ -1398,6 +1399,66 @@ if (existsSync(FIX)) {
     const b = rewriteCaptionWords('0–3秒，正常节奏：他问话，眼神打量。')
     assert.ok(b.prompt.includes('他下巴微抬、眉梢上挑'), b.prompt)
     assert.ok(!/问|嘀咕/.test(a.prompt + b.prompt))
+  })
+}
+
+
+{
+  // ---------------- round 14: orphan acting + director meta-clauses ----------------
+  const parts = new Set(Object.values(EMOTION_VISIBLE).flatMap((v) => v.split('、')))
+  const obj = '0–2秒，正常节奏：他把纸箱推到桌边。\n2–4秒，正常节奏：纸箱翻倒，盖子弹开，斜眼、嘴角一撇。\n4–6秒，正常节奏：他抬手按住桌角。'
+  t('orphan acting: one person → his pronoun; 2+ → nearest person segment; none → dropped; pure acting untouched', () => {
+    const one = fixOrphanActing(obj, 1, '她', parts)
+    assert.equal(one.prompt.split('\n')[1], '2–4秒，正常节奏：纸箱翻倒，盖子弹开，她斜眼、嘴角一撇。')
+    assert.ok(one.notes[0].startsWith(ORPHAN_NOTE))
+    assert.equal(fixOrphanActing(one.prompt, 1, '她', parts).prompt, one.prompt)
+    const two = fixOrphanActing(obj, 2, '他', parts)
+    const l = two.prompt.split('\n')
+    assert.equal(l[1], '2–4秒，正常节奏：纸箱翻倒，盖子弹开。')
+    assert.equal(l[0], '0–2秒，正常节奏：他把纸箱推到桌边，斜眼、嘴角一撇。', 'nearest person segment (earlier on a tie)')
+    assert.equal(fixOrphanActing(two.prompt, 2, '他', parts).prompt, two.prompt)
+    const none = fixOrphanActing('0–3秒，正常节奏：纸箱翻倒，斜眼、嘴角一撇。\n3–6秒，正常节奏：盖子弹开。', 2, '他', parts)
+    assert.equal(none.prompt.split('\n')[0], '0–3秒，正常节奏：纸箱翻倒。')
+    assert.ok(none.notes[0].endsWith('删去'))
+    // a segment of acting only / with a person / with a dialogue cue stays
+    for (const k of ['0–3秒，正常节奏：眼神往下落，嘴角一撇。', '0–3秒，正常节奏：纸箱翻倒，他斜眼、嘴角一撇。', '0–3秒，正常节奏：纸箱翻倒，穿夹克的少年斜眼。', '0–3秒，正常节奏：纸箱翻倒，斜眼；正脸朝镜头开口说一句短话。'])
+      assert.equal(fixOrphanActing(k, 2, '他', parts).prompt, k)
+  })
+  t('director meta-clauses: visible means kept plain (or dropped when shown), instruction tail and bare 情绪 go; gate', () => {
+    const cases: [string, string][] = [
+      ['0–2秒，正常节奏：果汁泼在桌上，靠液体的黏稠流动表现冲击。', '0–2秒，正常节奏：果汁泼在桌上，液体黏稠地流动。'],
+      ['0–2秒，正常节奏：书本砸在桌上，书页翻起一角，靠书页抖动与滑动表现力度。', '0–2秒，正常节奏：书本砸在桌上，书页翻起一角。'],
+      ['0–2秒，正常节奏：雨水往下淌，靠雨水黏稠流动与倒影被遮的层次推进情绪，玻璃起雾。', '0–2秒，正常节奏：雨水往下淌，倒影被遮，玻璃起雾。'],
+      ['0–2秒，正常节奏：窗帘晃动，靠帘角、水纹的细微动态表现空气流动。', '0–2秒，正常节奏：窗帘晃动。'],
+      ['0–2秒，正常节奏：灯光晃动，用风与光影传递静。', '0–2秒，正常节奏：灯光晃动。'],
+      ['0–2秒，正常节奏：他手指来回搓，靠小动作泄压。', '0–2秒，正常节奏：他手指来回搓。'],
+      ['0–2秒，正常节奏：他肩膀动了一下，传达被打断的怔然。', '0–2秒，正常节奏：他肩膀动了一下。'],
+      ['0–2秒，正常节奏：他扭头，用一声轻笑把情绪压回去。', '0–2秒，正常节奏：他扭头，一声轻笑。'],
+      ['0–2秒，正常节奏：他垂下眼，心里掺着说不清的情绪，眼神失焦。', '0–2秒，正常节奏：他垂下眼，眼神失焦。'],
+      ['0–2秒，正常节奏：他甩出手臂，推进情绪。', '0–2秒，正常节奏：他甩出手臂。'],
+    ]
+    for (const [a, b] of cases) {
+      const r = rewriteDirectorMeta(a)
+      assert.equal(r.prompt, b, a)
+      assert.ok(r.notes[0].startsWith(META_NOTE))
+      assert.deepEqual(metaRisks(r.prompt), [], b)
+      assert.equal(rewriteDirectorMeta(r.prompt).prompt, r.prompt)
+    }
+    // ordinary 靠 / 用 / 推进 stay
+    for (const k of ['0–2秒，正常节奏：他靠在门边，用手指按住纸箱。', '0–2秒，正常节奏：他靠近半步，镜头缓慢推进。'])
+      assert.equal(rewriteDirectorMeta(k).prompt, k)
+    assert.ok(metaRisks('0–2秒，正常节奏：雨水往下淌，靠雨水流动表现冲击。').length === 1)
+    assert.ok(metaRisks('0–2秒，正常节奏：他的情绪很复杂。').length === 1)
+  })
+  t('render pass + hold: meta rewritten, orphan acting gets a subject, idempotent; a leftover meta clause holds the shot', () => {
+    const src = '竖屏9:16，6秒单镜。单人。\n0–3秒，正常节奏：他把纸箱推到桌边。\n3–6秒，正常节奏：纸箱翻倒，盖子弹开，靠纸箱的摇晃推进情绪，斜眼、嘴角一撇。\n镜头：中景，不切镜。'
+    const out = renderPrompt(src, 'medium')
+    assert.ok(out.prompt.includes('纸箱翻倒，盖子弹开，他斜眼、嘴角一撇。'), out.prompt)
+    assert.deepEqual(metaRisks(out.prompt), [])
+    assert.equal(renderPrompt(out.prompt, 'medium').prompt, out.prompt)
+    const bad = SH({ id: 'mt', framing: 'medium', wardrobeState: {}, prompt: '竖屏9:16，5秒单镜。单人。\n0–5秒，正常节奏：他抬头，情绪翻涌。' })
+    const h = applyRenderHold(pack([bad])).renderHold
+    assert.ok(h[0]?.reasons.some((x) => x.startsWith('meta:')), JSON.stringify(h))
   })
 }
 

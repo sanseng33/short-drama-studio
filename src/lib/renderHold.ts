@@ -18,7 +18,7 @@ import { EMOTION_VISIBLE } from './emotionVocab'
 import { promptTextRisks } from './emotionVisual'
 import { onscreenCast, unclearPronouns } from './shotAnnotate'
 import { mouthOcclusionRisks, MOUTH_CLEAR_MARK } from './mouthOcclusion'
-import { emptyShotRisks } from './renderHygiene'
+import { emptyShotRisks, metaRisks } from './renderHygiene'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 
 export interface RenderHoldEntry {
@@ -69,6 +69,8 @@ export function renderHoldReasons(exp: VideoPipelineExport, opts: { speechRate?:
     for (const r of promptTextRisks(s.prompt)) add(s.id, `text: ${r}`)
     // an empty shot must not ask for acting / faces (the model draws a person or caption-like text)
     if (s.framing === 'empty') for (const r of emptyShotRisks(s.prompt)) add(s.id, `empty: person / acting token in an empty shot: ${r}`)
+    // a director meta-clause / bare 情绪 left after the rewrite (drawn as caption-like text)
+    for (const c of metaRisks(s.prompt)) add(s.id, `meta: director note / abstract 情绪 left: ${c}`)
     for (const c of shotMouthRisks(s)) add(s.id, `mouth: occluded while speaking: ${c}`)
     for (const t of s.beatTodo || []) if (t.startsWith(SPEAKER_TODO)) add(s.id, `speaker: ${t}`)
   }

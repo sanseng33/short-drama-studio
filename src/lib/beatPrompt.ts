@@ -17,6 +17,7 @@
 import { PERSON_DESCRIPTOR, stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
+import { FEMALE_RE } from './renderHygiene'
 import { actionCap, actionWeight, clauseCap, countActions, expandCompounds, isVisibleAction, limitActions, visibleCap } from './actionDensity'
 import { emotionWords, splitVoice, stripVoiceAdverbs, visibleForEmotion } from './emotionVisual'
 /** beatTrimmedActions prefix of the performance rule (emotion → visible acting / skipped) */
@@ -377,7 +378,7 @@ export function fastify(text: string): string {
 // ---------------- names ----------------
 
 function isFemale(c: Char | undefined): boolean {
-  return Boolean(c && /(女|她|少女|姑娘|女孩|女生)/.test(`${c.visualLock || ''} ${c.role || ''} ${(c.tags || []).join(' ')}`))
+  return Boolean(c && FEMALE_RE.test(`${c.visualLock || ''} ${c.role || ''} ${(c.tags || []).join(' ')}`))
 }
 function ageNum(c: Char | undefined): number | null {
   const n = Number(String(c?.age ?? '').match(/\d+/)?.[0])

@@ -245,3 +245,132 @@ export function rewriteAbstractPerformance(prompt: string, visible: (phrase: str
   })
   return { prompt: lines.join('\n'), notes }
 }
+
+// ---------------- director meta-clauses ----------------
+
+/** instruction verbs of a director note (靠A表现B / 靠A推进情绪 / 传达…的怔然) */
+const META_VERB = '(?:表现|推进|体现|传达|传递|烘托|营造|带出|泄压|交代|暗示|强调|突出)'
+/** abstract objects of a meta verb (drawn as captions) */
+const META_ABSTRACT = '(?:情绪|冲击|力度|张力|氛围|情感|感觉|心情|心理|反差)'
+/** 靠/用<A><meta verb><tail>: 靠 as "by means of" only (not 靠在 / 靠近 / 靠着 …) */
+const META_BY = new RegExp(`([，,；;：:]?)(?:靠(?![在近着墙窗上过拢住])|用)([^，,。；;\\n]+?)${META_VERB}([^，,。；;\\n]*)`, 'g')
+/** a clause that is only <verb><abstract …> (传达被单方面结束对话的怔然) */
+const META_LEAD = new RegExp(`([，,；;：:])(?:传达|体现|烘托|营造|带出|交代|暗示|表现(?!得))[^，,。；;\\n]*`, 'g')
+/** <visible><verb><abstract> tail without 靠 (A推进情绪): the tail goes */
+const META_TAIL = new RegExp(`${META_VERB}${META_ABSTRACT}`, 'g')
+/** abstract heads of a means phrase (…的细微动态 / …的层次) */
+const ABSTRACT_HEAD = /的?(?:层次|细微动态|动态|变化|节奏|细节|质感|过程|感)$/
+/** a means part that is visible motion (not a bare noun list / 小动作) */
+const MEANS_MOTION = /流|淌|抖|滑|晃|颤|飘|翻|滚|落|溅|弹|摆|摇|转|飞|裂|碎|遮|盖|鼓|塌|起伏|闪|冒|涌|喷|溢/
+export const META_NOTE = '导演说明改写：'
+
+/** the visible part A of 靠A…: plain description parts not already shown in the segment ('' = drop) */
+function meansParts(a: string, rest: string): string[] {
+  const raw = a.split(/与|和|及|、/).map((x) => x.replace(ABSTRACT_HEAD, '').trim()).filter(Boolean)
+  // a part with no subject of its own (抖动与滑动) belongs to the previous part
+  const parts: string[] = []
+  for (const x of raw) {
+    if (parts.length && MEANS_MOTION.test(x[0])) parts[parts.length - 1] += `、${x}`
+    else parts.push(x)
+  }
+  return parts
+    .filter((x) => MEANS_MOTION.test(x))
+    .filter((x) => !rest.includes(x.slice(0, 2)))
+    .map((x) => x.replace(/^(.+?)的(.{1,2}?)([流抖滑晃颤飘翻滚摆]动)$/, '$1$2地$3').replace(/^(.+?)的(?=[^的]+$)/, '$1'))
+}
+
+/**
+ * Director meta-clauses (靠A表现B / 靠A推进情绪 / 用A传递B / 传达…) are instructions, not picture: the visible means A stays as a
+ * plain description (dropped when the segment already shows its subject), the instruction tail goes; a clause that
+ * still names 情绪 abstractly goes too (用A把情绪压回去 → A). Timeline segments only.
+ */
+export function rewriteDirectorMeta(prompt: string): { prompt: string; notes: string[] } {
+  const notes: string[] = []
+  const lines = prompt.split('\n').map((line) => {
+    const m = line.match(SEG_RE)
+    if (!m) return line
+    let body = m[2]
+    const before = body
+    body = body.replace(META_BY, (all: string, sep: string, a: string) => {
+      const rest = body.replace(all, '')
+      const keep = meansParts(a, rest)
+      return keep.length ? `${sep}${keep.join('、')}` : /[：:]/.test(sep) ? sep : ''
+    })
+    body = body.replace(META_LEAD, (_all: string, sep: string) => (/[：:]/.test(sep) ? sep : ''))
+    body = body.replace(META_TAIL, '')
+    body = body.replace(/用([^，,。；;]+?)把情绪[^，,。；;]*/g, '$1')
+    // any clause still naming 情绪 abstractly
+    body = body.replace(/([，,；;]?)[^，,。；;：:]*情绪[^，,。；;]*/g, '')
+    body = body.replace(/[，,]{2,}/g, '，').replace(/[，,]([。；;])/g, '$1').replace(/^[，,]/, '').replace(/[，,]$/, '')
+    if (body !== before) notes.push(`${META_NOTE}${before} → ${body}`)
+    return `${m[1]}${body}`
+  })
+  return { prompt: lines.join('\n'), notes }
+}
+const META_GATE = new RegExp(`(?:靠(?![在近着墙窗上过拢住])|用)[^，,。；;\\n]{1,24}?${META_VERB}|${META_VERB}${META_ABSTRACT}|情绪`)
+/** gate (hold): a director meta-clause / bare 情绪 left in a timeline segment */
+export function metaRisks(prompt: string): string[] {
+  return prompt
+    .split('\n')
+    .map((l) => l.match(SEG_RE)?.[2] || '')
+    .flatMap((b) => b.split(/[，,。；;]/).filter((c) => META_GATE.test(c)))
+}
+
+// ---------------- orphan acting ----------------
+
+/** a clause that is pure face / body acting with no subject of its own (斜眼 / 嘴角一撇 / 咬着牙) */
+const ACTING_LEAD = /^(?:斜眼|挑眉|皱眉|眯眼|眯起眼|抿嘴|抿紧|咬着牙|咬牙|瞪|眼|眉|嘴|唇|鼻|下巴|下颌|喉|脸|额|耳根|睫|肩|身体|呼吸|表情|神情|目光|视线|头|脖|手忙脚乱|动作顿住)/
+/** a person in a non-acting clause (pronoun / role noun / descriptor / body part / speech cue) */
+const PERSON_IN = /(?<!其)他|她|少年|少女|男生|女生|男人|女人|男孩|女孩|学生|同学|青年|人物|有人|开口|说话|手|脚|头|身|脸|眼|嘴|肩|指|眉|唇|鼻|喉|颈|脖|腿|膝|背|胸|腰|睫|耳|额|下巴|下颌/
+export const ORPHAN_NOTE = '无人物主语的表演：'
+
+/**
+ * Acting written onto a segment whose only subject is an object / the environment (蛋液往下淌，…，斜眼、嘴角一撇):
+ * with one person on screen it gets that person's pronoun; otherwise it moves to the nearest segment with a person
+ * subject; else it is dropped. Pure-acting segments (no object clause) are not touched.
+ */
+export function fixOrphanActing(prompt: string, persons: number, pronoun: string, visibleParts: Set<string>): { prompt: string; notes: string[] } {
+  const notes: string[] = []
+  const lines = prompt.split('\n')
+  const segs = lines.map((l, i) => ({ i, m: l.match(SEG_RE) })).filter((x) => x.m)
+  const isActing = (c: string) => visibleParts.has(c) || ACTING_LEAD.test(c)
+  const parse = (body: string) => {
+    const [visual, ...cue] = body.split('；')
+    const end = /。$/.test(visual) ? '。' : ''
+    const cls = visual.replace(/。$/, '').split(/[，,]/).filter(Boolean)
+    return { cls, cue, end }
+  }
+  const hasPerson = (body: string) => {
+    const { cls, cue } = parse(body)
+    return cue.some((c) => PERSON_IN.test(c)) || cls.some((c) => !c.split('、').every(isActing) && PERSON_IN.test(c))
+  }
+  for (const s of segs) {
+    const body = lines[s.i].match(SEG_RE)![2]
+    const { cls, cue, end } = parse(body)
+    const acting = cls.filter((c) => c.split('、').every(isActing))
+    const others = cls.filter((c) => !c.split('、').every(isActing))
+    if (!acting.length || !others.length || cue.length || others.some((c) => PERSON_IN.test(c))) continue
+    const head = lines[s.i].match(SEG_RE)![1]
+    if (persons === 1) {
+      const k = cls.indexOf(acting[0])
+      cls[k] = `${pronoun}${cls[k]}`
+      lines[s.i] = `${head}${cls.join('，')}${end}`
+      notes.push(`${ORPHAN_NOTE}${acting.join('，')} → 加主语${pronoun}`)
+      continue
+    }
+    const target = persons >= 2
+      ? segs.filter((x) => x !== s && hasPerson(lines[x.i].match(SEG_RE)![2])).sort((a, b) => Math.abs(a.i - s.i) - Math.abs(b.i - s.i) || a.i - b.i)[0]
+      : undefined
+    lines[s.i] = `${head}${others.join('，')}${end}`
+    if (target) {
+      const tm = lines[target.i].match(SEG_RE)!
+      const t = parse(tm[2])
+      lines[target.i] = `${tm[1]}${[...t.cls, ...acting].join('，')}${t.cue.length ? `；${t.cue.join('；')}` : t.end}`
+      notes.push(`${ORPHAN_NOTE}${acting.join('，')} → 移到 ${tm[1].replace(/，.*$/, '')}`)
+    } else notes.push(`${ORPHAN_NOTE}${acting.join('，')} → 删去`)
+  }
+  return { prompt: lines.join('\n'), notes }
+}
+
+/** same rule as the beat builder's pronoun choice: female when the character data says so */
+export const FEMALE_RE = /(女|她|少女|姑娘|女孩|女生)/

@@ -18,6 +18,7 @@
  *
  * An optional `engine` field on a shot is passed through untouched. Pure + idempotent.
  */
+import { EMOTION_VISIBLE } from './emotionVocab'
 import { HOLD_EXPRESSION, parseRewriteNote, rewriteNote, visibleForEmotion, visualizePrompt } from './emotionVisual'
 import { clearMouth, MOUTH_CLEAR_MARK } from './mouthOcclusion'
 import { speechSec, type SpeechRate } from './dialogueTiming'
@@ -30,7 +31,10 @@ import {
   carrySegmentSubjects,
   dropRepeatedTimeLead,
   EMPTY_SCRUB_NOTE,
+  FEMALE_RE,
+  fixOrphanActing,
   rewriteAbstractPerformance,
+  rewriteDirectorMeta,
   rewriteCaptionWords,
   scrubEmptyStyle,
   stripFirstLineNoText,
@@ -427,6 +431,8 @@ export function dropContradictions(prompt: string, onscreen: number): { prompt: 
 }
 const BEAT_SEG = /^\d+(?:\.\d+)?–\d+(?:\.\d+)?秒，/
 
+/** every visible-acting part of the emotion table (orphan-acting detection) */
+const VISIBLE_PARTS = new Set(Object.values(EMOTION_VISIBLE).flatMap((v) => v.split('、')))
 export interface RenderContext {
   /** characters on screen in this shot (onscreenCast) */
   onscreen: string[]
@@ -452,6 +458,10 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   const ap = rewriteAbstractPerformance(p, visibleForEmotion, HOLD_EXPRESSION)
   p = ap.prompt
   notes.push(...ap.notes)
+  // director notes (靠A表现B / …推进情绪): the visible means stays, the instruction goes
+  const dm = rewriteDirectorMeta(p)
+  p = dm.prompt
+  notes.push(...dm.notes)
   const n = ctx ? ctx.onscreen.length : framing === 'empty' ? 0 : 1
   if (ctx && n >= 2) {
     p = p.replace(/主体[：:][^。\n]*。?/, (old) => {
@@ -476,6 +486,14 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
     const es = scrubEmptyStyle(p)
     p = es.prompt
     notes.push(...es.notes)
+  }
+  // acting on a segment whose only subject is an object: the person's pronoun / the nearest person segment / dropped
+  if (n >= 1) {
+    const one = ctx && n === 1 ? ctx.chars.find((c) => c.id === ctx.onscreen[0]) : undefined
+    const female = one ? FEMALE_RE.test(`${one.visualLock || ''} ${one.role || ''} ${(one.tags || []).join(' ')}`) : /主体[：:][^\n]*(?:少女|女生|女孩|女人|姑娘)/.test(p)
+    const oa = fixOrphanActing(p, n, female ? '她' : '他', VISIBLE_PARTS)
+    p = oa.prompt
+    notes.push(...oa.notes)
   }
   // a subjectless motion segment (顺着…往下溜) inherits the previous segment's object subject
   const sc = carrySegmentSubjects(p, n === 0)
