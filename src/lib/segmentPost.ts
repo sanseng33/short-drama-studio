@@ -316,6 +316,8 @@ export interface DialogueLineOut {
   endSec?: number
   /** TTS voice (voice-library name or { description, id }), resolved in the final pass (shotAnnotate) */
   voice?: string | { description?: string; id?: string } | null
+  /** voice designed automatically for an off-list speaker (exp.autoVoices) — needs review */
+  autoVoice?: true
 }
 
 const PLACES = [

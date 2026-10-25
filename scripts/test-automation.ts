@@ -16,7 +16,7 @@ import { postProcessExport } from '../src/lib/segmentPost'
 import {
   annotateShots, baseWardrobeState, castDescription, unclearPronouns, type WardrobeMeta, CLOSEUP_CAMERA, dropContradictions, multiSubjectLine, normalizeCamera, renderPrompt, closeupCamera, finalizePrompt, FRAMINGS, framingOf, missingAnnotations, NO_TEXT_CONSTRAINT, sha1Hex, shotSeed, timedDialogueLines,
   proposeWardrobeTimelines, wardrobeReport, wardrobeStates, knownLimitations, MULTI_REF_LIMITATION } from '../src/lib/shotAnnotate'
-import { characterVoices, lineVoice, missingVoices, normalizeVoice } from '../src/lib/voice'
+import { autoVoiceDescription, autoVoiceId, characterVoices, lineVoice, missingVoices, normalizeVoice } from '../src/lib/voice'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 
 let pass = 0
@@ -535,16 +535,17 @@ if (existsSync(P2)) {
       assert.deepEqual(lineVoice({ speaker: null, speakerName: '乙乙', text: 'x' }, vc), { description: '低沉少年音', id: 'voice_b' })
       assert.equal(lineVoice({ speaker: null, speakerName: '路人', text: 'x' }, vc, { 路人: 'voice_x' }), 'voice_x')
     })
-    t('voice: missing → error (missingVoices lists the line; repack exits 3 unless --allow-missing-voice)', () => {
+    t('voice: missing → error only when truly unresolvable (listed character without voice / no speaker name); exit 3', () => {
       const cs = vc.map((c) => (c.characterKey === 'key_a' ? { ...c, voice: undefined } : c))
-      const off = [...L, { speaker: null, speakerName: '路人', text: '让一让。' }]
+      const off = [...L, { speaker: null, speakerName: '路人', text: '让一让。' }, { speaker: null, speakerName: '', text: '喂！' }]
       const e = two(cs, off)
-      assert.equal(e.shots[0].dialogueLines![0].voice, null)
-      assert.deepEqual(missingVoices(e.shots), ['v1: 甲「我来吧。」', 'v1: 路人「让一让。」'])
-      assert.deepEqual(missingVoices(two(vc, off, { 路人: 'voice_x' }).shots), [])
+      assert.equal(e.shots[0].dialogueLines![0].voice, null, 'a listed character is never auto-voiced')
+      assert.deepEqual(missingVoices(e.shots), ['v1: 甲「我来吧。」', 'v1: ?「喂！」'])
+      assert.equal(e.shots[0].dialogueLines![2].autoVoice, true, 'off-list named speaker → auto voice')
       const dir = mkdtempSync(join(tmpdir(), 'voice-'))
       const inp = join(dir, 'in.json')
-      writeFileSync(inp, JSON.stringify(pack([SH({ id: 'v1', characterIds: ['a2', 'b1'], durationSec: 6, dialogue: '我来吧。', speaker: 'a2', speakerName: '甲', dialogueLines: off })], cs)))
+      const mk = (cc: PackChar[], ls: typeof off) => JSON.stringify(pack([SH({ id: 'v1', characterIds: ['a2', 'b1'], durationSec: 6, dialogue: '我来吧。', speaker: 'a2', speakerName: '甲', dialogueLines: ls })], cc))
+      writeFileSync(inp, mk(cs, off))
       let code = 0
       let err = ''
       try {
@@ -554,11 +555,68 @@ if (existsSync(P2)) {
         err = String((x as { stderr: string }).stderr)
       }
       assert.equal(code, 3)
-      assert.ok(err.includes('甲「我来吧。」') && err.includes('路人「让一让。」'), err)
+      assert.ok(err.includes('甲「我来吧。」') && err.includes('?「喂！」') && !err.includes('路人'), err)
       assert.ok(!existsSync(join(dir, 'out.json')), 'no pack written')
       const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice'], { encoding: 'utf8' }))
       assert.equal(rep.voiceMissing.length, 2)
-      assert.equal(rep.dialogueLinesWithVoice, 1)
+      assert.equal(rep.dialogueLinesWithVoice, 2)
+      // all named: the default repack passes; the auto voice is listed for review
+      writeFileSync(inp, mk(vc, off.slice(0, 3)))
+      const ok = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'ok.json'), '--beat-only'], { encoding: 'utf8' }))
+      assert.deepEqual(ok.voiceMissing, [])
+      assert.deepEqual(ok.voiceNeedsReview.map((x: { speakerName: string }) => x.speakerName), ['路人'])
+      assert.equal(ok.dialogueLinesAutoVoice, 1)
+      const out = JSON.parse(readFileSync(join(dir, 'ok.json'), 'utf8')) as VideoPipelineExport
+      assert.equal(out.autoVoices!['路人'].autoVoice, true)
+    })
+    t('auto voice: stable id per project + name, distinct names → distinct ids, project.voices / character voice win', () => {
+      const lines = (n: string) => [{ speaker: null, speakerName: n, text: '快看！' }]
+      const shot = (id: string, n: string, extra: Partial<VideoPipelineShot> = {}) => SH({ id, characterIds: ['a1'], dialogue: '快看！', speakerName: n, dialogueLines: lines(n), ...extra })
+      const e1 = annotateShots(pack([shot('e1', '学生甲'), shot('e2', '学生乙'), shot('e3', '学生甲', { episode: 2 })], vc))
+      const id = (e: VideoPipelineExport, sid: string) => (e.shots.find((s) => s.id === sid)!.dialogueLines![0].voice as { id: string }).id
+      assert.equal(id(e1, 'e1'), id(e1, 'e3'), 'same name → same voice across episodes')
+      assert.notEqual(id(e1, 'e1'), id(e1, 'e2'), 'distinct names → distinct ids')
+      assert.equal(id(e1, 'e1'), autoVoiceId('p', '学生甲'))
+      assert.match(id(e1, 'e1'), /^auto_[0-9a-f]{12}$/)
+      const again = annotateShots(pack([shot('e1', '学生甲')], vc))
+      assert.equal(id(again, 'e1'), id(e1, 'e1'), 'stable across runs')
+      const other = pack([shot('e1', '学生甲')], vc)
+      other.project.id = 'q'
+      assert.notEqual(id(annotateShots(other), 'e1'), id(e1, 'e1'), 'project-scoped')
+      assert.deepEqual(Object.keys(e1.autoVoices!), ['学生甲', '学生乙'])
+      // overrides win
+      const pv = pack([shot('e1', '学生甲')], vc)
+      pv.project.voices = { 学生甲: 'voice_lib_x' }
+      const ev = annotateShots(pv)
+      assert.equal(ev.shots[0].dialogueLines![0].voice, 'voice_lib_x')
+      assert.equal(ev.shots[0].dialogueLines![0].autoVoice, undefined)
+      assert.equal(ev.autoVoices, undefined)
+      const ec = annotateShots(pack([shot('e1', '乙乙')], vc))
+      assert.deepEqual(ec.shots[0].dialogueLines![0].voice, { description: '低沉少年音', id: 'voice_b' }, 'a character name match uses its voice')
+    })
+    t('auto voice description: generic role words → age band, gender only when stated, neutral fallback', () => {
+      const d = (n: string, script = '', ls: string[] = []) => autoVoiceDescription(n, script, ls)
+      assert.equal(d('体育老师').basis.age, '成年人')
+      assert.equal(d('教练').basis.age, '成年人')
+      assert.equal(d('同学乙').basis.age, '青少年')
+      assert.equal(d('学生甲').basis.age, '青少年')
+      assert.equal(d('门口的大爷').basis.age, '老年人')
+      assert.equal(d('同学乙').basis.gender, null)
+      assert.ok(d('同学乙').description.includes('中性音色'), d('同学乙').description)
+      assert.ok(!/女声|男声/.test(d('老师').description))
+      assert.equal(d('女同学').basis.gender, 'female')
+      assert.equal(d('阿姨').basis.gender, 'female')
+      // the script states it next to the role word
+      const s = d('老师', '讲台上的女老师推了推眼镜')
+      assert.deepEqual([s.basis.gender, s.basis.genderFrom], ['female', 'script'])
+      assert.ok(s.description.startsWith('成年人女声'), s.description)
+      assert.equal(d('老师', '男老师和女老师都在').basis.gender, null, 'conflicting script → neutral')
+      assert.ok(d('老师').description.includes('威严'))
+      assert.ok(d('同学', '', ['你再说一遍！']).description.includes('情绪外放'))
+      assert.ok(d('同学', '', ['什么声音？']).description.includes('追问'))
+      const n = d('路人')
+      assert.equal(n.basis.age, null)
+      assert.ok(n.description.startsWith('普通路人，中性音色'), n.description)
     })
     t('known limitations: every medium / full shot with 2+ on screen gets the one-ref first-frame note (generic)', () => {
       const e = annotateShots(pack([
@@ -576,11 +634,15 @@ if (existsSync(P2)) {
   t('repack: override file is opt-in only (no flag → nothing read, no beatOverride, rule-only corrections)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'repack-'))
     const out = join(dir, 'pack.json')
-    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', P2, out, '--beat-only', '--split-crosscut', '--allow-missing-voice'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
+    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', P2, out, '--beat-only', '--split-crosscut'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
+    assert.deepEqual(rep.voiceMissing, [], 'default repack passes: every line voiced')
     assert.equal(rep.overridesFile, null)
     // every line of a listed character has a voice (look variants via characterKey); only off-list bit parts may lack one
     const e0 = JSON.parse(readFileSync(out, 'utf8')) as VideoPipelineExport
-    for (const s of e0.shots) for (const l of s.dialogueLines || []) if (l.speaker) assert.ok(l.voice, `${s.id} ${l.speakerName}`)
+    for (const s of e0.shots) for (const l of s.dialogueLines || []) {
+      assert.ok(l.voice, `${s.id} ${l.speakerName}`)
+      assert.equal(Boolean(l.autoVoice), !l.speaker, `${s.id} ${l.speakerName}: auto only for off-list speakers`)
+    }
     assert.ok(rep.knownLimitations.multiPersonFirstFrame.count > 0)
     assert.ok(rep.sceneCorrections.every((c: { by: string }) => c.by === 'rule'))
     const e = JSON.parse(readFileSync(out, 'utf8')) as VideoPipelineExport

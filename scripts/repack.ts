@@ -75,7 +75,7 @@ if (missing.length) {
 const voiceMissing = missingVoices(exp.shots)
 if (voiceMissing.length && !flags.has('--allow-missing-voice')) {
   console.error(`dialogue lines without a resolvable voice (${voiceMissing.length}):\n  ${voiceMissing.join('\n  ')}`)
-  console.error('set characters[].voice (variants inherit by characterKey) or project.voices { speakerName: voice } for off-list speakers')
+  console.error('set characters[].voice (variants inherit by characterKey) or project.voices { speakerName: voice }; off-list speakers get an auto voice only when they have a speakerName')
   process.exit(3)
 }
 const out = outp || inp.replace(/\.json$/, '-p2.json')
@@ -131,6 +131,9 @@ console.log(
       dialogueLines: exp.shots.reduce((a, s) => a + (s.dialogueLines?.length || 0), 0),
       dialogueLinesWithVoice: exp.shots.reduce((a, s) => a + (s.dialogueLines || []).filter((l) => l.voice).length, 0),
       voiceMissing,
+      // off-list speakers with an auto-designed voice ({ description, id }): review before TTS
+      voiceNeedsReview: Object.values(exp.autoVoices || {}).map((a) => ({ speakerName: a.speakerName, voice: a.voice, basis: a.basis, lines: a.lines, shots: a.shots })),
+      dialogueLinesAutoVoice: exp.shots.reduce((a, s) => a + (s.dialogueLines || []).filter((l) => l.autoVoice).length, 0),
       characterVoices: Object.fromEntries(exp.characters.map((c) => [c.id, c.voice ?? null])),
       // FreeVideo first frame = one ref image: every 2+ person medium / full shot (generic, not hand-listed)
       knownLimitations: (() => {

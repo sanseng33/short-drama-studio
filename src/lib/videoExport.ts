@@ -3,7 +3,7 @@ import type { Character, Project, Shot } from '../types'
 import { mapNamesToIds, shotCharacterIds } from './shotCast'
 import { cleanField, cleanPrompt } from './placeholder'
 import { postProcessExport, type DialogueLineOut } from './segmentPost'
-import { missingVoices, type VoiceSpec } from './voice'
+import { missingVoices, type AutoVoice, type VoiceSpec } from './voice'
 import { factsForShotPrompts, tierSettingFactsForPrompt, type SettingFactsByTier } from './settingFacts'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
@@ -192,6 +192,8 @@ export interface VideoPipelineExport {
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]
+  /** auto-designed voices of off-list speakers ({ description, id }, autoVoice: true) — review before TTS */
+  autoVoices?: Record<string, AutoVoice>
 }
 
 // ---------------- text helpers (exported for tests / reuse) ----------------
