@@ -41,7 +41,12 @@ export interface VideoPipelineShot {
   timeOfDay?: string
   /** present only when an original shot became several segments */
   segment?: { index: number; total: number; parentId: string }
-  /** merged 5–9s segment: all dialogue lines in order (first = dialogue/speaker); present only when >1 line */
+  /**
+   * this shot's own lines in order. Final packs (shotAnnotate): ALWAYS present (possibly []), each
+   * { speaker: characterId | null, speakerName, text, startSec, endSec, voiceOnly? } with times relative to the shot,
+   * taken from the beat segment(s) marked dialogue; split children carry only their own lines.
+   * (Before annotation: present only when a merged segment has >1 line.)
+   */
   dialogueLines?: DialogueLineOut[]
   /** primary speaker is an off-list bit part heard off-screen (never depicted) */
   speakerOffscreen?: boolean
@@ -93,7 +98,14 @@ export interface VideoPipelineShot {
    */
   carryFromShotId?: string | null
   /** renderer framing (shotAnnotate.framingOf): closeup_dialogue = 近景/特写 + on-screen dialogue; set on every shot */
-  framing?: 'closeup_dialogue' | 'medium' | 'full'
+  framing?: 'closeup_dialogue' | 'medium' | 'full' | 'empty'
+  /**
+   * stable render seed: first 31 bits of sha1(`${projectId}:${shotId}`) (shotAnnotate.shotSeed), 0 … 2^31-1.
+   * The runner retries a failed / rejected render with seed + attempt (attempt = 1, 2, …).
+   */
+  seed?: number
+  /** TTS audio file for this shot's dialogueLines; null until a TTS stage fills it */
+  audio?: string | null
   /** characterId → wardrobe state (shotAnnotate.wardrobeStates, e.g. plain / glowup / default); set on every shot */
   wardrobeState?: Record<string, string>
   /** optional renderer engine hint; passed through untouched */

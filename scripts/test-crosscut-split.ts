@@ -275,7 +275,7 @@ t('split + beat mode: solo beat prompts, no names, dialogue only on the speaker 
   assert.ok(a.prompt.includes(BEAT_MOUTH_CUE) && !b.prompt.includes(BEAT_MOUTH_CUE))
   assert.ok(!b.beatSegments!.some((x) => x.lipSync), 'listener has no lip-sync segment')
   const listenLine = b.prompt.split('\n').find((l) => l.includes('安静听'))
-  assert.ok(listenLine && !listenLine.includes('【快】'), `listening segment is never 快: ${listenLine}`)
+  assert.ok(listenLine && !listenLine.includes('动作利落快速'), `listening segment is never 快: ${listenLine}`)
   assert.ok(![a, b].some((s) => /白朴|吴耐|我就是/.test(s.prompt)), 'no names / dialogue text')
   assert.ok(a.prompt.includes(SOLO_SPLIT_LIMIT) && b.prompt.includes(CARRY_WARDROBE_CONSTRAINT))
   for (const s of [a, b]) assert.equal(s.beatSegments![s.beatSegments!.length - 1].end, s.durationSec)
@@ -401,8 +401,8 @@ t('applyBeatMode beatOverrides: replaces auto beats, flags shot, throws on inval
   assert.deepEqual(o1.beatSegments!.map((g) => [g.start, g.end, g.speed, g.dialogue, g.lipSync]), [
     [0, 2, '恢复常速', false, false], [2, 3, '快', false, false], [3, 4.5, '慢', true, true], [4.5, 6, '恢复常速', false, false],
   ])
-  assert.ok(o1.prompt.includes('2–3秒【快】：笔尖顿住半拍，用笔帽敲了一下卷子边，动作利落不拖。'), o1.prompt)
-  assert.ok(o1.prompt.includes(`3–4.5秒【慢】：动作放慢，眼睛没离开纸面，嘴角先动再出声；${BEAT_MOUTH_CUE}。`), o1.prompt)
+  assert.ok(o1.prompt.includes('2–3秒，接着加快，动作利落快速：笔尖顿住半拍，用笔帽敲了一下卷子边。'), o1.prompt)
+  assert.ok(o1.prompt.includes(`3–4.5秒，接着放慢：眼睛没离开纸面，嘴角先动再出声；${BEAT_MOUTH_CUE}。`), o1.prompt)
   assert.ok(!/白朴|来了/.test(o1.prompt), 'no name / dialogue')
   assert.equal(o1.beatTodo, undefined, 'no review todo')
   assert.deepEqual(applyBeatMode(out, { beatOverrides: { o1: segs } }), out, 'idempotent')

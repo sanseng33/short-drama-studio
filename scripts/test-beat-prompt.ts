@@ -22,6 +22,7 @@ import { actionCap, actionWeight, countActions, expandCompounds, limitActions } 
 import { buildVideoPipelineExport, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
 import { postProcessExport } from '../src/lib/segmentPost'
 import type { Character, Project, Shot } from '../src/types'
+import { finalizePrompt } from '../src/lib/shotAnnotate'
 
 let pass = 0
 const t = (name: string, fn: () => void) => {
@@ -75,9 +76,10 @@ t('s1-24-like merged shot → header / 时间轴 / 快-慢-恢复常速 / footer
   assert.ok(p.includes(`${BEAT_HEADER}：`), 'p.includes(`${BEAT_HEADER}：`)')
   assert.deepEqual(r.segments.map((s) => s.speed), ['快', '慢', '恢复常速'])
   assert.deepEqual(r.segments.map((s) => [s.start, s.end]), [[0, 2], [2, 4.5], [4.5, 6.5]])
-  assert.ok(/0–2秒【快】：他猛地扭头/.test(p), 'fast seg gets 猛地')
-  assert.ok(p.includes('迅速转回正面') && p.includes('动作利落不拖'), "p.includes('迅速转回正面') && p.includes('动作利落不拖')")
-  assert.ok(/2–4\.5秒【慢】：动作放慢/.test(p), '/2–4\\.5秒【慢】：动作放慢/.test(p)')
+  assert.ok(/0–2秒，动作利落快速：他猛地扭头/.test(p), 'fast seg gets 猛地')
+  assert.ok(p.includes('迅速转回正面') && !p.includes('动作利落不拖'), "p.includes('迅速转回正面') && !p.includes('动作利落不拖')")
+  assert.ok(/2–4\.5秒，接着放慢：/.test(p) && /4\.5–6\.5秒，随后恢复正常节奏：/.test(p), 'pacing in words')
+  assert.ok(!/[【】]/.test(p), 'no bracket tags')
   assert.ok(p.includes(BEAT_MOUTH_CUE), 'p.includes(BEAT_MOUTH_CUE)')
   assert.ok(p.includes('全程只有他一人，不出现第二个人物'), "p.includes('全程只有他一人，不出现第二个人物')")
   assert.ok(/镜头：近景（胸口以上），轻微手持，最后一秒缓慢微推，不切镜。/.test(p), p)
@@ -234,7 +236,7 @@ t('buildVideoPipelineExport beatMode=speed → every shot beat-converted, durati
   sp.shots.forEach((s, i) => {
     assert.equal(s.beatMode, 'speed')
     assert.equal(s.durationSec, def.shots[i].durationSec)
-    assert.equal(s.promptDefault, def.shots[i].prompt)
+    assert.equal(finalizePrompt(s.promptDefault!, def.shots[i].framing!), def.shots[i].prompt, 'promptDefault = default scene prompt before the final render rules')
     assert.ok(!/林川|赵泽/.test(s.prompt), s.prompt)
     assert.ok(!s.prompt.includes('我回来了'), "!s.prompt.includes('我回来了')")
     assert.equal(s.beatSegments![s.beatSegments!.length - 1].end, s.durationSec)
@@ -300,7 +302,7 @@ if (existsSync(P2)) {
     const b = postProcessExport(pack, { mergeToSegments: false, beatMode: 'speed' })
     assert.ok(a.shots.every((s) => !s.beatMode), 'a.shots.every((s) => !s.beatMode)')
     assert.equal(a.shots.length, b.shots.length)
-    b.shots.forEach((s, i) => assert.equal(s.promptDefault, a.shots[i].prompt))
+    b.shots.forEach((s, i) => assert.equal(finalizePrompt(s.promptDefault!, a.shots[i].framing!), a.shots[i].prompt, s.id))
   })
 }
 

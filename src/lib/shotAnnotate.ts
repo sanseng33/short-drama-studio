@@ -20,8 +20,8 @@
  */
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 
-export type Framing = 'closeup_dialogue' | 'medium' | 'full'
-export const FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full']
+export type Framing = 'closeup_dialogue' | 'medium' | 'full' | 'empty'
+export const FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full', 'empty']
 
 export interface WardrobeTimelineEntry {
   state: string
@@ -79,11 +79,168 @@ export function hasOnscreenDialogue(s: ShotLike): boolean {
   return lines.some((l) => Boolean(l.text?.trim()) && !l.voiceOnly && Boolean(l.speaker) && cast.includes(l.speaker!) && !vo.has(l.speaker!))
 }
 
-export function framingOf(s: ShotLike): Framing {
+/**
+ * Characters actually on screen: characterIds minus voice-only cast members. A cast member listed in voiceOnly
+ * (inner voice / heard off-screen) still counts as on screen when the shot's visual text names them.
+ */
+export function onscreenCast(s: ShotLike & { visual?: string }, chars: { id: string; name?: string; baseName?: string }[] = []): string[] {
+  const vo = new Set(s.voiceOnly || [])
+  const byId = new Map(chars.map((c) => [c.id, c]))
+  return (s.characterIds || []).filter((id) => {
+    if (!vo.has(id)) return true
+    const c = byId.get(id)
+    return [c?.name, c?.baseName].some((n) => n && (s.visual || '').includes(n))
+  })
+}
+
+/**
+ * empty: nobody on screen; closeup_dialogue: exactly ONE on-screen character, 近景/特写 size and an on-screen line;
+ * 2+ characters are only medium / full; 全景/远景 → full; else medium.
+ */
+export function framingOf(s: ShotLike & { visual?: string }, chars: { id: string; name?: string; baseName?: string }[] = []): Framing {
+  const on = onscreenCast(s, chars)
+  if (!on.length) return 'empty'
   const size = (s.size || '').match(SIZE_RE)?.[0] || (s.camera || '').match(SIZE_RE)?.[0] || ''
-  if (CLOSE_RE.test(size) && hasOnscreenDialogue(s)) return 'closeup_dialogue'
+  if (on.length === 1 && CLOSE_RE.test(size) && hasOnscreenDialogue(s)) return 'closeup_dialogue'
   if (FULL_RE.test(size)) return 'full'
   return 'medium'
+}
+
+// ---------------- seed ----------------
+
+/** SHA-1 hex of a UTF-8 string (pure, sync; browser + node) */
+export function sha1Hex(str: string): string {
+  const bytes = Array.from(new TextEncoder().encode(str))
+  const ml = bytes.length * 8
+  bytes.push(0x80)
+  while (bytes.length % 64 !== 56) bytes.push(0)
+  for (let i = 7; i >= 0; i--) bytes.push(i >= 4 ? 0 : (ml >>> (i * 8)) & 0xff)
+  let h0 = 0x67452301, h1 = 0xefcdab89, h2 = 0x98badcfe, h3 = 0x10325476, h4 = 0xc3d2e1f0
+  const w = new Array<number>(80)
+  const rol = (x: number, n: number) => (x << n) | (x >>> (32 - n))
+  for (let o = 0; o < bytes.length; o += 64) {
+    for (let i = 0; i < 16; i++) w[i] = (bytes[o + 4 * i] << 24) | (bytes[o + 4 * i + 1] << 16) | (bytes[o + 4 * i + 2] << 8) | bytes[o + 4 * i + 3]
+    for (let i = 16; i < 80; i++) w[i] = rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1)
+    let a = h0, b = h1, c = h2, d = h3, e = h4
+    for (let i = 0; i < 80; i++) {
+      const [f, k] = i < 20 ? [(b & c) | (~b & d), 0x5a827999] : i < 40 ? [b ^ c ^ d, 0x6ed9eba1] : i < 60 ? [(b & c) | (b & d) | (c & d), 0x8f1bbcdc] : [b ^ c ^ d, 0xca62c1d6]
+      const tmp = (rol(a, 5) + f + e + k + w[i]) | 0
+      e = d
+      d = c
+      c = rol(b, 30)
+      b = a
+      a = tmp
+    }
+    h0 = (h0 + a) | 0
+    h1 = (h1 + b) | 0
+    h2 = (h2 + c) | 0
+    h3 = (h3 + d) | 0
+    h4 = (h4 + e) | 0
+  }
+  return [h0, h1, h2, h3, h4].map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('')
+}
+
+/** stable render seed: first 31 bits of sha1(`${projectId}:${shotId}`); the runner retries with seed + attempt */
+export function shotSeed(projectId: string, shotId: string): number {
+  return parseInt(sha1Hex(`${projectId}:${shotId}`).slice(0, 8), 16) >>> 1
+}
+
+// ---------------- per-shot dialogue timing ----------------
+
+export interface TimedLine {
+  speaker: string | null
+  speakerName: string | null
+  text: string
+  startSec: number
+  endSec: number
+  voiceOnly?: boolean
+}
+const r2 = (x: number) => Math.round(x * 100) / 100
+const speechLen = (t: string) => Math.max(1, t.replace(/[\s，。！？、…—,.!?「」“”『』（）()]/g, '').length)
+
+/**
+ * The shot's OWN lines (split children already carry only theirs) with times relative to the shot: lines go to the
+ * beat segments marked dialogue in order (several lines in one segment share it by length); without beat segments
+ * the lines share the whole shot by length. voiceOnly: off-list speaker, speakerOffscreen or a voiceOnly id not on screen.
+ */
+export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] = []): TimedLine[] {
+  const raw = s.dialogueLines?.length
+    ? s.dialogueLines
+    : s.dialogue?.trim()
+      ? [{ speaker: s.speaker, speakerName: s.speakerName, text: s.dialogue, voiceOnly: s.speakerOffscreen }]
+      : []
+  const on = new Set(onscreenCast(s, chars))
+  const lines = raw.filter((l) => l.text?.trim())
+  if (!lines.length) return []
+  const total = s.durationSec || 0
+  const segs = (s.beatSegments || []).filter((g) => g.dialogue)
+  const slots: { start: number; end: number; idx: number[] }[] = segs.length ? segs.map((g) => ({ start: g.start, end: g.end, idx: [] })) : [{ start: 0, end: total, idx: [] }]
+  lines.forEach((_, i) => slots[Math.min(i, slots.length - 1)].idx.push(i))
+  const out: TimedLine[] = []
+  for (const sl of slots) {
+    const w = sl.idx.map((i) => speechLen(lines[i].text))
+    const sum = w.reduce((a, b) => a + b, 0) || 1
+    let t0 = sl.start
+    sl.idx.forEach((i, k) => {
+      const l = lines[i]
+      const t1 = k === sl.idx.length - 1 ? sl.end : t0 + ((sl.end - sl.start) * w[k]) / sum
+      const vo = Boolean(l.voiceOnly) || !l.speaker || !on.has(l.speaker)
+      out.push({ speaker: l.speaker ?? null, speakerName: l.speakerName ?? null, text: l.text.trim(), startSec: r2(t0), endSec: r2(t1), ...(vo ? { voiceOnly: true } : {}) })
+      t0 = t1
+    })
+  }
+  return out
+}
+
+// ---------------- final prompt rules (every shot) ----------------
+
+/** fixed last line of every shot prompt */
+export const NO_TEXT_CONSTRAINT = '画面中没有任何文字、字幕、标志、水印或标签。'
+export const CLOSEUP_CAMERA = '近景（胸口以上），正脸或三分之二侧脸'
+/** angle / composition words that pull a dialogue close-up into a side or half-body shot */
+export const HALF_BODY_ANGLE_WORDS = ['侧打', '侧拍', '侧身', '侧面', '侧向', '侧脸', '半侧', '斜侧', '半身', '过肩', '越肩', '背面', '背影', '背对']
+const FRAMING_WORDS: Record<Framing, string> = {
+  closeup_dialogue: `${CLOSEUP_CAMERA}，单人`,
+  medium: '中景',
+  full: '全景',
+  empty: '空镜，画面中没有人物',
+}
+const SPEED_TAG_WORDS: Record<string, string> = { 快: '动作利落快速', 慢: '节奏放慢', 恢复常速: '恢复正常节奏' }
+
+/** remove the lines this module appends (idempotent re-annotation) */
+export function stripRenderLines(prompt: string): string {
+  return (prompt || '')
+    .split('\n')
+    .filter((l) => !l.startsWith('景别：') && l.trim() !== NO_TEXT_CONSTRAINT)
+    .join('\n')
+    .replace(new RegExp(NO_TEXT_CONSTRAINT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '')
+    .trimEnd()
+}
+
+/** camera wording for a dialogue close-up: fixed size + face angle, no half-body / side angle words */
+export function closeupCamera(cam: string): string {
+  let c = cam
+    .split(CLOSEUP_CAMERA)
+    .join('')
+    .replace(/正脸或三分之二侧脸|正脸/g, '')
+    // size words incl. a body-part / 大 qualifier (手部特写, 大特写) and framing notes in brackets (（眼部与半张脸）)
+    .replace(new RegExp(`(?:[手眼脸面嘴唇腿脚背胸颈头腰局]部|大|长焦|越窗)?(?:${SIZE_RE.source})`, 'g'), '')
+    .replace(/[（(][^（）()]*(?:胸口|脸|眼|部|身)[^（）()]*[）)]/g, '')
+  for (const w of HALF_BODY_ANGLE_WORDS) c = c.split(w).join('')
+  const rest = c
+    .split(/[，,·；;]/)
+    .map((x) => x.replace(/^[的、\s]+|[的、\s]+$/g, '').trim())
+    .filter((x) => x && !/^(?:随后|然后|再|镜头|拍摄|取景|拍|打|的)$/.test(x))
+  return [CLOSEUP_CAMERA, ...rest].filter((x, i, a) => a.indexOf(x) === i).join('，')
+}
+
+/** every prompt: no 【】 tags (speed tags → words), close-up camera wording, framing in words, fixed no-text line */
+export function finalizePrompt(prompt: string, framing: Framing): string {
+  let p = stripRenderLines(prompt)
+  p = p.replace(/【(快|慢|恢复常速)】/g, (_m, k: string) => `，${SPEED_TAG_WORDS[k]}`).replace(/秒，，/g, '秒，')
+  p = p.replace(/[【】]/g, '')
+  if (framing === 'closeup_dialogue') p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${closeupCamera(cam)}`)
+  return `${p}\n景别：${FRAMING_WORDS[framing]}。\n${NO_TEXT_CONSTRAINT}`
 }
 
 export function baseWardrobeState(c: WardrobeMeta | undefined): string {
@@ -238,8 +395,24 @@ export function withProposedWardrobe(exp: VideoPipelineExport): { exp: VideoPipe
  */
 export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
   const { exp: e } = withProposedWardrobe(exp)
-  const ws = wardrobeStates(e.shots, e.characters as WardrobeMeta[])
-  return { ...e, shots: e.shots.map((s, i) => ({ ...s, framing: framingOf(s), wardrobeState: ws[i] })) }
+  const chars = e.characters as WardrobeMeta[]
+  const ws = wardrobeStates(e.shots, chars)
+  const pid = e.project?.id || e.project?.title || ''
+  return {
+    ...e,
+    shots: e.shots.map((s, i) => {
+      const framing = framingOf(s, chars)
+      return {
+        ...s,
+        framing,
+        wardrobeState: ws[i],
+        seed: shotSeed(pid, s.id),
+        dialogueLines: timedDialogueLines(s, chars),
+        audio: s.audio ?? null,
+        prompt: finalizePrompt(s.prompt, framing),
+      }
+    }),
+  }
 }
 
 /** per-character wardrobe review: base source, timeline source, states used, refs missing / not logo-free */
@@ -272,13 +445,18 @@ export function wardrobeReport(exp: VideoPipelineExport) {
   )
 }
 
-/** Shot ids missing / with an invalid framing or wardrobeState (empty = ok). */
+/** Shot ids missing / with an invalid framing, wardrobeState, seed, dialogueLines or audio key (empty = ok). */
 export function missingAnnotations(exp: VideoPipelineExport): string[] {
   const bad: string[] = []
   for (const s of exp.shots) {
     if (!s.framing || !FRAMINGS.includes(s.framing)) bad.push(`${s.id}: framing`)
     const w = s.wardrobeState
     if (!w || typeof w !== 'object' || (s.characterIds || []).some((id) => !w[id])) bad.push(`${s.id}: wardrobeState`)
+    if (!Number.isInteger(s.seed) || s.seed! < 0 || s.seed! > 0x7fffffff) bad.push(`${s.id}: seed`)
+    if (!Array.isArray(s.dialogueLines) || s.dialogueLines.some((l) => typeof (l as TimedLine).startSec !== 'number' || typeof (l as TimedLine).endSec !== 'number'))
+      bad.push(`${s.id}: dialogueLines`)
+    if (!('audio' in s) || (s.audio !== null && typeof s.audio !== 'string')) bad.push(`${s.id}: audio`)
+    if (/[【】]/.test(s.prompt) || !s.prompt.endsWith(NO_TEXT_CONSTRAINT)) bad.push(`${s.id}: prompt`)
   }
   return bad
 }

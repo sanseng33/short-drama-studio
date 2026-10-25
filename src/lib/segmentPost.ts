@@ -311,6 +311,9 @@ export interface DialogueLineOut {
   text: string
   /** heard off-screen (bit part / OS) */
   voiceOnly?: boolean
+  /** seconds relative to the shot start (shotAnnotate.timedDialogueLines; set on every final shot) */
+  startSec?: number
+  endSec?: number
 }
 
 const PLACES = [

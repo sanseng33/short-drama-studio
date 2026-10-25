@@ -14,6 +14,7 @@
  * Small hand props that compete with face/hands (转鸡蛋…) are dropped and listed in `beatRemovedProps`.
  * Pure; default export behaviour is untouched unless beatMode === 'speed'.
  */
+import { stripRenderLines } from './shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
 import { actionCap, actionWeight, countActions, limitActions } from './actionDensity'
@@ -71,6 +72,23 @@ export const BEAT_MOUTH_CUE = '正脸朝镜头开口说一句短话，嘴部清�
 /** limit added to solo children of a split cross-cut segment */
 export const SOLO_SPLIT_LIMIT = '画面只出现一个人物，对面窗里的人不入画'
 export const BEAT_FAST_TAIL = '动作利落不拖'
+
+/** natural-language pacing for a timeline segment (no bracket tags — H3 paints 【…】 labels as subtitles) */
+export function pacePhrase(speed: BeatSpeed, index: number, prev?: BeatSpeed): string {
+  if (speed === '快') return index === 0 ? '动作利落快速' : '接着加快，动作利落快速'
+  if (speed === '慢') return index === 0 ? '节奏放慢' : '接着放慢'
+  return index === 0 ? '正常节奏' : prev === '恢复常速' ? '保持正常节奏' : '随后恢复正常节奏'
+}
+/** a timeline segment line: `a–b秒，<pace>：<body>。` (the pace replaces 动作放慢 / 动作利落不拖 in the body) */
+export function segmentLine(start: number, end: number, speed: BeatSpeed, index: number, body: string, prev?: BeatSpeed): string {
+  const b = body
+    .replace(/^动作放慢[，,]?/, '')
+    .replace(new RegExp(`[，,]?${BEAT_FAST_TAIL}`, 'g'), '')
+    .replace(/[，；。\s]+$/, '')
+  return `${fmt(start)}–${fmt(end)}秒，${pacePhrase(speed, index, prev)}：${b || '保持姿态，呼吸与眼神有细微变化'}。`
+}
+/** matches a timeline segment line of a beat prompt */
+export const BEAT_LINE_RE = /^\d+(?:\.\d+)?–\d+(?:\.\d+)?秒，/
 /** explicit garment state for zip jackets (render test: an unspecified zip drifts open / closed between shots) */
 export const ZIP_OPEN = '前襟拉链拉开'
 /** framing for on-screen dialogue in a 近景 shot */
@@ -135,12 +153,24 @@ const fillerless = (t: string) => t.replace(/[还又也仍都就再了着]/g, ''
 /** held-still states on the same body part (肩膀纹丝不动 / 肩膀没动) say the same thing */
 const STILL = /(纹丝不动|一动不动|没动|不动)/
 /** Are two clauses the same beat (exact, contained, bigram-similar, or the same held-still body part)? */
+/** short clauses made of the same content characters in another order (眯起眼 / 眼睛眯起) are one beat */
+function sameShortBeat(x: string, y: string): boolean {
+  const chars = (s: string) => [...s.replace(/^(?:他|她|它)/, '').replace(/[的了着地得一下\s，,。]/g, '')]
+  const a = chars(x)
+  const b = chars(y)
+  const [lo, hi] = a.length <= b.length ? [a, b] : [b, a]
+  if (lo.length < 3 || hi.length > 6) return false
+  const hs = new Set(hi)
+  return lo.every((c) => hs.has(c))
+}
+
 export function isNearDup(x: string, y: string): boolean {
   x = x.trim()
   y = y.trim()
   if (!x || !y) return false
   if (y === x) return true
   if (STILL.test(x) && STILL.test(y) && x.slice(0, 2) === y.slice(0, 2)) return true
+  if (sameShortBeat(x, y)) return true
   if (paced(x) < 4) return false
   const cx = fillerless(x)
   const cy = fillerless(y)
@@ -200,6 +230,12 @@ const SPEED_ADVERB = /(猛地|迅速|飞快|一把|干脆|利落|急忙|赶紧|�
 const MOUTH_BLOCK = /((捂|掩|遮|挡)住?[^，]{0,3}(嘴|口|脸)|背对镜头|背过身|转过身去|埋头|低头|手指?抵[^，]{0,2}唇|咬[^，]{0,2}(手指|指甲|笔|吸管)|喝水|吃)/
 /** small hand props that compete with face/hands */
 export const SMALL_PROP_RE = /(生鸡蛋|鸡蛋|硬币|打火机|钥匙|棒棒糖|糖果|橡皮|骰子|扑克牌|纸牌|筷子|勺子|香烟|烟头|瓶盖|魔方|指尖陀螺|圆珠笔|铅笔|钢笔|签字笔|(?<![记])笔(?![直记挺画触])|戒指|发圈|皮筋|回形针|U盘|小石子)/
+/** clause about people other than the one on-screen character (generic extras / crowd vocabulary) */
+const OTHER_PERSON = new RegExp(
+  '^(?:(?:前排|后排|身后|周围|旁边|远处|两侧|门口|对面|人群里|走廊里)的?)?(?:(?:一|两|三|几|好几|十几)(?:个|名|位)?)?(?:学生|同学|路人|老师|众人|旁人|别人|有人|人群|大家|观众|围观者|群众)' +
+    '|^(?:一|两|几|好几|十几)双手|集体|全班',
+)
+
 /** an event hitting the subject's space (石子打在玻璃上) — a 【快】 cue even without a body move */
 const IMPACT = /(击中|打中|砸中|打在|砸在|撞在|弹进|弹到|飞进|啪地|砰地)/
 /** micro performance: face / gaze / breath / posture nuance */
@@ -674,8 +710,8 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
       let body = g.text.replace(/[，；。\s]+$/, '')
       if (g.speed === '快' && !body.includes(BEAT_FAST_TAIL)) body = `${body}，${BEAT_FAST_TAIL}`
       if (g.dialogue) body = `动作放慢，${body}；${voiceOnly ? '画外有人说话，画面人物停住倾听，嘴唇闭合不说话' : BEAT_MOUTH_CUE}`
-      return `${fmt(g.start)}–${fmt(g.end)}秒【${g.speed}】：${body}。`
-    })
+      return { g, body }
+    }).map(({ g, body }, i, arr) => segmentLine(g.start, g.end, g.speed, i, body, i ? arr[i - 1].g.speed : undefined))
     return finish(segLinesOv, meta)
   }
 
@@ -749,6 +785,14 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
         const p = smallPropIn(c)
         if (!p) return true
         removedProps.push(`${p}：${c}`)
+        return false
+      })
+    }
+    // a solo shot shows only its one character: clauses whose subject is someone else (extras, crowd) are dropped
+    if (single) {
+      cls = cls.filter((c) => {
+        if (!OTHER_PERSON.test(c)) return true
+        todo.push(`单人镜删去其他人物：${c}`)
         return false
       })
     }
@@ -837,7 +881,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const r = limitActions(x.cls, actionCap(speeds[i], x.dlg), { preferLater: x.dlg })
     if (!r.dropped.length) return
     x.cls = r.kept
-    for (const d of r.dropped) trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒【${speeds[i]}】：${d}`)
+    for (const d of r.dropped) trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒（${speeds[i]}）：${d}`)
   })
   // the same beat never repeats in a later segment (merged 动作 + 表演 notes describe one moment twice)
   segTexts.forEach((x, i) => {
@@ -873,7 +917,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     }
     if (!body) body = '保持姿态，呼吸与眼神有细微变化'
     segMeta.push({ start: x.g.start, end: x.g.end, speed: sp, dialogue: x.dlg, lipSync: x.speech })
-    return `${fmt(x.g.start)}–${fmt(x.g.end)}秒【${sp}】：${body.replace(/[，；。\s]+$/, '')}。`
+    return segmentLine(x.g.start, x.g.end, sp, i, body, i ? speeds[i - 1] : undefined)
   })
   for (const m of segMeta) if (m.end - m.start < 1 - 1e-9) todo.push(`分段 ${fmt(m.start)}–${fmt(m.end)}秒 不足 1 秒`)
   const slowSec = segMeta.filter((m) => m.speed === '慢').reduce((a, m) => a + m.end - m.start, 0)
@@ -908,7 +952,8 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
       ...segLines,
       `镜头：${(() => {
         const cam = stripNames(cameraLine(s.camera), variants, refOf)
-        return segMeta.some((m) => m.lipSync) ? dialogueFraming(cam, s.size) : cam
+        // close dialogue framing is for exactly one on-screen character; 2+ people stay medium / full
+        return single && segMeta.some((m) => m.lipSync) ? dialogueFraming(cam, s.size) : cam
       })()}。`,
       `光线：${light.replace(/[。\s]+$/, '')}。`,
       `风格：${styleLineFor(src, opts.style)}。`,
@@ -937,14 +982,15 @@ export function applyBeatMode(exp: VideoPipelineExport, opts: BeatModeOptions = 
   if (unknown.length) throw new Error(`beatOverrides: unknown shot id ${unknown.join(', ')}`)
   const shots = exp.shots.map((s) => {
     // idempotent: rebuild from the stored default prompt when this shot was beat-converted before
-    const base = s.promptDefault && isBeatPrompt(s.prompt) ? s.promptDefault : s.prompt
-    const r = buildBeatPrompt({ ...s, promptDefault: base }, exp.characters, { ...opts, style })
+    const src = s.promptDefault && isBeatPrompt(s.prompt) ? s.promptDefault : s.prompt
+    // the appended render lines (景别 / no-text) are not scene text: parse without them, keep the original as promptDefault
+    const r = buildBeatPrompt({ ...s, prompt: isBeatPrompt(s.prompt) ? s.prompt : stripRenderLines(src), promptDefault: stripRenderLines(src) }, exp.characters, { ...opts, style })
     const out: VideoPipelineShot = {
       ...s,
       prompt: r.prompt,
       beatMode: 'speed',
       beatSegments: r.segments,
-      ...(keep ? { promptDefault: base } : {}),
+      ...(keep ? { promptDefault: src } : {}),
     }
     if (ov[s.id]) out.beatOverride = true
     else delete out.beatOverride
