@@ -18,6 +18,7 @@ import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } fro
 import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
 import { applyBeatMode, type BeatOverrides } from './beatPrompt'
 import { applyCrossCutSplit } from './crosscutSplit'
+import { annotateShots } from './shotAnnotate'
 import type { RhythmOptions } from './rhythm'
 
 export interface PostProcessOptions {
@@ -773,7 +774,8 @@ export function postProcessExportWithStats(
   }
   // opt-in: per-second speed-beat prompts (after merge / carry / dialogue guards so it sees final shots)
   const split = opts.splitCrossCut ? applyCrossCutSplit(result, { sceneOverrides: opts.sceneOverrides, rhythm: opts.rhythm }).exp : result
-  return { exp: opts.beatMode === 'speed' ? applyBeatMode(split, { style, beatOverrides: opts.beatOverrides }) : split, stats }
+  // renderer fields on every shot (framing + wardrobeState), after split / beat so children get them too
+  return { exp: annotateShots(opts.beatMode === 'speed' ? applyBeatMode(split, { style, beatOverrides: opts.beatOverrides }) : split), stats }
 }
 
 function pacedLen(t: string): number {

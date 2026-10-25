@@ -47,6 +47,12 @@ export interface Character {
   characterKey?: string
   /** GPU 定妆图目录名 images.dir（导入定妆包；导出为 characters[].imagesDir） */
   imagesDir?: string
+  /** wardrobe state of this look variant (e.g. plain / glowup); default derived from refImage minus characterKey_ */
+  wardrobeState?: string
+  /** wardrobe changes over the story: { state, fromShotId? | fromEpisode? } (exported to the video pack) */
+  wardrobeTimeline?: { state: string; fromShotId?: string; fromEpisode?: number }[]
+  /** keyword cues in shot visual/action text that switch the wardrobe state from that shot on */
+  wardrobeCues?: { state: string; keywords: string[] }[]
   /**
    * LoRA / Omni multi-ref training materials from 定妆包.
    * Training-only: never inject into visual prompts, characterBrief, or inject_character_meta.

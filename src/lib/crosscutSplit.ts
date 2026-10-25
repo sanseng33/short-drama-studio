@@ -444,7 +444,8 @@ export function splitCrossCutShot(s: Shot, chars: Char[], all: Shot[], crossPlac
       run.map((x) => x.dur),
       D,
     )
-    const listen = lines.length > 0 && myLines.length === 0
+    // listen only while ANOTHER character speaks (a child whose own line sits in a later child is not a listener)
+    const listen = lines.length > 0 && myLines.length === 0 && lines.some((l) => l.speaker !== owner)
     const beatTexts = run.map((sb, k) => {
       // near-duplicate clauses between 动作 and 表演 (merged beats repeat themselves)
       const aCls = dedupeClauses(splitTop(replaceOthers(sb.act.join('，'), owner, names), '，,'))
@@ -501,6 +502,8 @@ export function splitCrossCutShot(s: Shot, chars: Char[], all: Shot[], crossPlac
       action: run.map((sb) => replaceOthers(sb.act.join('，') || sb.perf.join('，'), owner, names)).join('；'),
       durationSec: D,
       camera,
+      // the child's own shot size (first size word of its camera line), not the two-person parent's
+      size: camera.match(/大全景|中全景|全景|远景|中近景|近景特写|近景|中景|特写/)?.[0] || s.size,
       emotion: emo || s.emotion,
       dialogue: first?.text || '',
       speaker: first?.speaker ?? null,
@@ -697,15 +700,50 @@ export function characterHomes(shots: Shot[]): { places: Set<string>; home: Map<
   return { places, home }
 }
 
+/** phrases that describe what is SEEN from a place (a view / reflection), not where the subject is */
+const VIEW_PHRASE = /(窗外|对面|对窗|隔巷|隔窗|远处|映着|映在|映出|倒影|玻璃里|玻璃上映)[^，,。；;]*/g
 /**
- * Fix place/scene labels before splitting / angle keys:
- * 1. explicit overrides { shotId: sceneId } win (used where the text gives no reliable place cue);
- * 2. rule: a SOLO shot labelled at a facing-window place that is ANOTHER character's home (and not its own)
+ * Generic place-type vocabulary (furniture / fixtures that pin a location). Keyed by a pattern on the scene label's
+ * place part; no show data — the place labels themselves come from the pack's sceneLabel values.
+ */
+const PLACE_TYPE_CUES: { label: RegExp; cue: RegExp }[] = [
+  { label: /教室/, cue: /教室|课桌|黑板|讲台|后排座位|课间/ },
+  { label: /走廊/, cue: /走廊/ },
+  { label: /卧室|房间/, cue: /卧室|床头|床边|被窝/ },
+  { label: /店/, cue: /柜台|吧台|收银/ },
+  { label: /操场|花坛|楼下/, cue: /操场|花坛/ },
+]
+
+/** places (placeKey) whose label / place-type cue appears in the shot's own-location text (view phrases removed) */
+export function explicitPlaces(s: Pick<Shot, 'visual' | 'action'>, places: Map<string, string>): string[] {
+  const text = `${s.visual || ''}；${s.action || ''}`.replace(VIEW_PHRASE, '')
+  const hits: string[] = []
+  for (const [pk, label] of places) {
+    const lp = labelPlace(label)
+    const words = [lp, lp.replace(/窗$/, '')].filter((w) => w.length >= 2)
+    const typed = PLACE_TYPE_CUES.find((x) => x.label.test(lp))
+    if (words.some((w) => text.includes(w)) || (typed && typed.cue.test(text))) hits.push(pk)
+  }
+  return hits
+}
+
+/**
+ * Fix place/scene labels before splitting / angle keys (order of precedence):
+ * 1. explicit overrides { shotId: sceneId } (opt-in only — bug signals for the rules below);
+ * 2. explicit-location rule: the shot's own visual/action text (view phrases like 窗外…/对面… removed) names exactly one
+ *    known place of the pack (its label or a generic place-type cue such as 课桌 → 教室) and not the labelled one
+ *    → move there (same time band);
+ * 3. continuity rule: a SOLO shot with no own-location cue whose text addresses an off-screen cast member (name or
+ *    对方), right after a shot in the same episode that contains this character at a shared (non facing-window) place
+ *    → same scene as that shot (conversation coverage, e.g. a reverse close-up);
+ * 4. home rule: a SOLO shot labelled at a facing-window place that is ANOTHER character's home (and not its own)
  *    moves to its own home with the same time band (sceneId must already exist in the pack).
  */
 export function correctScenes(exp: VideoPipelineExport, overrides: Record<string, string> = {}): { exp: VideoPipelineExport; corrections: SceneCorrection[] } {
   const scenes = new Map<string, Shot>()
   for (const s of exp.shots) if (s.sceneId && !scenes.has(s.sceneId)) scenes.set(s.sceneId, s)
+  const placeLabels = new Map<string, string>()
+  for (const s of scenes.values()) if (s.placeKey && s.sceneLabel && !placeLabels.has(s.placeKey)) placeLabels.set(s.placeKey, s.sceneLabel)
   const { places, home } = characterHomes(exp.shots)
   const homeOwners = new Map<string, string[]>()
   for (const [id, pk] of home) homeOwners.set(pk, [...(homeOwners.get(pk) || []), id])
@@ -714,26 +752,66 @@ export function correctScenes(exp: VideoPipelineExport, overrides: Record<string
     const ref = scenes.get(sceneId)!
     return { ...s, sceneId, sceneLabel: ref.sceneLabel, placeKey: ref.placeKey, timeBand: ref.timeBand }
   }
-  const shots = exp.shots.map((s) => {
+  const nameOf = new Map<string, string[]>()
+  for (const c of exp.characters) nameOf.set(c.id, [c.name, c.name.replace(/[（(][^）)]*[）)]/g, ''), c.baseName || ''].filter((x) => x && x.length >= 2))
+  const out: Shot[] = []
+  for (const s of exp.shots) {
+    const fix = (target: string, by: SceneCorrection['by'], reason: string) => {
+      corrections.push({ id: s.id, from: s.sceneId || '', to: target, by, reason })
+      out.push(moveTo(s, target))
+    }
     const o = overrides[s.id]
     if (o) {
       if (!scenes.has(o)) throw new Error(`scene override ${s.id} → ${o}: unknown sceneId`)
-      if (o === s.sceneId) return s
-      corrections.push({ id: s.id, from: s.sceneId || '', to: o, by: 'override', reason: 'explicit override' })
-      return moveTo(s, o)
+      if (o === s.sceneId) out.push(s)
+      else fix(o, 'override', 'explicit override')
+      continue
     }
-    if (s.characterIds?.length !== 1 || s.splitFrom) return s
-    const c = s.characterIds[0]
-    const mine = home.get(c)
+    if (s.splitFrom) {
+      out.push(s)
+      continue
+    }
     const pk = s.placeKey || ''
-    if (!mine || !places.has(pk) || pk === mine) return s
-    if (!(homeOwners.get(pk) || []).some((x) => x !== c)) return s
+    // 2. explicit location in the shot's own text
+    const hits = explicitPlaces(s, placeLabels)
+    if (hits.length === 1 && hits[0] !== pk && !hits.includes(pk)) {
+      const target = `${hits[0]}_${s.timeBand || ''}`
+      if (scenes.has(target)) {
+        fix(target, 'rule', `镜头文本明确地点 ${labelPlace(placeLabels.get(hits[0]))}（窗外/对面景物不算），而标注为 ${pk}`)
+        continue
+      }
+    }
+    const cast = s.characterIds || []
+    const prev = out[out.length - 1]
+    // 3. continuity: solo reverse / reaction shot inside a conversation at a shared place
+    if (cast.length === 1 && !hits.length && prev && prev.episode === s.episode && (prev.characterIds || []).includes(cast[0]) && prev.sceneId && prev.placeKey && !places.has(prev.placeKey) && prev.placeKey !== pk && prev.timeBand === s.timeBand) {
+      const text = `${s.visual || ''}；${s.action || ''}`
+      const others = exp.characters.filter((c) => !cast.includes(c.id) && (prev.characterIds || []).includes(c.id))
+      const addresses = /对方/.test(text) || others.some((c) => (nameOf.get(c.id) || []).some((n) => text.includes(n)))
+      if (addresses) {
+        fix(prev.sceneId, 'rule', `单人反打镜无自身地点线索，承接上一镜 ${prev.id} 的对话场景 ${prev.sceneId}`)
+        continue
+      }
+    }
+    // 4. home rule
+    if (cast.length !== 1) {
+      out.push(s)
+      continue
+    }
+    const c = cast[0]
+    const mine = home.get(c)
+    if (!mine || !places.has(pk) || pk === mine || !(homeOwners.get(pk) || []).some((x) => x !== c)) {
+      out.push(s)
+      continue
+    }
     const target = `${mine}_${s.timeBand || ''}`
-    if (!scenes.has(target)) return s
-    corrections.push({ id: s.id, from: s.sceneId || '', to: target, by: 'rule', reason: `${c} 单人镜标在他人常驻窗 ${pk}，改回自己的 ${mine}` })
-    return moveTo(s, target)
-  })
-  return { exp: corrections.length ? { ...exp, shots } : exp, corrections }
+    if (!scenes.has(target)) {
+      out.push(s)
+      continue
+    }
+    fix(target, 'rule', `${c} 单人镜标在他人常驻窗 ${pk}，改回自己的 ${mine}`)
+  }
+  return { exp: corrections.length ? { ...exp, shots: out } : exp, corrections }
 }
 
 /** scene corrections + split + angle keys (the opt-in pass used by postProcess / repack). */

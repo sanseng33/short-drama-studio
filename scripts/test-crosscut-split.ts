@@ -427,8 +427,16 @@ if (existsSync(P2)) {
       's6-13:classroom_day:override',
       's6-16:classroom_day:override',
     ])
-    // without the override file the rule alone would put s6-16 in the bedroom (why it is an explicit override)
-    assert.equal(applyCrossCutSplit(p2).corrections.find((c) => c.id === 's6-16')?.to, 'villa_bedroom_day')
+    // without the override file the generic rules (explicit location in the shot text, conversation continuity) reach
+    // the same places: the override file is redundant (kept only as an opt-in regression signal)
+    assert.deepEqual(applyCrossCutSplit(p2).corrections.map((c) => `${c.id}:${c.to}:${c.by}`), [
+      's2-1:alley_window_day:rule',
+      's3-29:villa_bedroom_night:rule',
+      's4-25:villa_bedroom_night:rule',
+      's5-4:villa_bedroom_day:rule',
+      's6-13:classroom_day:rule',
+      's6-16:classroom_day:rule',
+    ])
     assert.deepEqual(validateCarryChain(exp.shots), [])
     const r = reviewCarryChains(exp.shots)
     assert.deepEqual(r.crossEpisode, [])

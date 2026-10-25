@@ -9,6 +9,9 @@
  *   --scene-overrides f.json : with split: explicit { "shotId": "sceneId" } place corrections (win over the home rule);
  *                              the same file's `beatOverrides` { shotId: [{start,end,speed,text,dialogue?}] } replace the
  *                              automatic beats in beat mode (validated). Report: stretchReview (stretched split children)
+ *                              OPT-IN ONLY: without this flag no override file is read (no implicit / default path);
+ *                              hand overrides are bug signals for the generic generator, not part of the automatic pipeline.
+ * Every output shot gets `framing` + `wardrobeState` (shotAnnotate); the run fails if any shot lacks either.
  * Re-apply the deterministic video-pipeline@1 post-processing (style lock, 5–9s merge,
  * time/offlist/logo fixes, sceneId/carryFromPrev) to an already exported pack, and print stats.
  */
@@ -17,6 +20,7 @@ import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segment
 import type { VideoPipelineExport } from '../src/lib/videoExport'
 import { applyBeatMode, type BeatOverrides } from '../src/lib/beatPrompt'
 import { checkRhythm, stretchReview } from '../src/lib/rhythm'
+import { annotateShots, missingAnnotations } from '../src/lib/shotAnnotate'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -54,9 +58,14 @@ const { exp, stats } = lite
         sceneCorrections = r.corrections
         rhythmNotes = r.rhythmNotes
       }
-      return { exp: flags.has('--beat-only') ? applyBeatMode(e, { beatOverrides }) : e, stats: null }
+      return { exp: annotateShots(flags.has('--beat-only') ? applyBeatMode(e, { beatOverrides }) : e), stats: null }
     })()
   : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides })
+const missing = missingAnnotations(exp)
+if (missing.length) {
+  console.error(`shots missing framing / wardrobeState: ${missing.join(', ')}`)
+  process.exit(2)
+}
 const out = outp || inp.replace(/\.json$/, '-p2.json')
 writeFileSync(out, JSON.stringify(exp, null, 2) + '\n')
 
@@ -110,6 +119,12 @@ console.log(
       offscreenLines: exp.shots.filter((s) => s.speakerOffscreen || s.dialogueLines?.some((l) => l.voiceOnly)).length,
       warnings: warn,
       stats,
+      overridesFile: oi >= 0 ? args[oi + 1] : null,
+      framing: exp.shots.reduce<Record<string, number>>((a, s) => ((a[s.framing!] = (a[s.framing!] || 0) + 1), a), {}),
+      wardrobeState: exp.shots.reduce<Record<string, number>>((a, s) => {
+        for (const [id, st] of Object.entries(s.wardrobeState || {})) a[`${id}:${st}`] = (a[`${id}:${st}`] || 0) + 1
+        return a
+      }, {}),
       ...(beatMode === 'speed'
         ? {
             beatMode,

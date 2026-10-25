@@ -16,7 +16,7 @@
  */
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
-import { actionCap, countActions, limitActions } from './actionDensity'
+import { actionCap, actionWeight, countActions, limitActions } from './actionDensity'
 
 export type BeatMode = 'off' | 'speed'
 export type BeatSpeed = '快' | '慢' | '恢复常速'
@@ -84,11 +84,11 @@ export function withZipState(text: string): string {
   )
 }
 
-/** On-screen dialogue + 近景 → 近景（胸口以上） (the first shot-size word of the camera line decides; else `size`). */
+/** On-screen dialogue + 近景 / 中近景 → 近景（胸口以上） (the first shot-size word of the camera line decides; else `size`). */
 export function dialogueFraming(camLine: string, size: string | undefined): string {
   const m = camLine.match(/大全景|中全景|全景|中近景|近景特写|近景|中景|特写/)
-  if (m) return m[0] === '近景' ? camLine.slice(0, m.index) + CLOSE_DIALOGUE_FRAMING + camLine.slice(m.index! + 2) : camLine
-  return (size || '').trim() === '近景' ? `${CLOSE_DIALOGUE_FRAMING}，${camLine}` : camLine
+  if (m) return m[0] === '近景' || m[0] === '中近景' ? camLine.slice(0, m.index) + CLOSE_DIALOGUE_FRAMING + camLine.slice(m.index! + m[0].length) : camLine
+  return /^(?:中)?近景$/.test((size || '').trim()) ? `${CLOSE_DIALOGUE_FRAMING}，${camLine}` : camLine
 }
 /** two characters in facing windows / cross-cut inside one segment (split candidates) */
 export const CROSSCUT_RE = /两窗|对窗|越窗|隔窄巷|对切/
@@ -132,6 +132,21 @@ export function splitClauses(text: string): string[] {
 /** clause core without filler adverbs/particles (还/又/也/仍/都/就/再/了/着), for near-duplicate checks */
 const fillerless = (t: string) => t.replace(/[还又也仍都就再了着]/g, '')
 
+/** held-still states on the same body part (肩膀纹丝不动 / 肩膀没动) say the same thing */
+const STILL = /(纹丝不动|一动不动|没动|不动)/
+/** Are two clauses the same beat (exact, contained, bigram-similar, or the same held-still body part)? */
+export function isNearDup(x: string, y: string): boolean {
+  x = x.trim()
+  y = y.trim()
+  if (!x || !y) return false
+  if (y === x) return true
+  if (STILL.test(x) && STILL.test(y) && x.slice(0, 2) === y.slice(0, 2)) return true
+  if (paced(x) < 4) return false
+  const cx = fillerless(x)
+  const cy = fillerless(y)
+  return y.includes(x) || sim(x, y) >= 0.75 || (Math.min(paced(cx), paced(cy)) >= 4 && (cy.includes(cx) || cx.includes(cy)))
+}
+
 /** Drop repeated / near-duplicate clauses (merged beats repeat 表演 notes). */
 export function dedupeClauses(cs: string[]): string[] {
   const out: string[] = []
@@ -139,12 +154,7 @@ export function dedupeClauses(cs: string[]): string[] {
     const x = c.trim()
     if (!x) continue
     const cx = fillerless(x)
-    const dup = out.findIndex((y) => {
-      if (y === x) return true
-      if (paced(x) < 4) return false
-      const cy = fillerless(y)
-      return y.includes(x) || sim(x, y) >= 0.75 || (Math.min(paced(cx), paced(cy)) >= 4 && (cy.includes(cx) || cx.includes(cy)))
-    })
+    const dup = out.findIndex((y) => isNearDup(x, y))
     if (dup >= 0) {
       // keep the more informative wording (e.g. 手还搭在窗框上 + 手搭在窗框上没放下 → the latter)
       if (paced(x) > paced(out[dup]) && (x.includes(out[dup]) || cx.includes(fillerless(out[dup])))) out[dup] = x
@@ -190,6 +200,16 @@ const SPEED_ADVERB = /(猛地|迅速|飞快|一把|干脆|利落|急忙|赶紧|�
 const MOUTH_BLOCK = /((捂|掩|遮|挡)住?[^，]{0,3}(嘴|口|脸)|背对镜头|背过身|转过身去|埋头|低头|手指?抵[^，]{0,2}唇|咬[^，]{0,2}(手指|指甲|笔|吸管)|喝水|吃)/
 /** small hand props that compete with face/hands */
 export const SMALL_PROP_RE = /(生鸡蛋|鸡蛋|硬币|打火机|钥匙|棒棒糖|糖果|橡皮|骰子|扑克牌|纸牌|筷子|勺子|香烟|烟头|瓶盖|魔方|指尖陀螺|圆珠笔|铅笔|钢笔|签字笔|(?<![记])笔(?![直记挺画触])|戒指|发圈|皮筋|回形针|U盘|小石子)/
+/** an event hitting the subject's space (石子打在玻璃上) — a 【快】 cue even without a body move */
+const IMPACT = /(击中|打中|砸中|打在|砸在|撞在|弹进|弹到|飞进|啪地|砰地)/
+/** micro performance: face / gaze / breath / posture nuance */
+const MICRO_RE = /(眉|眼|视线|目光|嘴角|嘴唇|唇|鼻|喉结|下巴|下颌|呼吸|口气|叹|愣|笑|皱|眯|眨|抿|咬|肩|神情|表情)/
+/** clauses that happen after the line was spoken */
+const POST_SPEECH = /^(?:他|她)?(说完|喊完|念完|问完|答完|讲完)/
+/** clauses that lead into the line (the mouth starts moving) */
+const PRE_SPEECH = /(开口前|开口之前|喊之前|说之前|才出声|再出声|才开口|再开口|出声前)/
+/** shots at least this long must carry a performance beat in every segment */
+export const LONG_SHOT_SEC = 6
 const HANDLING_RE = /(指间|指尖|手里|手中|掌心|把玩|转了|转着|转动|捏|拨弄|抛|夹着|攥|搓|晃了?晃|在手上|颠了颠|翻来覆去)/
 
 export function isActionHeavy(text: string): boolean {
@@ -743,6 +763,36 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     }
     return { g, cls, speech, voice, dlg, speakers }
   })
+  // speech lead-ins (开口前… / …才出声) describe the line itself: they belong in the dialogue (lip-sync) segment, never
+  // in a silent one; inside the dialogue segment lead-ins go first and 说完… afterthoughts last
+  const di = segTexts.findIndex((x) => x.speech)
+  if (di >= 0) {
+    const d = segTexts[di]
+    segTexts.forEach((x, i) => {
+      if (i === di || x.dlg) return
+      const pre = x.cls.filter((c) => PRE_SPEECH.test(c))
+      if (!pre.length) return
+      x.cls = x.cls.filter((c) => !pre.includes(c))
+      d.cls = [...pre, ...d.cls]
+    })
+    const pre = d.cls.filter((c) => PRE_SPEECH.test(c))
+    const post = d.cls.filter((c) => !PRE_SPEECH.test(c) && POST_SPEECH.test(c))
+    const bare = pre.map((c) => c.replace(PRE_SPEECH, '').replace(/^[，\s]+/, ''))
+    // a mid clause that only restates a lead-in (开口前眉头先皱 / 眉头先皱后松) is the same beat
+    const mid = d.cls.filter((c) => !pre.includes(c) && !post.includes(c) && !bare.some((b) => paced(b) >= 3 && (c.includes(b) || isNearDup(c, b))))
+    // two lead-ins on the same feature (嘴角动了一下才出声 / 嘴角先动再出声) are one beat
+    const preU = pre.filter((c, k) => !pre.slice(0, k).some((y) => y.slice(0, 2) === c.slice(0, 2) || isNearDup(c, y)))
+    d.cls = [...preU, ...mid, ...post]
+  }
+  // post-speech actions (说完/喊完… + a main action) belong to the next, non-dialogue segment, not the 【慢】 lip-sync one
+  segTexts.forEach((x, i) => {
+    const nx = segTexts[i + 1]
+    if (!x.dlg || !nx || nx.dlg) return
+    const after = x.cls.filter((c) => POST_SPEECH.test(c) && actionWeight(c) > 0)
+    if (!after.length) return
+    x.cls = x.cls.filter((c) => !after.includes(c))
+    nx.cls = [...after, ...nx.cls.filter((c) => !/安静听/.test(c))]
+  })
   // speed tags
   const speeds: BeatSpeed[] = segTexts.map((x, i) => {
     if (x.dlg) return '慢'
@@ -757,9 +807,28 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const i = segTexts.findIndex((x) => WEAK_FAST.test(x.cls.join('，')))
     if (i >= 0) speeds[i] = '快'
   }
+  // generic contrast rule: a timeline must never run at one speed. All 【恢复常速】 → the segment with the strongest
+  // action or an impact event becomes 【快】; with none, the most expressive (micro-performance) segment becomes 【慢】.
+  if (segTexts.length >= 2 && !speeds.some((x) => x !== '恢复常速')) {
+    const score = (x: (typeof segTexts)[number]) => x.cls.reduce((a, c) => a + actionWeight(c), 0) + (x.cls.some((c) => IMPACT.test(c)) ? 2 : 0)
+    const cand = segTexts.map((x, i) => ({ i, sc: x.dlg || /安静听/.test(x.cls.join('，')) ? -1 : score(x) })).filter((x) => x.sc > 0).sort((a, b) => b.sc - a.sc || a.i - b.i)[0]
+    if (cand) speeds[cand.i] = '快'
+    else {
+      const micro = segTexts.map((x, i) => ({ i, n: x.cls.filter((c) => MICRO_RE.test(c)).length })).filter((x) => x.n > 0)
+      const pick = micro.length ? micro.sort((a, b) => b.n - a.n || b.i - a.i)[0].i : segTexts.length - 1
+      speeds[pick] = '慢'
+    }
+  }
+  // all 【快】 → the calmest segment (least action, latest on ties) settles to 【恢复常速】
+  if (segTexts.length >= 2 && !speeds.some((x) => x !== '快')) {
+    const w = segTexts.map((x, i) => ({ i, sc: x.cls.reduce((a, c) => a + actionWeight(c), 0) })).sort((a, b) => a.sc - b.sc || b.i - a.i)
+    speeds[w[0].i] = '恢复常速'
+  }
   segTexts.forEach((x, i) => {
     if (speeds[i] !== '快') return
-    const kept = x.cls.filter((c) => !HESITATE.test(c))
+    // a sudden stop (顿住) is a fast reaction: keep it as 骤然顿住; real hesitation (犹豫/慢慢…) is dropped
+    const cls = x.cls.map((c) => (/顿住|顿了/.test(c) && !/(迟疑|犹豫|不确定|慢慢|缓缓)/.test(c) && !SPEED_ADVERB.test(c) ? c.replace(/顿(住|了)/, '骤然顿$1') : c))
+    const kept = cls.filter((c) => !HESITATE.test(c.replace(/骤然顿(住|了)/, '')))
     if (kept.length) x.cls = kept
   })
   // action density (H3 executes one distinct action per 【快】 segment): 快 ≤ 1, 慢/常速 ≤ 2, dialogue ≤ 1 besides speech
@@ -769,6 +838,22 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     if (!r.dropped.length) return
     x.cls = r.kept
     for (const d of r.dropped) trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒【${speeds[i]}】：${d}`)
+  })
+  // the same beat never repeats in a later segment (merged 动作 + 表演 notes describe one moment twice)
+  segTexts.forEach((x, i) => {
+    if (!i) return
+    const earlier = segTexts.slice(0, i).flatMap((y) => y.cls)
+    x.cls = x.cls.filter((c) => !earlier.some((y) => isNearDup(c, y)))
+  })
+  // performance rule: a segment with no performance (no action, no micro-expression — empty, a hold or only listening)
+  // gets one drawn from the shot's own emotion text; on long shots (≥ LONG_SHOT_SEC) every segment needs one
+  const emo = (s.emotion || '').split(/→|->/).map((x) => stripNames(x.trim(), variants, refOf)).filter((x) => paced(x) >= 2)
+  segTexts.forEach((x, i) => {
+    const perf = x.cls.some((c) => !/安静听/.test(c) && (actionWeight(c) > 0 || MICRO_RE.test(c)))
+    const idle = !x.cls.length || x.cls.every((c) => /安静听|保持姿态/.test(c))
+    if (perf || !emo.length || (!idle && total < LONG_SHOT_SEC)) return
+    const e = emo[Math.min(emo.length - 1, Math.floor((i * emo.length) / segTexts.length))]
+    x.cls = [...x.cls, `神情透出${e.replace(/^[的地得]/, '')}`]
   })
   if (speeds.filter((x) => x === '慢').length > 1) todo.push('多段含台词，均标为【慢】，请核对节奏')
   if (speeds.every((x) => x === '慢')) todo.push('所有分段都是【慢】，与「非慢动作」冲突，建议拆镜')

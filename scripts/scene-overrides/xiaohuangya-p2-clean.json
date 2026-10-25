@@ -1,4 +1,5 @@
 {
+  "status": "OPT-IN regression reference only. Never read by the default pipeline (repack reads it only with an explicit --scene-overrides). Since the generic rules (explicit location in shot text, conversation continuity, split-child contrast / performance / speech placement) the automatic output reaches the same places for s6-13/s6-16 without this file; entries here are bug signals, not pipeline data.",
   "note": "小黄鸭砸出个帅系统 p2-clean: place labels with no reliable text cue for the solo-shot home rule. Use with: repack --split-crosscut --scene-overrides scripts/scene-overrides/xiaohuangya-p2-clean.json",
   "overrides": {
     "s6-13": "classroom_day",

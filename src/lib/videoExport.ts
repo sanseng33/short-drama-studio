@@ -92,6 +92,12 @@ export interface VideoPipelineShot {
    * carryFromShotId is the immediately previous shot.
    */
   carryFromShotId?: string | null
+  /** renderer framing (shotAnnotate.framingOf): closeup_dialogue = 近景/特写 + on-screen dialogue; set on every shot */
+  framing?: 'closeup_dialogue' | 'medium' | 'full'
+  /** characterId → wardrobe state (shotAnnotate.wardrobeStates, e.g. plain / glowup / default); set on every shot */
+  wardrobeState?: Record<string, string>
+  /** optional renderer engine hint; passed through untouched */
+  engine?: string
 }
 
 export interface VideoPipelineWarning {
@@ -155,6 +161,12 @@ export interface VideoPipelineExport {
     imagesDir?: string | null
     /** costume for prompts with logo/校徽/刺绣标 triggers removed (only when it differs from costume) */
     costumePrompt?: string
+    /** wardrobe state of this character variant (default: refImage minus `${characterKey}_`, else 'default') */
+    wardrobeState?: string
+    /** wardrobe changes over the story: state starts at fromShotId / fromEpisode */
+    wardrobeTimeline?: { state: string; fromShotId?: string; fromEpisode?: number }[]
+    /** keyword cues in visual/action text that switch the wardrobe state from that shot on */
+    wardrobeCues?: { state: string; keywords: string[] }[]
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]
@@ -929,6 +941,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       ...(c.negative?.trim() ? { negative: c.negative.trim() } : {}),
       ...(c.characterKey?.trim() ? { characterKey: c.characterKey.trim() } : {}),
       ...(c.imagesDir?.trim() ? { imagesDir: c.imagesDir.trim() } : {}),
+      ...(c.wardrobeState?.trim() ? { wardrobeState: c.wardrobeState.trim() } : {}),
+      ...(c.wardrobeTimeline?.length ? { wardrobeTimeline: c.wardrobeTimeline } : {}),
+      ...(c.wardrobeCues?.length ? { wardrobeCues: c.wardrobeCues } : {}),
     })),
     shots,
     warnings,
