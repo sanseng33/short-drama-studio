@@ -1326,7 +1326,7 @@ if (existsSync(FIX)) {
 {
   // ---------------- round 13: leftovers ----------------
   t('abstract performance: emotion phrase → visible acting from the table only; no table word → dropped; gate', () => {
-    assert.equal(visibleForEmotion('硬撑的镇定'), [EMOTION_VISIBLE['硬撑'], EMOTION_VISIBLE['镇定']].join('、').split('、').filter((x, i, a) => a.indexOf(x) === i).join('、'))
+    assert.equal(visibleForEmotion('硬撑的镇定'), [EMOTION_VISIBLE['硬撑'], EMOTION_VISIBLE['镇定']].join('、').split('、').filter((x, i, a) => a.indexOf(x) === i).slice(0, 2).join('、'))
     assert.equal(visibleForEmotion('某种说不清的氛围'), '')
     // parts already shown are not repeated
     const first = EMOTION_VISIBLE['不屑'].split('、')[0]

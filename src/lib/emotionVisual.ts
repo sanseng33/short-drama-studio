@@ -186,8 +186,17 @@ const VISIBLE_KEYS = Object.keys(EMOTION_VISIBLE).sort((a, b) => b.length - a.le
 /**
  * Visible acting for an abstract emotion phrase (越描越黑的慌 / 硬撑的镇定), from EMOTION_VISIBLE only: every table word
  * in the phrase contributes its parts; parts already in `avoid` are skipped. '' when the phrase has no table word
- * (异变瞬间的安静): the caller drops it instead of writing 神情透出… (drawn as text / an abstract face).
+ * (异变瞬间的安静): the caller drops it; at most two parts instead of writing 神情透出… (drawn as text / an abstract face).
  */
+export function emotionWords(phrase: string): string[] {
+  let rest = phrase
+  const out: string[] = []
+  for (const k of VISIBLE_KEYS) if (rest.includes(k)) {
+    out.push(k)
+    rest = rest.split(k).join('|')
+  }
+  return out
+}
 export function visibleForEmotion(phrase: string, avoid = ''): string {
   let rest = phrase
   const parts: string[] = []
@@ -196,7 +205,8 @@ export function visibleForEmotion(phrase: string, avoid = ''): string {
     rest = rest.split(k).join('|')
     for (const p of EMOTION_VISIBLE[k].split('、')) if (!parts.includes(p) && !avoid.includes(p)) parts.push(p)
   }
-  return parts.join('、')
+  // at most two visible beats: a micro-performance, not a second action line
+  return parts.slice(0, 2).join('、')
 }
 /** abstract performance marker the beat rule used to write; never in a final prompt (gate) */
 export const ABSTRACT_PERFORMANCE_RE = /神情透出/

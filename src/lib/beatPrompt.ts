@@ -18,7 +18,7 @@ import { PERSON_DESCRIPTOR, stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './sho
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
 import { actionCap, actionWeight, clauseCap, countActions, expandCompounds, isVisibleAction, limitActions, visibleCap } from './actionDensity'
-import { splitVoice, stripVoiceAdverbs, visibleForEmotion } from './emotionVisual'
+import { emotionWords, splitVoice, stripVoiceAdverbs, visibleForEmotion } from './emotionVisual'
 /** beatTrimmedActions prefix of the performance rule (emotion → visible acting / skipped) */
 export const PERFORMANCE_NOTE = '表演规则：'
 import { clearMouthClause, MOUTH_BLOCK_RE } from './mouthOcclusion'
@@ -1200,8 +1200,11 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     // draws as an abstract face / text); acting another segment already shows is not repeated; a phrase with no table
     // word is skipped (logged) and the next emotion is tried
     const shown = segTexts.flatMap((y) => y.cls).join('，')
+    // an emotion another segment already shows (the phrase or its table word, visualized later) is not repeated
+    const used = (em: string) => shown.includes(em.replace(/^[的地得]/, '')) || emotionWords(em).some((w) => shown.includes(w))
     const k = Math.min(emo.length - 1, Math.floor((i * emo.length) / segTexts.length))
     for (const em of [...emo.slice(k), ...emo.slice(0, k)]) {
+      if (used(em)) continue
       const v = visibleForEmotion(em, shown)
       if (!v) {
         trimmed.push(`${PERFORMANCE_NOTE}${fmt(x.g.start)}–${fmt(x.g.end)}秒 无可见动作对照，略去：${em}`)
