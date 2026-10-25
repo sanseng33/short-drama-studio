@@ -322,6 +322,8 @@ export interface DialogueLineOut {
   voice?: string | { description?: string; id?: string } | null
   /** voice designed automatically for an off-list speaker (exp.autoVoices) — needs review */
   autoVoice?: true
+  /** TTS delivery hint: voice / tone descriptions taken out of the visual prompt (语气轻得几乎自语) */
+  delivery?: string
 }
 
 const PLACES = [

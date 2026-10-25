@@ -50,6 +50,20 @@ export function actionCap(speed: SegKind, dialogue: boolean): number {
   return speed === '快' || dialogue ? 1 : 2
 }
 
+/** a head / gaze move the viewer sees as a separate beat (抬眼望向… / 转头看…), even when it weighs 0 as a main action */
+const GAZE_MOVE = /抬眼|抬头|抬起头|回头|回过头|扭头|转头|侧头|偏头|仰头|低头|垂眼|点头|摇头|望向|看向|瞥向|移向/
+export function isVisibleAction(c: string): boolean {
+  return actionWeight(c) > 0 || GAZE_MOVE.test(c)
+}
+/** visible actions per segment after every merge / reallocation: 快 ≤ 1, otherwise ≤ 2 (pure expressions count 0) */
+export function visibleCap(speed: SegKind): number {
+  return speed === '快' ? 1 : 2
+}
+/** all drawn clauses per segment (visible + expression): one expression beyond the visible cap */
+export function clauseCap(speed: SegKind): number {
+  return visibleCap(speed) + 1
+}
+
 /**
  * Expand "A又B" / "A再B" when both sides carry a main action (e.g. 摊手又收回来摸了摸后颈 → two clauses).
  * Leaves "又迅速转回正面" alone when the right side is a pure return.

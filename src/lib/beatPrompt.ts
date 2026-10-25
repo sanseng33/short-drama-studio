@@ -17,7 +17,9 @@
 import { PERSON_DESCRIPTOR, stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
-import { actionCap, actionWeight, countActions, expandCompounds, limitActions } from './actionDensity'
+import { actionCap, actionWeight, clauseCap, countActions, expandCompounds, isVisibleAction, limitActions, visibleCap } from './actionDensity'
+import { splitVoice, stripVoiceAdverbs } from './emotionVisual'
+import { clearMouthClause, MOUTH_BLOCK_RE } from './mouthOcclusion'
 import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, dialogueSegmentNeeds, SHOT_TARGET_SEC, type DialoguePad, type SpeechRate } from './dialogueTiming'
 
 export type BeatMode = 'off' | 'speed'
@@ -42,6 +44,8 @@ export interface BeatPromptResult {
   todo: string[]
   /** main actions dropped by the action-density cap (`0–2秒【快】：clause`) */
   trimmedActions: string[]
+  /** voice / delivery descriptions removed from the visual prompt (TTS delivery hint for the line) */
+  delivery: string[]
 }
 
 export interface BeatModeOptions {
@@ -320,7 +324,7 @@ const INSERT_BEFORE = /(扭头|转身|冲向|冲进|冲出|冲过去|扑向|扑�
 const HESITATE = /(停一下|顿住|顿了|迟疑|犹豫|不确定|慢慢|缓缓)/
 const SPEED_ADVERB = /(猛地|迅速|飞快|一把|干脆|利落|急忙|赶紧|立刻|骤然|倏地)/
 /** clause that would block the mouth during lip-sync */
-const MOUTH_BLOCK = /((捂|掩|遮|挡)住?[^，]{0,3}(嘴|口|脸)|背对镜头|背过身|转过身去|埋头|低头|手指?抵[^，]{0,2}唇|咬[^，]{0,2}(手指|指甲|笔|吸管)|喝水|吃)/
+const MOUTH_BLOCK = MOUTH_BLOCK_RE
 /** small hand props that compete with face/hands */
 export const SMALL_PROP_RE = /(生鸡蛋|鸡蛋|硬币|打火机|钥匙|棒棒糖|糖果|橡皮|骰子|扑克牌|纸牌|筷子|勺子|香烟|烟头|瓶盖|魔方|指尖陀螺|圆珠笔|铅笔|钢笔|签字笔|(?<![记])笔(?![直记挺画触])|戒指|发圈|皮筋|回形针|U盘|小石子)/
 /** clause about people other than the one on-screen character (generic extras / crowd vocabulary) */
@@ -336,7 +340,7 @@ const MICRO_RE = /(眉|眼|视线|目光|嘴角|嘴唇|唇|鼻|喉结|下巴|下
 /** clauses that happen after the line was spoken */
 const POST_SPEECH = /^(?:他|她)?(说完|喊完|念完|问完|答完|讲完)/
 /** clauses that lead into the line (the mouth starts moving) */
-const PRE_SPEECH = /(开口前|开口之前|喊之前|说之前|才出声|再出声|才开口|再开口|出声前)/
+const PRE_SPEECH = /(开口前|开口之前|喊之前|说之前|才出声|再出声|才开口|再开口|出声前|才说话|再说话)/
 /** shots at least this long must carry a performance beat in every segment */
 export const LONG_SHOT_SEC = 6
 const HANDLING_RE = /(指间|指尖|手里|手中|掌心|把玩|转了|转着|转动|捏|拨弄|抛|夹着|攥|搓|晃了?晃|在手上|颠了颠|翻来覆去)/
@@ -776,6 +780,7 @@ export function validateBeatOverride(s: VideoPipelineShot, segs: BeatOverrideSeg
 
 export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatModeOptions = {}): BeatPromptResult {
   const src = s.promptDefault ?? s.prompt ?? ''
+  const voiceDropped: string[] = []
   const total = Number(s.durationSec) || 0
   const todo: string[] = []
   const removedProps: string[] = []
@@ -983,6 +988,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     .map((x) => (x || '').trim())
     .filter((x) => [...x].length >= 4)
     .sort((a, b) => b.length - a.length)
+  const trimmed: string[] = []
   const segTexts = groups.map((g) => {
     const speech = g.beats.some((b) => b.speech)
     const voice = g.beats.some((b) => b.voice)
@@ -1013,12 +1019,22 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
         return false
       })
     }
+    // audio / delivery descriptions (语气… / 几乎自语 / 低声说) are never drawn; they become the line's TTS delivery hint
+    cls = cls
+      .map((c) => {
+        const v = splitVoice(stripVoiceAdverbs(c))
+        if (v.voice) voiceDropped.push(v.voice)
+        return v.keep
+      })
+      .filter(Boolean)
     const dlg = speech || voice
     if (speech) {
-      cls = cls.filter((c) => {
-        if (!MOUTH_BLOCK.test(c)) return true
-        todo.push(`台词段删去遮挡嘴部的动作：${c}`)
-        return false
+      // occluding the mouth while speaking: a visible equivalent (手拢在嘴边喊 → 仰头张嘴喊), else dropped
+      cls = cls.flatMap((c) => {
+        const r = clearMouthClause(c)
+        if (!r.changed) return [c]
+        todo.push(`台词段${r.clause ? '改写' : '删去'}遮挡嘴部的动作：${c}${r.clause ? ` → ${r.clause}` : ''}`)
+        return r.clause ? [r.clause] : []
       })
       cls = cls.filter((c) => !/^(开口|张嘴|说话|说台词)$/.test(c))
     }
@@ -1043,7 +1059,10 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const mid = d.cls.filter((c) => !pre.includes(c) && !post.includes(c) && !bare.some((b) => paced(b) >= 3 && (c.includes(b) || isNearDup(c, b))))
     // two lead-ins on the same feature (嘴角动了一下才出声 / 嘴角先动再出声) are one beat
     const preU = pre.filter((c, k) => !pre.slice(0, k).some((y) => y.slice(0, 2) === c.slice(0, 2) || isNearDup(c, y)))
-    d.cls = [...preU, ...mid, ...post]
+    // the line starts with the shot (no earlier segment): there is no time before speech — lead-ins are dropped
+    const lead = di === 0 && d.g.start <= 1e-9 ? [] : preU
+    for (const c of preU.filter((c) => !lead.includes(c))) trimmed.push(`${fmt(d.g.start)}–${fmt(d.g.end)}秒（台词从0秒开始，无开口前时间）：${unmark(c)}`)
+    d.cls = [...lead, ...mid, ...post]
   }
   // post-speech actions (说完/喊完… + a main action) belong to the next, non-dialogue segment, not the 【慢】 lip-sync one
   segTexts.forEach((x, i) => {
@@ -1093,7 +1112,6 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     if (kept.length) x.cls = kept
   })
   // action density (H3 executes one distinct action per 【快】 segment): 快 ≤ 1, 慢/常速 ≤ 2, dialogue ≤ 1 besides speech
-  const trimmed: string[] = []
   // multi-person dialogue segment: the main action tied to the on-screen line (the last beat that carries a line) is
   // kept over a trailing action of someone else; solo shots keep the latest action (closest to speech)
   const nameTexts = variants.map((v) => v.text).sort((a, b) => b.length - a.length)
@@ -1122,6 +1140,46 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     x.cls = r.kept
     for (const d of r.dropped) trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒（${speeds[i]}）：${unmark(d)}`)
   })
+  // re-enforced after every merge / move: visible actions (head / gaze moves included) ≤ visibleCap and all drawn
+  // clauses ≤ clauseCap. The main action (tied to the line in a dialogue segment), lead-ins and the 说完… beat stay;
+  // extras move to a neighbouring silent segment with room (later first; 说完… never earlier), else are dropped (logged)
+  // a clause that speaks (…才说话 / 喊话) never moves into a silent segment; a beat the target already shows is dropped
+  const SPEAKS = /说话|开口|出声|喊|说一句|问话|念出/
+  const PERSONAL = /[他她]|眉|眼|嘴|唇|脸|肩|手|指|头|下巴|下颌|脚|腿|身|背|喉|鼻|呼吸|视线|目光|胸|牙|额|耳|脖|膝|腰|拳|笑|叹|哈欠|神情|表情|无奈|慵懒/
+  const fits = (y: (typeof segTexts)[number], k: number, c: string) =>
+    !y.dlg && !SPEAKS.test(c) && !y.cls.some((z) => isNearDup(c, z) || isNearDup(z, c)) && y.cls.length + 1 <= clauseCap(speeds[k]) && (!isVisibleAction(c) || y.cls.filter(isVisibleAction).length + 1 <= visibleCap(speeds[k])) && (speeds[k] !== '快' || actionWeight(c) === 0)
+  segTexts.forEach((x, i) => {
+    // the clause cap binds the lip-sync segment (merged beats pile up there); visible actions are capped everywhere
+    const over = () => (x.dlg && x.cls.length > clauseCap(speeds[i])) || x.cls.filter(isVisibleAction).length > visibleCap(speeds[i])
+    if (!over()) return
+    // the main action: tied to the line in a multi-person dialogue segment, else the strongest person clause (ties →
+    // the most concrete, i.e. longest); scenery clauses (纱帘被风顶起) never outrank the actor
+    const person = (c: string) => PERSONAL.test(c) || leadRef.test(c)
+    const byWeight = [...x.cls].filter(person).sort((a, b) => actionWeight(b) - actionWeight(a) || paced(b) - paced(a))
+    const main = (x.dlg && !single ? leadOf(x) : undefined) ?? byWeight[0]
+    const fixed = (c: string) => c === main || (x.dlg && (PRE_SPEECH.test(c) || POST_SPEECH.test(c)))
+    // removal order: scenery first, then (too many visible actions) an extra visible one, else an expression first;
+    // the latest first
+    const movable = () => {
+      const free = x.cls.filter((c) => !fixed(c))
+      const scenery = free.filter((c) => !person(c)).reverse()
+      const actor = free.filter(person)
+      const needVis = x.cls.filter(isVisibleAction).length > visibleCap(speeds[i])
+      if (needVis) return actor.filter(isVisibleAction).reverse().concat(scenery.filter(isVisibleAction))
+      return [...scenery, ...actor.filter((c) => !isVisibleAction(c)).reverse(), ...actor.filter(isVisibleAction).reverse()]
+    }
+    while (over()) {
+      const c = movable()[0] ?? [...x.cls].reverse().find((y) => y !== main)
+      if (!c) break
+      x.cls = x.cls.filter((y) => y !== c)
+      const to = (person(c) ? [i + 1, ...(POST_SPEECH.test(c) ? [] : [i - 1])] : [i - 1]).find((k) => k >= 0 && k < segTexts.length && fits(segTexts[k], k, c))
+      if (to !== undefined) {
+        const y = segTexts[to]
+        y.cls = to > i ? [c, ...y.cls] : [...y.cls, c]
+        trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒（${speeds[i]}，超出动作密度）移到 ${fmt(y.g.start)}–${fmt(y.g.end)}秒：${unmark(c)}`)
+      } else trimmed.push(`${fmt(x.g.start)}–${fmt(x.g.end)}秒（${speeds[i]}，超出动作密度）：${unmark(c)}`)
+    }
+  })
   // the same beat never repeats in a later segment (merged 动作 + 表演 notes describe one moment twice)
   segTexts.forEach((x, i) => {
     if (!i) return
@@ -1149,7 +1207,10 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   const segLines = segTexts.map((x, i) => {
     const sp = speeds[i]
     // last pass: the performance rule can re-add a beat the action already said in other words
-    let body = unmark(dedupeClauses(x.cls).join('，'))
+    const all = dedupeClauses(x.cls)
+    // dialogue segment order: lead-ins / main → the speaking cue → 说完… afterthoughts
+    const post = x.speech ? all.filter((c) => POST_SPEECH.test(c)) : []
+    let body = unmark(all.filter((c) => !post.includes(c)).join('，'))
     if (sp === '快') body = fastify(body || '迅速完成动作')
     if (sp === '慢') {
       // every on-screen speaker of the segment is named by descriptor (two lines in one segment: one after the other)
@@ -1160,7 +1221,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
         : refs.length >= 2
           ? `${refs.map((r, k) => `${k ? '随后' : ''}${r}${k ? '' : '先'}${BEAT_MOUTH_LINE}`).join('，')}，${BEAT_MOUTH_CLEAR}`
           : `${refs[0] || ''}${BEAT_MOUTH_CUE}`
-      body = `动作放慢${body ? `，${body}` : ''}；${cue}`
+      body = `动作放慢${body ? `，${body}` : ''}；${cue}${post.length ? `；${unmark(post.join('，'))}` : ''}`
     }
     if (!body) body = '保持姿态，呼吸与眼神有细微变化'
     segMeta.push({ start: x.g.start, end: x.g.end, speed: sp, dialogue: x.dlg, lipSync: x.speech })
@@ -1211,7 +1272,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     // final guards: no names, no dialogue text
     const leftover = variants.filter((v) => v.text.length >= 2 && prompt.includes(v.text)).map((v) => v.text)
     if (leftover.length) todo.push(`提示词仍含人名：${leftover.join('、')}`)
-    return { prompt, segments: segMeta, removedProps, todo, trimmedActions }
+    return { prompt, segments: segMeta, removedProps, todo, trimmedActions, delivery: [...new Set(voiceDropped)] }
   }
 }
 
@@ -1295,6 +1356,8 @@ export function applyBeatMode(exp: VideoPipelineExport, opts: BeatModeOptions = 
     else delete out.beatTodo
     if (r.trimmedActions.length) out.beatTrimmedActions = r.trimmedActions
     else delete out.beatTrimmedActions
+    if (r.delivery.length) out.beatDelivery = r.delivery
+    else delete out.beatDelivery
     return out
   })
   return { ...exp, shots }

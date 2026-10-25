@@ -18,7 +18,8 @@
  *
  * An optional `engine` field on a shot is passed through untouched. Pure + idempotent.
  */
-import { rewriteNote, visualizePrompt } from './emotionVisual'
+import { parseRewriteNote, rewriteNote, visualizePrompt } from './emotionVisual'
+import { clearMouth, MOUTH_CLEAR_MARK } from './mouthOcclusion'
 import { speechSec, type SpeechRate } from './dialogueTiming'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { sha1Hex } from './hash'
@@ -185,8 +186,12 @@ export const NO_TEXT_CONSTRAINT = '画面中没有任何文字、字幕、标志
 export const CLOSEUP_CAMERA = '近景（胸口以上），正脸或三分之二侧脸'
 /** angle / composition words that pull a dialogue close-up into a side or half-body shot */
 export const HALF_BODY_ANGLE_WORDS = ['侧打', '侧拍', '侧身', '侧面', '侧向', '侧脸', '半侧', '斜侧', '半身', '过肩', '越肩', '背面', '背影', '背对']
+/** closeup_dialogue drift guard: the model must not push into an extreme face close-up cropping forehead / chin */
+export const CLOSEUP_FRAMING_GUARD = '镜头全程保持胸口以上近景，不推到大特写，头顶和下巴完整入画'
+/** camera moves that push a dialogue close-up into an extreme close-up */
+const PUSH_IN = /推近|推到|推向|推进|轻推|缓推|慢推|推镜|拉近|变焦|逼近/
 const FRAMING_WORDS: Record<Framing, string> = {
-  closeup_dialogue: `${CLOSEUP_CAMERA}，单人`,
+  closeup_dialogue: `${CLOSEUP_CAMERA}，单人，${CLOSEUP_FRAMING_GUARD}`,
   medium: '中景',
   full: '全景',
   empty: '空镜，画面中没有人物',
@@ -220,7 +225,7 @@ export function closeupCamera(cam: string): string {
     .replace(SIZE_G(), '')
     .replace(/[（(][^（）()]*(?:胸口|脸|眼|部|身)[^（）()]*[）)]/g, '')
   for (const w of HALF_BODY_ANGLE_WORDS) c = c.split(w).join('')
-  return [CLOSEUP_CAMERA, ...tidyCamera(c.split(/[，,·；;]/))].filter((x, i, a) => a.indexOf(x) === i).join('，')
+  return [CLOSEUP_CAMERA, ...tidyCamera(c.split(/[，,·；;]/).filter((x) => !PUSH_IN.test(x)))].filter((x, i, a) => a.indexOf(x) === i).join('，')
 }
 
 /** size words a camera line may use for each framing (solo); 2+ on-screen medium additionally needs a two-shot marker */
@@ -442,6 +447,10 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
     p = r.prompt
     notes.push(...r.notes)
   }
+  // no mouth / face occluder while the line is spoken (lip-sync segments; a timeline-less dialogue close-up: all of it)
+  const mo = clearMouth(p, { wholeShot: framing === 'closeup_dialogue' && !p.includes(MOUTH_CLEAR_MARK) })
+  p = mo.prompt
+  notes.push(...mo.notes)
   if (ctx && n >= 2) notes.push(...unclearPronouns(p).map((c) => `${UNCLEAR_PRONOUN_NOTE}${c}`))
   p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${normalizeCamera(cam, framing, n)}`)
   return { prompt: `${p}\n景别：${framingWords(framing, n)}。\n${NO_TEXT_CONSTRAINT}`, notes }
@@ -606,6 +615,13 @@ export function withProposedWardrobe(exp: VideoPipelineExport): { exp: VideoPipe
   }
 }
 
+/** voice descriptions removed from the picture → the spoken lines' TTS delivery hint (every line of the shot) */
+export function withDelivery<T extends { delivery?: string; voiceOnly?: boolean }>(lines: T[], hints: string[]): T[] {
+  const h = [...new Set(hints.map((x) => x.replace(/[，,。；;\s]+$/, '')).filter(Boolean))].join('，')
+  if (!h) return lines
+  return lines.map((l) => ({ ...l, delivery: l.delivery ? `${l.delivery}，${h}` : h }))
+}
+
 /**
  * Set `framing` + `wardrobeState` on every shot (engine and all other fields untouched).
  * Characters without hand wardrobe data first get an auto-proposed timeline (marked autoProposed).
@@ -649,7 +665,10 @@ export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Par
         framing,
         wardrobeState: ws[i],
         seed: shotSeed(pid, s.id),
-        dialogueLines: withLineVoices(timedDialogueLines(s, chars, opts.speechRate), e.characters, extraVoices, auto),
+        dialogueLines: withDelivery(withLineVoices(timedDialogueLines(s, chars, opts.speechRate), e.characters, extraVoices, auto), [
+          ...(s.beatDelivery || []),
+          ...r.notes.map((n) => parseRewriteNote(n)).flatMap((x) => (x?.kind === 'voice' ? [x.from] : [])),
+        ]),
         audio: s.audio ?? null,
         prompt: r.prompt,
       }

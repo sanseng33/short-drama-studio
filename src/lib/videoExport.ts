@@ -73,6 +73,13 @@ export interface VideoPipelineShot {
   beatOverride?: boolean
   /** main actions dropped by the beat action-density cap (快 ≤ 1, 慢/常速 ≤ 2, dialogue segment ≤ 1) */
   beatTrimmedActions?: string[]
+  /** beat mode: voice / delivery clauses taken out of the visual prompt (→ dialogueLines[].delivery) */
+  beatDelivery?: string[]
+  /**
+   * render hold (renderHold.ts, set by repack): reasons this shot still has an unresolved blocking issue after every
+   * automatic rule; null = clear to render. The GPU runner defers held shots (--defer-flag).
+   */
+  hold?: { reason: string[] } | null
   /** beat mode: the default (non-beat) prompt, kept for comparison / re-conversion */
   promptDefault?: string
   /** place slug of sceneId (sceneContinuity), e.g. villa_bedroom */

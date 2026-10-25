@@ -9,19 +9,21 @@ import { scanPack } from './scan-prompts'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applyBeatMode, BEAT_LINE_RE, buildBeatPrompt, charOverlapDup, listToClauses, sharedRunDup, CLOSE_DIALOGUE_FRAMING, dialogueFraming, isNearDup, LONG_SHOT_SEC } from '../src/lib/beatPrompt'
-import { actionCap, actionWeight, countActions, limitActions } from '../src/lib/actionDensity'
+import { applyBeatMode, BEAT_LINE_RE, buildBeatPrompt, charOverlapDup, listToClauses, sharedRunDup, CLOSE_DIALOGUE_FRAMING, dialogueFraming, isNearDup, LONG_SHOT_SEC, BEAT_MOUTH_CUE, BEAT_MOUTH_CLEAR } from '../src/lib/beatPrompt'
+import { clearMouth, clearMouthClause, MOUTH_BLOCK_RE, MOUTH_CLEAR_MARK, mouthOcclusionRisks } from '../src/lib/mouthOcclusion'
+import { actionCap, actionWeight, clauseCap, countActions, isVisibleAction, limitActions, visibleCap } from '../src/lib/actionDensity'
+import { applyRenderHold, densityIssues } from '../src/lib/renderHold'
 import { applyCrossCutSplit, correctScenes, explicitPlaces } from '../src/lib/crosscutSplit'
 import { postProcessExport } from '../src/lib/segmentPost'
 import {
   annotateShots, baseWardrobeState, castDescription, unclearPronouns, type WardrobeMeta, CLOSEUP_CAMERA, dropContradictions, multiSubjectLine, normalizeCamera, renderPrompt, closeupCamera, finalizePrompt, FRAMINGS, framingOf, missingAnnotations, NO_TEXT_CONSTRAINT, sha1Hex, shotSeed, timedDialogueLines,
-  proposeWardrobeTimelines, wardrobeReport, wardrobeStates, knownLimitations, MULTI_REF_LIMITATION } from '../src/lib/shotAnnotate'
+  proposeWardrobeTimelines, wardrobeReport, wardrobeStates, knownLimitations, MULTI_REF_LIMITATION, CLOSEUP_FRAMING_GUARD } from '../src/lib/shotAnnotate'
 import { autoVoiceDescription, autoVoiceId, characterVoices, lineVoice, missingVoices, normalizeVoice } from '../src/lib/voice'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 import { applyCastConsistency } from '../src/lib/castConsistency'
-import { EMOTION_RE, parseRewriteNote, promptTextRisks, QUOTE_RE, visualizePrompt } from '../src/lib/emotionVisual'
+import { EMOTION_RE, HOLD_EXPRESSION, isVoiceClause, parseRewriteNote, promptTextRisks, QUOTE_RE, splitVoice, stripVoiceAdverbs, visualizePrompt } from '../src/lib/emotionVisual'
 import { dialogueNeedSec, dialogueOverruns, dialogueSegmentNeeds, speechSec } from '../src/lib/dialogueTiming'
-import { EMOTION_VISIBLE } from '../src/lib/emotionVocab'
+import { CONTEXTUAL_EMOTION, EMOTION_VISIBLE } from '../src/lib/emotionVocab'
 
 let pass = 0
 const t = (name: string, fn: () => void) => {
@@ -213,9 +215,9 @@ t('finalizePrompt: no 【】, pacing words, framing words + fixed no-text line o
   const c = finalizePrompt(raw, 'closeup_dialogue')
   assert.ok(!/[【】]/.test(c), c)
   assert.ok(c.includes('0–2秒，动作利落快速：他转身') && c.includes('2–4秒，恢复正常节奏：他坐下注意'), c)
-  assert.ok(c.includes(`镜头：${CLOSEUP_CAMERA}，缓推。`), c)
+  assert.ok(c.includes(`镜头：${CLOSEUP_CAMERA}。`), c) // push-in dropped (framing guard)
   assert.ok(!/侧打|半身|过肩/.test(c), c)
-  assert.ok(c.endsWith(`\n景别：${CLOSEUP_CAMERA}，单人。\n${NO_TEXT_CONSTRAINT}`), c)
+  assert.ok(c.endsWith(`\n景别：${CLOSEUP_CAMERA}，单人，${CLOSEUP_FRAMING_GUARD}。\n${NO_TEXT_CONSTRAINT}`), c)
   assert.equal(finalizePrompt(c, 'closeup_dialogue'), c, 'idempotent')
   const m = finalizePrompt(finalizePrompt(raw, 'closeup_dialogue'), 'medium')
   assert.ok(m.includes('景别：中景。') && !m.includes('景别：近景') && m.split(NO_TEXT_CONSTRAINT).length === 2, m)
@@ -490,6 +492,155 @@ t('annotateShots applies proposals only without hand data; wardrobeReport flags 
 })
 
 // ---------------- the real pack, no override file ----------------
+// ---------------- round 11: density after merge, in-segment order, voice words, empty segments, render hold ----------------
+{
+  const line = '让我试一下吧。'
+  const L = (text = line) => ({ speaker: 'a1', speakerName: '甲', text })
+  const segBody = (l: string) => l.replace(/^[^：]*：/, '').replace(/^动作放慢，?/, '').split('；')[0]
+  const merged = SH({
+    id: 'm1', durationSec: 6, size: '近景', camera: '近景', dialogue: line, speaker: 'a1', speakerName: '甲', dialogueLines: [L()],
+    prompt: '竖屏9:16。白天，房间。主体：17岁东亚少年，米白夹克。时间轴（一镜6秒，小节拍）：0–4s开口前眼神先飘远，指腹来回搓衣角，他抬眼望向窗外，呼吸沉了一下，说完嘴唇轻轻合上（甲开口说台词）；4–6s随后语气轻得几乎自语，眼底有一点不好意思的认真。镜头：近景。',
+  })
+  t('density re-enforced after merge: dialogue segment ≤ 2 visible / ≤ 3 clauses, main action kept, extras moved or dropped (logged)', () => {
+    const o = annotateShots(applyBeatMode(pack([merged]))).shots[0]
+    const segs = o.prompt.split('\n').filter((l) => BEAT_LINE_RE.test(l))
+    const di = o.beatSegments!.findIndex((g) => g.lipSync)
+    const cls = segBody(segs[di]).split(/[，。]/).filter(Boolean)
+    assert.ok(cls.length <= clauseCap('慢') && cls.filter(isVisibleAction).length <= visibleCap('慢'), segs[di])
+    assert.ok(cls.some((c) => c.includes('搓衣角')), 'main action tied to the line stays')
+    assert.ok(o.beatTrimmedActions!.some((x) => /超出动作密度/.test(x)), JSON.stringify(o.beatTrimmedActions))
+    // the moved beat lands in a silent neighbour, not lost silently
+    const moved = o.beatTrimmedActions!.filter((x) => x.includes('移到')).map((x) => x.split('：').pop()!)
+    for (const m of moved) assert.ok(segs.some((l, i) => i !== di && l.includes(m)), m)
+    for (const [i, l] of segs.entries()) {
+      const g = o.beatSegments![i]
+      const c = segBody(l).split(/[，。]/).filter(Boolean)
+      assert.ok(c.filter(isVisibleAction).length <= visibleCap(g.speed) && countActions(c) <= actionCap(g.speed, g.dialogue), l)
+    }
+    assert.equal(densityIssues(o).length, 0)
+  })
+  t('dialogue segment order: lead-in → speaking cue → 说完…; a line starting at 0 s drops 开口前… (logged)', () => {
+    const o = annotateShots(applyBeatMode(pack([merged]))).shots[0]
+    const d = o.prompt.split('\n').find((l) => l.includes(BEAT_MOUTH_CUE))!
+    assert.ok(d.indexOf('说完') > d.indexOf(BEAT_MOUTH_CUE), d)
+    assert.equal(o.beatSegments!.find((g) => g.lipSync)!.start, 0)
+    assert.ok(!o.prompt.includes('开口前'), 'no time before speech at 0 s')
+    assert.ok(o.beatTrimmedActions!.some((x) => x.includes('无开口前时间') && x.includes('开口前眼神先飘远')))
+    // a prior segment exists: the lead-in stays, before the cue
+    const later = SH({
+      id: 'm2', durationSec: 5, dialogue: line, speaker: 'a1', speakerName: '甲', dialogueLines: [L()],
+      prompt: '竖屏9:16。白天，房间。主体：17岁东亚少年，米白夹克。时间轴（一镜5秒，小节拍）：0–2s他走到窗边，停住；2–5s随后开口前眼神先飘远，他手指敲了敲窗台（甲开口说台词）。镜头：中景。',
+    })
+    const p = annotateShots(applyBeatMode(pack([later]))).shots[0].prompt
+    const dl = p.split('\n').find((l) => l.includes(BEAT_MOUTH_CUE))!
+    assert.ok(dl.includes('开口前眼神先飘远') && dl.indexOf('开口前') < dl.indexOf(BEAT_MOUTH_CUE), dl)
+  })
+  t('voice words leave the picture → dialogueLines[].delivery; gate flags leftovers; visible halves / neutral mentions stay', () => {
+    const o = annotateShots(applyBeatMode(pack([merged]))).shots[0]
+    assert.ok(!/语气|几乎自语/.test(o.prompt), o.prompt)
+    assert.equal(o.dialogueLines![0].delivery, '语气轻得几乎自语')
+    assert.deepEqual(o.beatDelivery, ['语气轻得几乎自语'])
+    assert.deepEqual(promptTextRisks(o.prompt), [])
+    assert.deepEqual(splitVoice('语气轻但下颌收得紧'), { keep: '下颌收得紧', voice: '语气轻' })
+    assert.ok(isVoiceClause('声音压得很低') && isVoiceClause('用只有自己能听到的音量嘀咕') && !isVoiceClause('听到声音抬头') && !isVoiceClause('他抬头'))
+    assert.equal(stripVoiceAdverbs('嘴角抽了一下才低声说话'), '嘴角抽了一下才说话')
+    const raw = '0–2秒，正常节奏：语气发紧，他轻轻点头，听到声音抬头。\n2–3秒，正常节奏：闷声开口，嘴角一沉。'
+    assert.ok(promptTextRisks(raw).some((r) => r.startsWith('voice')), JSON.stringify(promptTextRisks(raw)))
+    const v = visualizePrompt(raw)
+    assert.ok(!/语气|闷声/.test(v.prompt) && v.prompt.includes('听到声音抬头') && v.prompt.includes('开口，嘴角一沉'), v.prompt)
+    assert.deepEqual(v.rewrites.filter((r) => r.kind === 'voice').map((r) => r.from).sort(), ['语气发紧', '闷声'].sort())
+    assert.deepEqual(promptTextRisks(v.prompt), [])
+  })
+  t('emotion table: 不好意思 / 怀念 / contextual 认真 rewritten; neutral 认真地… untouched; all visible parts weight 0', () => {
+    const v = visualizePrompt('0–2秒，正常节奏：眼底有一点不好意思的认真，他认真地写字。\n2–4秒，正常节奏：他望着旧照片，神情透出怀念。')
+    assert.ok(!/不好意思|怀念/.test(v.prompt) && v.prompt.includes('他认真地写字'), v.prompt)
+    assert.ok(v.prompt.includes(EMOTION_VISIBLE['认真'].split('、')[0]) && v.prompt.includes(EMOTION_VISIBLE['不好意思'].split('、')[0]), v.prompt)
+    assert.ok(!v.prompt.includes('眼底目光'), 'no dangling 眼底 before the visible part')
+    assert.deepEqual(promptTextRisks(v.prompt), [])
+    assert.deepEqual(promptTextRisks('0–2秒，正常节奏：他认真地写字。'), [], 'neutral 认真 passes the gate')
+    assert.ok(promptTextRisks('0–2秒，正常节奏：眼底一点认真。').some((r) => r.startsWith('emotion')))
+    for (const k of CONTEXTUAL_EMOTION) assert.ok(EMOTION_VISIBLE[k], k)
+    // no visible replacement contains a table word (the gate would fire on its own output)
+    for (const [k, vis] of Object.entries(EMOTION_VISIBLE)) assert.ok(!EMOTION_RE.test(vis), `${k} → ${vis}`)
+  })
+  t('no empty segment: nothing visible left → held expression; the gate flags an empty one', () => {
+    const p = '竖屏9:16，5秒单镜。\n0–2秒，正常节奏：他点头。\n2–3秒，正常节奏：语气发紧。\n3–5秒，接着放慢：动作放慢，心想这下完了；正脸朝镜头开口说一句短话，嘴部清晰可见、无遮挡。'
+    const v = visualizePrompt(p)
+    const segs = v.prompt.split('\n').filter((l) => BEAT_LINE_RE.test(l))
+    assert.equal(segs.length, 3)
+    assert.ok(segs[1].endsWith(`${HOLD_EXPRESSION}。`), segs[1])
+    assert.ok(segs[2].includes(`动作放慢，${HOLD_EXPRESSION}；`), segs[2])
+    assert.equal(v.rewrites.filter((r) => r.kind === 'hold').length, 2)
+    assert.ok(promptTextRisks('0–2秒，正常节奏：。').some((r) => r.startsWith('empty segment')))
+    assert.deepEqual(promptTextRisks(v.prompt), [])
+    assert.equal(visualizePrompt(v.prompt).prompt, v.prompt, 'idempotent')
+  })
+  t('render hold: set automatically from unresolved issues only; fixed issues never hold', () => {
+    const seg = (speed: '快' | '慢' | '恢复常速', start: number, end: number, dialogue = false) => ({ start, end, speed, dialogue, lipSync: dialogue })
+    const long = '一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十。'
+    const e0 = annotateShots(pack([
+      SH({ id: 'ok', prompt: '竖屏9:16，5秒单镜。\n0–5秒，正常节奏：他点头。', beatSegments: [seg('恢复常速', 0, 5)] }),
+      SH({ id: 'cap', durationSec: 9, dialogue: long, speaker: 'a1', speakerName: '甲', dialogueLines: [L(long)] }),
+      SH({ id: 'pron', characterIds: ['a1', 'b1'], prompt: '竖屏9:16，5秒单镜。双人。\n0–5秒，正常节奏：他转身离开。', beatSegments: [seg('恢复常速', 0, 5)] }),
+      SH({ id: 'dens', prompt: '竖屏9:16，5秒单镜。\n0–5秒，动作利落快速：他猛地转身，一把推开门，抬头看向窗外。', beatSegments: [seg('快', 0, 5)] }),
+      SH({ id: 'cast' }),
+    ]))
+    e0.warnings.push({ episode: 1, shotId: 'cast', code: 'cast_consistency', message: 'continuity_island: test' } as VideoPipelineExport['warnings'][number])
+    const { exp, renderHold } = applyRenderHold(e0)
+    const by = Object.fromEntries(exp.shots.map((s) => [s.id, s.hold]))
+    assert.equal(by.ok, null)
+    assert.ok(by.cap!.reason.some((r) => r.startsWith('dialogueOverrun') && r.includes('拆分')), JSON.stringify(by.cap))
+    assert.ok(by.pron!.reason.some((r) => r.startsWith('pronoun')))
+    assert.ok(by.dens!.reason.some((r) => r.startsWith('density')), JSON.stringify(by.dens))
+    assert.ok(by.cast!.reason.some((r) => r.startsWith('cast_consistency')))
+    assert.deepEqual(renderHold.map((x) => x.shotId), ['cap', 'pron', 'dens', 'cast'])
+    assert.ok(exp.shots.every((s) => 'hold' in s), 'every shot carries hold (null = render)')
+    // the same kinds of issue, fixed by the rules (merged density, short-shot overrun → extended, voice words), never hold
+    const fixable = SH({ id: 'fx', durationSec: 3, dialogue: '一二三四五六七八九十十一十二。', speaker: 'a1', speakerName: '甲', dialogueLines: [L('一二三四五六七八九十十一十二。')], action: '他推门进来，开口说话' })
+    const r = applyRenderHold(annotateShots(applyBeatMode(pack([merged, fixable]))))
+    assert.deepEqual(r.renderHold, [], JSON.stringify(r.renderHold))
+    assert.ok(r.exp.shots.every((s) => s.hold === null))
+  })
+  t('mouth occlusion: hand-to-mouth shout rewritten visible, occluders dropped in the line, kept outside it; gate + hold', () => {
+    assert.ok(BEAT_MOUTH_CLEAR.includes(MOUTH_CLEAR_MARK))
+    const sh = SH({
+      id: 'mo', durationSec: 5, size: '近景', camera: '近景缓推', dialogue: line, speaker: 'a1', speakerName: '甲', dialogueLines: [L()],
+      prompt: '竖屏9:16。夜，窗边。主体：17岁东亚少年，蓝白外套。时间轴（一镜5秒，小节拍）：0–2s他端起杯子喝水，放下杯子；2–5s随后他一手拢在嘴边喊（甲开口说台词）。镜头：近景缓推。',
+    })
+    const o = annotateShots(applyBeatMode(pack([sh]))).shots[0]
+    const d = o.prompt.split('\n').find((l) => l.includes(BEAT_MOUTH_CUE))!
+    assert.ok(!d.includes('拢在嘴边') && /张大?嘴喊/.test(d) && d.includes('下巴前伸'), d)
+    assert.ok(o.beatTodo!.some((x) => x.includes('遮挡嘴部') && x.includes('拢在嘴边')), JSON.stringify(o.beatTodo))
+    assert.ok(o.prompt.split('\n').some((l) => BEAT_LINE_RE.test(l) && !l.includes(BEAT_MOUTH_CUE) && l.includes('喝水')), 'outside the line it stays')
+    assert.deepEqual(mouthOcclusionRisks(o.prompt), [])
+    assert.ok(!/拢|捂|遮挡嘴/.test(clearMouthClause('他一手拢在嘴边喊').clause!))
+    assert.equal(clearMouthClause('他捂着嘴').clause, null)
+    assert.equal(clearMouthClause('耳根泛红、低头').clause, '耳根泛红', 'only the occluding part goes')
+    assert.equal(clearMouthClause('他抬头看向窗外').changed, false)
+    for (const c of ['捂住嘴', '手背擦了擦嘴', '咬着笔', '戴着口罩', '衣领遮住下巴', '埋头', '打哈欠']) assert.ok(MOUTH_BLOCK_RE.test(c), c)
+    // final pass: a lip-sync line keeps its own cue (…无遮挡) untouched, drops a leftover occluder, idempotent
+    const raw = `竖屏9:16，5秒单镜。\n0–2秒，正常节奏：他打哈欠。\n2–5秒，接着放慢：动作放慢，他捂着嘴，眨眼；${BEAT_MOUTH_CUE}。`
+    assert.deepEqual(mouthOcclusionRisks(raw), ['他捂着嘴'])
+    const c = clearMouth(raw)
+    assert.ok(c.prompt.includes('0–2秒，正常节奏：他打哈欠。') && c.prompt.includes(`动作放慢，眨眼；${BEAT_MOUTH_CUE}`), c.prompt)
+    assert.equal(c.notes.length, 1)
+    assert.equal(clearMouth(c.prompt).prompt, c.prompt)
+    // a timeline-less dialogue close-up: the whole action text counts as the line
+    assert.deepEqual(mouthOcclusionRisks('竖屏9:16。\n他喝水，抬眼。\n镜头：近景。', true), ['他喝水'])
+    // gate → render hold
+    const held = applyRenderHold(pack([SH({ id: 'h', prompt: raw, beatSegments: [{ start: 0, end: 2, speed: '恢复常速', dialogue: false }, { start: 2, end: 5, speed: '慢', dialogue: true, lipSync: true }] })]))
+    assert.ok(held.renderHold[0]?.reasons.some((r) => r.startsWith('mouth')), JSON.stringify(held.renderHold))
+  })
+  t('closeup_dialogue framing guard: chest-up held, no push-in to an extreme close-up', () => {
+    assert.ok(!/推/.test(closeupCamera('近景缓推，不切镜')) && closeupCamera('近景缓推，不切镜').includes('不切镜'))
+    const o = annotateShots(applyBeatMode(pack([merged]))).shots[0]
+    assert.equal(o.framing, 'closeup_dialogue')
+    assert.ok(o.prompt.includes(CLOSEUP_FRAMING_GUARD), o.prompt)
+    assert.ok(!/镜头[：:][^\n]*推/.test(o.prompt))
+    assert.deepEqual(promptTextRisks(o.prompt), [])
+  })
+}
+
 const P2 = '/workspace/h3/projects/小黄鸭砸出个帅系统-video-pipeline-p2-clean.json'
 if (existsSync(P2)) {
   const p2 = JSON.parse(readFileSync(P2, 'utf8')) as VideoPipelineExport
@@ -871,6 +1022,7 @@ if (existsSync(P2)) {
       assert.ok(rep.durationAdjustments[0].reason)
       assert.deepEqual(rep.durationAdjustmentTotals, [{ ep: 1, shots: 1, addedSec: nu - 3 }])
       assert.deepEqual(rep.dialogueOverrun, [])
+      assert.deepEqual(rep.renderHold, [], 'the extended (fixed) shot is not held')
       assert.ok(rep.rhythmCheck && typeof rep.rhythmCheck.ok === 'boolean')
       assert.equal(rep.perEp[0].secsAfter, 6 + nu, 'total episode duration change visible in perEp')
       const big = run('--dialogue-pad', '1,1.5')
@@ -903,7 +1055,13 @@ if (existsSync(P2)) {
     assert.ok(rep.dialogueOverrun.every((o: { durationSec: number; remedy: string }) => o.durationSec >= 9 && o.remedy.includes('拆分')), JSON.stringify(rep.dialogueOverrun))
     assert.equal(rep.rhythmCheck.ok, true, rep.rhythmCheck.warnings.join('; '))
     assert.deepEqual(rep.carryChainErrors, [])
+    // render hold: derived, every held shot has reasons; ep1 clear; s1-13a (merged density / voice / order) not held
+    assert.ok(rep.renderHold.every((h: { shotId: string; reasons: string[] }) => h.reasons.length))
+    assert.deepEqual(rep.renderHold.filter((h: { episode: number }) => h.episode === 1), [])
     const outPack = JSON.parse(readFileSync(out, 'utf8'))
+    assert.equal(outPack.shots.find((s: VideoPipelineShot) => s.id === 's1-13a').hold, null)
+    assert.ok(outPack.shots.every((s: VideoPipelineShot) => 'hold' in s))
+    assert.deepEqual(rep.renderHold.map((h: { shotId: string }) => h.shotId), outPack.shots.filter((s: VideoPipelineShot) => s.hold).map((s: VideoPipelineShot) => s.id))
     for (const s of outPack.shots) assert.deepEqual(promptTextRisks(s.prompt), [], s.id)
     assert.deepEqual(applyCastConsistency(JSON.parse(readFileSync(out, 'utf8'))).corrections, [])
     assert.equal(rep.overridesFile, null)

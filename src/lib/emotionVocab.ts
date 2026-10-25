@@ -78,11 +78,33 @@ export const EMOTION_VISIBLE: Record<string, string> = {
   感动: '眼眶发红、抿紧嘴唇',
   嫉妒: '盯着对方、咬紧后槽牙',
   无语: '翻个白眼、嘴角抽动',
+  不好意思: '视线躲开、抿嘴笑',
+  怀念: '目光放柔、望向远处',
+  自嘲: '嘴角一歪、轻轻摇头',
+  好笑: '嘴角忍不住上扬',
+  好气: '眉头一拧',
+  满意: '嘴角微扬',
+  克制: '抿住嘴、呼吸压稳',
+  羞窘: '耳根泛红、低头',
+  冷淡: '眼皮半垂、表情不动',
+  严肃: '眉头皱紧、嘴唇抿直',
+  意外: '眼睛一睁、动作顿住',
+  // contextual (CONTEXTUAL_EMOTION): only as a feeling — 眼底的认真 / 一点认真 — never 认真地写 (专注 stays: 神情专注 is a drawable look)
+  认真: '目光定住、眉头微收',
 }
+
+/** words that are an emotion only after a feeling context (眼底 / 神情 / 一点 / 的 …); elsewhere (认真地写) neutral */
+export const CONTEXTUAL_EMOTION = ['认真']
+export const EMOTION_CONTEXT = ['眼底', '眼里', '眼中', '眼神', '神情', '表情', '一点', '一丝', '几分', '带着', '透着', '透出', '满是', '有点', '有些', '的']
+
+/** audio / delivery descriptions: never drawn, they go to the dialogue line as a TTS `delivery` hint.
+ *  VOICE_CLAUSE: a clause about the voice itself (dropped); VOICE_ADVERB: a manner word before a speech verb (stripped). */
+export const VOICE_CLAUSE = ['语气', '声音', '嗓音', '嗓子', '语调', '音量', '音调', '声线', '几乎自语', '自言自语', '喃喃自语', '喃喃']
+export const VOICE_ADVERB = ['压低声音', '压着嗓子', '低声', '轻声', '小声', '大声', '扬声', '闷声', '颤声', '哑声', '哽咽着', '带着哭腔']
 
 /** inner-monologue markers: a clause carrying one is not visible → dropped */
 export const INNER_MONOLOGUE = ['心想', '心里', '暗想', '心中', '内心', '心声', '心底', '心道', '暗忖']
 
 /** wrappers around an emotion word consumed with it (一脸X / 带着X / 有点X / X地 / X的样子 …) */
-export const EMOTION_PREFIX = ['一脸', '满脸', '一副', '带着', '带点', '略带', '有点', '有些', '透着', '透出', '显得', '满是', '难掩', '写满', '掩不住', '藏不住']
+export const EMOTION_PREFIX = ['一脸', '满脸', '一副', '带着', '带点', '略带', '有一点', '有点', '有些', '一丝', '几分', '透着', '透出', '显得', '满是', '难掩', '写满', '掩不住', '藏不住']
 export const EMOTION_SUFFIX = ['的神情', '的表情', '的样子', '的模样', '劲儿', '劲', '感', '地']

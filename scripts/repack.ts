@@ -17,6 +17,7 @@
  * there implies another is re-cast (report castCorrections); ambiguous cases only warn (castConsistency).
  * Final prompts: emotion words → visible face / body action, inner monologue + quotes dropped (report emotionRewrites);
  *   a prompt still carrying a quote mark / emotion word / monologue marker fails the run (exit 4).
+ *   a mouth / face occluder left inside a spoken line (手拢在嘴边, 捂嘴, 喝水…) fails the run (exit 6).
  * --speech-rate 4 : chars per second of the speech estimate (beat dialogue segment sizing + dialogueOverrun warning)
  * --dialogue-pad 0.3,0.4 : head / tail silence in the dialogue segment. Beat mode lengthens a shot whose dialogue
  *   segment cannot hold speech + pad (0.5 s grid, ≤ 9 s; report durationAdjustments); beyond 9 s only the overrun warning.
@@ -34,6 +35,7 @@ import { checkRhythm, stretchReview } from '../src/lib/rhythm'
 import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotations, wardrobeReport } from '../src/lib/shotAnnotate'
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
+import { applyRenderHold, shotMouthRisks } from '../src/lib/renderHold'
 import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
 import { DEFAULT_DIALOGUE_PAD, dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
@@ -70,7 +72,7 @@ let splits: SplitInfo[] | null = null
 let sceneCorrections: SceneCorrection[] | null = null
 let rhythmNotes: string[] | null = null
 const lite = flags.has('--beat-only') || flags.has('--split-only')
-const { exp, stats } = lite
+const { exp: exp0, stats } = lite
   ? (() => {
       let e = cast.exp
       if (splitCrossCut) {
@@ -83,6 +85,8 @@ const { exp, stats } = lite
       return { exp: annotateShots(flags.has('--beat-only') ? applyBeatMode(e, { beatOverrides, speechRate, dialoguePad }) : e, { speechRate }), stats: null }
     })()
   : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides, speechRate, dialoguePad })
+// render hold: shots with a blocking issue left after every rule (GPU runner defers them, --defer-flag)
+const { exp, renderHold } = applyRenderHold(exp0, { speechRate })
 const missing = missingAnnotations(exp)
 if (missing.length) {
   console.error(`shots missing framing / wardrobeState: ${missing.join(', ')}`)
@@ -93,6 +97,12 @@ const textRisks = exp.shots.map((s) => ({ id: s.id, risks: promptTextRisks(s.pro
 if (textRisks.length) {
   console.error(`prompts with drawable text (${textRisks.length}):\n  ${textRisks.map((x) => `${x.id}: ${x.risks.join('; ')}`).join('\n  ')}`)
   process.exit(4)
+}
+// nothing may hide the mouth while a line is spoken (lip-sync)
+const mouthRisks = exp.shots.map((s) => ({ id: s.id, risks: shotMouthRisks(s) })).filter((x) => x.risks.length)
+if (mouthRisks.length) {
+  console.error(`prompts occluding the mouth during a line (${mouthRisks.length}):\n  ${mouthRisks.map((x) => `${x.id}: ${x.risks.join('; ')}`).join('\n  ')}`)
+  process.exit(6)
 }
 // every dialogue line needs a voice: speaker → character voice (characterKey inheritance) or project.voices[speakerName]
 const voiceMissing = missingVoices(exp.shots)
@@ -161,6 +171,20 @@ console.log(
       emotionRewrites: exp.shots
         .map((s) => ({ id: s.id, episode: s.episode, rewrites: (s.renderReview || []).map(parseRewriteNote).filter(Boolean) }))
         .filter((x) => x.rewrites.length),
+      textRewriteCounts: (() => {
+        const c: Record<string, number> = {}
+        for (const s of exp.shots) for (const r of (s.renderReview || []).map(parseRewriteNote)) if (r) c[r.kind] = (c[r.kind] || 0) + 1
+        c.voiceBeat = exp.shots.reduce((a, s) => a + (s.beatDelivery?.length || 0), 0)
+        c.mouthBeat = exp.shots.reduce((a, s) => a + (s.beatTodo || []).filter((x) => x.includes('遮挡嘴部')).length, 0)
+        c.mouthFinal = exp.shots.reduce((a, s) => a + (s.renderReview || []).filter((x) => x.includes('遮挡嘴部')).length, 0)
+        return c
+      })(),
+      // mouth / face occluders rewritten (visible equivalent) or dropped inside a spoken line (lip-sync)
+      mouthOcclusion: exp.shots.flatMap((s) => [...(s.beatTodo || []), ...(s.renderReview || [])].filter((x) => x.includes('遮挡嘴部')).map((note) => ({ id: s.id, episode: s.episode, note }))),
+      // voice / tone text taken out of the picture → the line's TTS delivery hint
+      deliveryHints: exp.shots.flatMap((s) => (s.dialogueLines || []).filter((l) => l.delivery).map((l) => ({ id: s.id, episode: s.episode, text: l.text, delivery: l.delivery }))),
+      // shots with a blocking issue left after every rule (shot.hold); the GPU runner defers them
+      renderHold,
       // estimated speech (chars / rate + pauses) longer than the line's slot: warning only
       speechRate: { ...DEFAULT_SPEECH_RATE, ...speechRate },
       dialogueOverrun: dialogueOverruns(exp.shots, speechRate),
