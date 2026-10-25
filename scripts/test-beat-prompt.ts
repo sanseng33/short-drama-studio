@@ -22,7 +22,9 @@ import { actionCap, actionWeight, countActions, expandCompounds, limitActions } 
 import { buildVideoPipelineExport, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
 import { postProcessExport } from '../src/lib/segmentPost'
 import type { Character, Project, Shot } from '../src/types'
-import { finalizePrompt } from '../src/lib/shotAnnotate'
+import { onscreenCast, renderPrompt, type WardrobeMeta } from '../src/lib/shotAnnotate'
+const rerender = (prompt: string, s: VideoPipelineShot, chars: WardrobeMeta[]) =>
+  renderPrompt(prompt, s.framing!, { onscreen: onscreenCast(s, chars), wardrobeState: s.wardrobeState!, chars }).prompt
 
 let pass = 0
 const t = (name: string, fn: () => void) => {
@@ -236,7 +238,7 @@ t('buildVideoPipelineExport beatMode=speed → every shot beat-converted, durati
   sp.shots.forEach((s, i) => {
     assert.equal(s.beatMode, 'speed')
     assert.equal(s.durationSec, def.shots[i].durationSec)
-    assert.equal(finalizePrompt(s.promptDefault!, def.shots[i].framing!), def.shots[i].prompt, 'promptDefault = default scene prompt before the final render rules')
+    assert.equal(rerender(s.promptDefault!, def.shots[i], def.characters as WardrobeMeta[]), def.shots[i].prompt, 'promptDefault = default scene prompt before the final render rules')
     assert.ok(!/林川|赵泽/.test(s.prompt), s.prompt)
     assert.ok(!s.prompt.includes('我回来了'), "!s.prompt.includes('我回来了')")
     assert.equal(s.beatSegments![s.beatSegments!.length - 1].end, s.durationSec)
@@ -302,7 +304,7 @@ if (existsSync(P2)) {
     const b = postProcessExport(pack, { mergeToSegments: false, beatMode: 'speed' })
     assert.ok(a.shots.every((s) => !s.beatMode), 'a.shots.every((s) => !s.beatMode)')
     assert.equal(a.shots.length, b.shots.length)
-    b.shots.forEach((s, i) => assert.equal(finalizePrompt(s.promptDefault!, a.shots[i].framing!), a.shots[i].prompt, s.id))
+    b.shots.forEach((s, i) => assert.equal(rerender(s.promptDefault!, a.shots[i], a.characters as WardrobeMeta[]), a.shots[i].prompt, s.id))
   })
 }
 

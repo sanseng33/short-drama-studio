@@ -164,6 +164,60 @@ function sameShortBeat(x: string, y: string): boolean {
   return lo.every((c) => hs.has(c))
 }
 
+/**
+ * Same beat said twice in different words (说完嘴角没忍住翘起来 / 说完嘴角压不住地翘): content characters (pronoun,
+ * particles and filler adverbs removed) overlap ≥ 75 % of the shorter clause, ≥ 5 shared characters, and both clauses
+ * open with the same two characters (guards 抬起头看向窗外 / 低下头看向窗外 and other same-frame, different-verb pairs).
+ */
+export const CHAR_OVERLAP_MIN = 0.75
+export function charOverlapDup(x: string, y: string): boolean {
+  const core = (s: string) => s.replace(/^(?:他|她|它)/, '').replace(/一下|[的了着地得还又也仍都就再\s，,。；;、]/g, '')
+  const a = core(x)
+  const b = core(y)
+  if (a.length < 5 || b.length < 5 || a.slice(0, 2) !== b.slice(0, 2)) return false
+  const A = new Set(a)
+  const B = new Set(b)
+  let n = 0
+  for (const c of A) if (B.has(c)) n++
+  return n >= 5 && n / Math.min(A.size, B.size) >= CHAR_OVERLAP_MIN
+}
+
+/**
+ * Shared-run repeat: two clauses of one segment that repeat the same 4+ char action under a different lead-in
+ * (开口前肩膀先往前一顶 / 他喊话时肩膀往前一顶, 喊完偏头避开对面视线 / 说完偏头避开视线).
+ * Lead-ins (开口前 / 说完 / …时 / …后), trailing time words (的同一刻 / 瞬间) and 眼神|视线|目光 are normalised first.
+ * Guards against "same object, different action": the text before the shared run must be empty or contained in the
+ * other's (抬起头看向窗外 / 低下头看向窗外 stays), and the run must end a clause or the tails must contain one another
+ * (转身走向门口 / 转身走向窗边 stays, 手指在桌面敲了两下 / 手指在桌面上划了一下 stays).
+ */
+export const SHARED_RUN_MIN = 4
+export function sharedRunDup(x: string, y: string): boolean {
+  const norm = (s: string) =>
+    s
+      .replace(/^(?:他|她|它)/, '')
+      .replace(/^(?:开口前|出手前|说完|喊完|话音落下?|随后|然后|接着|[^，]{1,3}[时后](?=.{4}))/, '')
+      .replace(/眼神|视线|目光/g, '眼')
+      .replace(/一下|[的了着地得还又也仍都就再先\s，,。；;、]/g, '')
+      .replace(/(?:同一刻|那一刻|一刻|瞬间|时候|时)$/, '')
+  const a = norm(x)
+  const b = norm(y)
+  // longest common run
+  let best = 0
+  let ia = 0
+  let ib = 0
+  for (let i = 0; i < a.length; i++)
+    for (let j = 0; j < b.length; j++) {
+      let k = 0
+      while (i + k < a.length && j + k < b.length && a[i + k] === b[j + k]) k++
+      if (k > best) [best, ia, ib] = [k, i, j]
+    }
+  if (best < SHARED_RUN_MIN || best / Math.min(a.length, b.length) < 0.4) return false
+  const [pa, pb] = [a.slice(0, ia), b.slice(0, ib)]
+  const [ta, tb] = [a.slice(ia + best), b.slice(ib + best)]
+  const within = (u: string, v: string) => !u || !v || u.includes(v) || v.includes(u)
+  return within(pa, pb) && (!ta || !tb || within(ta, tb))
+}
+
 export function isNearDup(x: string, y: string): boolean {
   x = x.trim()
   y = y.trim()
@@ -171,10 +225,22 @@ export function isNearDup(x: string, y: string): boolean {
   if (y === x) return true
   if (STILL.test(x) && STILL.test(y) && x.slice(0, 2) === y.slice(0, 2)) return true
   if (sameShortBeat(x, y)) return true
+  if (charOverlapDup(x, y)) return true
+  if (sharedRunDup(x, y)) return true
   if (paced(x) < 4) return false
   const cx = fillerless(x)
   const cy = fillerless(y)
   return y.includes(x) || sim(x, y) >= 0.75 || (Math.min(paced(cx), paced(cy)) >= 4 && (cy.includes(cx) || cx.includes(cy)))
+}
+
+/**
+ * 、 between actions (先屏住呼吸、说话时声音压得很轻) splits into clauses; 、 inside a noun list
+ * (靠窗帘、纸张、水面的细微动态…) stays — an item of ≤3 chars on either side marks a list.
+ */
+export function listToClauses(s: string): string {
+  return s.replace(/([^，,。；;、：:]*)、(?=([^，,。；;、：:]*))/g, (m, prev: string, next: string) =>
+    paced(prev) <= 3 || paced(next) <= 3 ? `${prev}、` : `${prev}，`,
+  )
 }
 
 /** Drop repeated / near-duplicate clauses (merged beats repeat 表演 notes). */
@@ -667,10 +733,15 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   // ---- subject pieces per cast member
   const subjRaw = clause(src, /主体/)
   const pieces = splitTop(subjRaw, '；;')
+  // a piece belongs to the cast member whose name matches it most specifically (名字（之后） beats the shared
+  // base name 名字), so one character's piece is never reused for another
+  const owner = (p: string): string | null => {
+    const v = variants.find((x) => x.ids.length === 1 && cast.includes(x.ids[0]) && p.includes(x.text))
+    return v ? v.ids[0] : null
+  }
   const pieceFor = (id: string): string => {
     const c = byId.get(id)
-    const names = variants.filter((v) => v.id === id || v.ids?.includes(id)).map((v) => v.text)
-    const hit = pieces.find((p) => names.some((n) => p.includes(n)))
+    const hit = pieces.find((p) => owner(p) === id)
     if (hit) return hit
     if (cast.length === 1 && pieces.length === 1) return pieces[0]
     void c
@@ -691,7 +762,9 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
   if (cast.length >= 2 && !distinct) todo.push('多人同框且服装关键词无法区分，人名已统一替换为「他」，请人工核对指代')
   const refOf = (id0: string | null, ids?: string[]): string => {
     // a shared baseName (白朴 → 变帅前/变帅后) resolves to the variant that is on screen
-    const id = (ids || []).find((x) => cast.includes(x)) ?? id0
+    // …and when several variants are on screen, to the one that speaks in this shot
+    const on = (ids || []).filter((x) => cast.includes(x))
+    const id = (on.length > 1 ? on.find((x) => lines.some((l) => l.speaker === x)) : undefined) ?? on[0] ?? id0
     if (!id) return '有人'
     if (!cast.includes(id)) return '有人'
     if (single) return pron
@@ -778,7 +851,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
       .replace(/[「“『][^」”』]*[」”』]/g, '')
     for (const f of dlgFrags) raw = raw.split(f).join('')
     raw = stripNames(raw, variants, refOf)
-    let cls = dedupeClauses(splitClauses(raw.replace(/、/g, '，')))
+    let cls = dedupeClauses(splitClauses(listToClauses(raw)))
     // small hand props competing with face / hands
     if (cast.length) {
       cls = cls.filter((c) => {
@@ -896,7 +969,11 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const perf = x.cls.some((c) => !/安静听/.test(c) && (actionWeight(c) > 0 || MICRO_RE.test(c)))
     const idle = !x.cls.length || x.cls.every((c) => /安静听|保持姿态/.test(c))
     if (perf || !emo.length || (!idle && total < LONG_SHOT_SEC)) return
-    const e = emo[Math.min(emo.length - 1, Math.floor((i * emo.length) / segTexts.length))]
+    // an emotion another segment already shows (the same emotion in two segments) is not repeated: take the next unused one
+    const used = (em: string) => segTexts.some((y) => y.cls.some((c) => c.includes(em.replace(/^[的地得]/, ''))))
+    const k = Math.min(emo.length - 1, Math.floor((i * emo.length) / segTexts.length))
+    const e = [...emo.slice(k), ...emo.slice(0, k)].find((em) => !used(em))
+    if (!e) return
     x.cls = [...x.cls, `神情透出${e.replace(/^[的地得]/, '')}`]
   })
   if (speeds.filter((x) => x === '慢').length > 1) todo.push('多段含台词，均标为【慢】，请核对节奏')
@@ -905,7 +982,8 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
 
   const segLines = segTexts.map((x, i) => {
     const sp = speeds[i]
-    let body = x.cls.join('，')
+    // last pass: the performance rule can re-add a beat the action already said in other words
+    let body = dedupeClauses(x.cls).join('，')
     if (sp === '快') body = fastify(body || '迅速完成动作')
     if (sp === '慢') {
       const who = !single && x.speakers.length === 1 ? x.speakers[0] : ''

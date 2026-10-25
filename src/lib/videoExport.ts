@@ -106,6 +106,8 @@ export interface VideoPipelineShot {
   seed?: number
   /** TTS audio file for this shot's dialogueLines; null until a TTS stage fills it */
   audio?: string | null
+  /** review notes from the final render rules (shotAnnotate.renderPrompt): rewritten subjects, dropped contradictions */
+  renderReview?: string[]
   /** characterId → wardrobe state (shotAnnotate.wardrobeStates, e.g. plain / glowup / default); set on every shot */
   wardrobeState?: Record<string, string>
   /** optional renderer engine hint; passed through untouched */
@@ -180,7 +182,8 @@ export interface VideoPipelineExport {
     /** keyword cues in visual/action text that switch the wardrobe state from that shot on */
     wardrobeCues?: { state: string; keywords: string[] }[]
     /** wardrobe state → character-pack reference set (lora_materials/datasets/<refSet>), null = none yet */
-    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string }>
+    /** costume / look: outfit and face text for that state, used for the prompt subject (shotAnnotate.castDescription) */
+    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string; costume?: string; look?: string }>
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]

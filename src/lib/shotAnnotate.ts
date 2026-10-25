@@ -42,6 +42,10 @@ export interface WardrobeCue {
 /** state → character-pack reference set (lora_materials/datasets/<refSet>); refSet null = no reference yet */
 export interface WardrobeRef {
   refSet: string | null
+  /** outfit text for this state (prompt subject); default: the character's costumePrompt / costume for its base state */
+  costume?: string
+  /** face / hair text for this state when it differs from visualLock */
+  look?: string
   /** reference images carry no logo / badge / embroidery / text */
   logoFree?: boolean
   /** existing set to use until a dedicated one exists */
@@ -53,6 +57,11 @@ export interface WardrobeMeta {
   name?: string
   baseName?: string
   costume?: string
+  costumePrompt?: string | null
+  visualLock?: string
+  age?: string | number
+  role?: string
+  tags?: string[]
   wardrobeRefs?: Record<string, WardrobeRef>
   refImage?: string | null
   characterKey?: string | null
@@ -217,6 +226,13 @@ export function stripRenderLines(prompt: string): string {
     .trimEnd()
 }
 
+const SIZE_G = () => new RegExp(`(?:[手眼脸面嘴唇腿脚背胸颈头腰局]部|大|长焦|越窗)?(?:${SIZE_RE.source})`, 'g')
+const tidyCamera = (parts: string[]) =>
+  parts
+    .map((x) => x.replace(/^[的、\s]+|[的、\s]+$/g, '').trim())
+    .filter((x) => x && !/^(?:随后|然后|再|镜头|拍摄|取景|拍|打|的)$/.test(x))
+    .filter((x, i, a) => a.indexOf(x) === i)
+
 /** camera wording for a dialogue close-up: fixed size + face angle, no half-body / side angle words */
 export function closeupCamera(cam: string): string {
   let c = cam
@@ -224,23 +240,215 @@ export function closeupCamera(cam: string): string {
     .join('')
     .replace(/正脸或三分之二侧脸|正脸/g, '')
     // size words incl. a body-part / 大 qualifier (手部特写, 大特写) and framing notes in brackets (（眼部与半张脸）)
-    .replace(new RegExp(`(?:[手眼脸面嘴唇腿脚背胸颈头腰局]部|大|长焦|越窗)?(?:${SIZE_RE.source})`, 'g'), '')
+    .replace(SIZE_G(), '')
     .replace(/[（(][^（）()]*(?:胸口|脸|眼|部|身)[^（）()]*[）)]/g, '')
   for (const w of HALF_BODY_ANGLE_WORDS) c = c.split(w).join('')
-  const rest = c
-    .split(/[，,·；;]/)
-    .map((x) => x.replace(/^[的、\s]+|[的、\s]+$/g, '').trim())
-    .filter((x) => x && !/^(?:随后|然后|再|镜头|拍摄|取景|拍|打|的)$/.test(x))
-  return [CLOSEUP_CAMERA, ...rest].filter((x, i, a) => a.indexOf(x) === i).join('，')
+  return [CLOSEUP_CAMERA, ...tidyCamera(c.split(/[，,·；;]/))].filter((x, i, a) => a.indexOf(x) === i).join('，')
 }
 
-/** every prompt: no 【】 tags (speed tags → words), close-up camera wording, framing in words, fixed no-text line */
-export function finalizePrompt(prompt: string, framing: Framing): string {
+/** size words a camera line may use for each framing (solo); 2+ on-screen medium additionally needs a two-shot marker */
+const FRAMING_SIZES: Record<'medium' | 'full', RegExp> = { medium: /^(?:中景|中近景)$/, full: /^(?:大全景|中全景|全景|远景)$/ }
+const GROUP_RE = /双人|两人|三人|多人/
+
+/**
+ * Camera size words consistent with the framing (minimal): closeup → closeupCamera; empty → untouched; medium / full:
+ * when a size word disagrees (近景 / 特写 in a medium shot, 中景 in a full shot) or a medium shot with 2+ people lacks a
+ * two-shot marker, the first size word becomes the canonical one (中景 / 双人中景 / 全景 / 双人全景) and later size
+ * words are dropped; angle and movement words stay. No size word: only a 2+ medium shot gets the canonical prefix.
+ */
+export function normalizeCamera(cam: string, framing: Framing, onscreen: number): string {
+  cam = cam.replace(/^[，,、\s]+/, '')
+  if (framing === 'closeup_dialogue') return closeupCamera(cam)
+  if (framing === 'empty') return cam
+  const group = onscreen >= 3 ? '多人' : onscreen === 2 ? '双人' : ''
+  const canon = `${group}${framing === 'medium' ? '中景' : '全景'}`
+  const sizes = cam.match(SIZE_G()) || []
+  const needGroup = framing === 'medium' && Boolean(group) && !GROUP_RE.test(cam)
+  if (!sizes.length) {
+    if (!(framing === 'medium' && group)) return cam
+    return GROUP_RE.test(cam) ? cam.replace(GROUP_RE, canon) : `${canon}，${cam}`.replace(/，$/, '')
+  }
+  const ok = sizes.every((x) => FRAMING_SIZES[framing].test(x)) && !(framing === 'medium' && group && sizes.some((x) => x !== '中景'))
+  if (ok && !needGroup) return cam
+  let first = true
+  const c = cam
+    .replace(GROUP_RE, '')
+    .replace(/（胸口以上）|\(胸口以上\)/g, '')
+    .replace(SIZE_G(), () => {
+      if (!first) return ''
+      first = false
+      return canon
+    })
+  return tidyCamera(c.split(/[，,·；;]/)).join('，')
+}
+
+// ---------------- subject / contradiction rules ----------------
+
+const NO_PERSON_RE = /无人物|空镜|没有人物|无人入画|不见人影|画面中无人/
+const PERSON_RE = /(?<!其)他|她|少年|少女|男生|女生|男人|女人|男孩|女孩|学生|有人|人物|神情|表情|眼神|嘴角|开口|说话/
+const PROTECTED_LINE = /^(?:风格|限制|光线|景别)[：:]|^画面中没有任何文字/
+const GARMENT_WORDS = /夹克|卫衣|校服|衬衫|西装|T恤|外套|连衣裙|毛衣|风衣|大衣|睡衣|背心|制服|围裙|运动服|裙|裤|鞋/
+const LOGO_PART = /校徽|标志|logo|Logo|LOGO|刺绣|印字|字样|胸标/
+
+function ageOf(c: WardrobeMeta): number | null {
+  const n = Number(String(c.age ?? '').match(/\d+/)?.[0])
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+function personNoun(c: WardrobeMeta): string {
+  const f = /(女|她|少女|姑娘|女孩|女生)/.test(`${c.visualLock || ''} ${c.role || ''} ${(c.tags || []).join(' ')}`)
+  const a = ageOf(c)
+  if (a != null && a <= 19) return f ? '少女' : '少年'
+  if (a != null && a < 30) return f ? '年轻女人' : '年轻男人'
+  return f ? '女人' : '男人'
+}
+
+/**
+ * One character's subject text for a shot, from the character pack only: look (wardrobeRefs[state].look, else
+ * visualLock) + outfit for the shot's wardrobe state (wardrobeRefs[state].costume, else costumePrompt / costume when
+ * the state is the base state). Names, logo / badge parts are removed. `note` is set when the state has no outfit text.
+ */
+export function castDescription(c: WardrobeMeta, state: string, allChars: WardrobeMeta[] = []): { text: string; note?: string } {
+  const names = allChars.flatMap((x) => [x.name, x.baseName, (x.name || '').replace(/[（(][^）)]*[）)]/g, '')]).filter((n): n is string => Boolean(n && n.trim()))
+  const ref = c.wardrobeRefs?.[state]
+  const lookSrc = (ref?.look || c.visualLock || '').replace(/^[^：:，,]{0,12}[：:]/, '')
+  const noun = personNoun(c)
+  const look = lookSrc
+    .split(/[，,；;、]/)
+    .map((x) => x.trim().replace(new RegExp(`^(?:东亚)?${noun}`), ''))
+    .filter((x) => x && !names.some((n) => x.includes(n)))
+    .slice(0, 3)
+  let note: string | undefined
+  let wear = ref?.costume || ''
+  if (!wear) {
+    wear = c.costumePrompt || c.costume || ''
+    if (state !== baseWardrobeState(c)) note = `${c.id} 状态 ${state} 无 wardrobeRefs.costume，暂用基础服装`
+  }
+  const outfit = wear
+    .replace(/[（(][^（）()]*[）)]/g, (m) => (LOGO_PART.test(m) ? '' : m))
+    .split(/[，,；;]/)
+    .map((x) => x.trim())
+    .filter((x) => x && !LOGO_PART.test(x) && !/^整体/.test(x))
+    .slice(0, 3)
+  const age = ageOf(c)
+  const parts = [`${age ? `${age}岁` : ''}东亚${noun}`, ...look]
+  if (outfit.length) parts.push(`穿${outfit.join('，')}（无任何标志）`)
+  return { text: parts.join('，'), ...(note ? { note } : {}) }
+}
+
+/** 2+ on-screen characters: one subject line, each character described from their own data (never a shared outfit) */
+export function multiSubjectLine(ids: string[], ws: Record<string, string>, chars: WardrobeMeta[], oldSubject = ''): { line: string; notes: string[] } {
+  const byId = new Map(chars.map((c) => [c.id, c]))
+  const notes: string[] = []
+  // a zip state in the old subject belongs to the character whose garments that ；-piece names (most garment words)
+  const ZIP = /前襟拉链(?:拉开|拉上|半开|敞开)|拉链(?:拉开|拉上|半开|敞开)/
+  const zipPiece = oldSubject.split(/[；;]/).find((x) => ZIP.test(x)) || ''
+  const zip = zipPiece.match(ZIP)?.[0]
+  const garmentScore = (id: string) => {
+    const c = byId.get(id)
+    const words = `${c?.costumePrompt || c?.costume || ''}`.match(new RegExp(GARMENT_WORDS.source, 'g')) || []
+    return words.filter((w) => zipPiece.includes(w)).length
+  }
+  const zipOwner = zip ? [...ids].sort((a, b) => garmentScore(b) - garmentScore(a))[0] : null
+  const descs = ids.map((id) => {
+    const c = byId.get(id)
+    if (!c) return ''
+    const d = castDescription(c, ws[id] || baseWardrobeState(c), chars)
+    if (d.note) notes.push(d.note)
+    let text = d.text
+    if (zip && id === zipOwner && !text.includes(zip)) {
+      // the shot's zip state goes right after this character's zip garment
+      text = text.replace(/(拉链[^，；（]*?(?:夹克|外套|卫衣|开衫|上衣))/, `$1（${zip}）`)
+    }
+    return text
+  })
+  if (new Set(descs).size < descs.length) notes.push(`同框人物描述相同：${ids.join(',')}，请补充 wardrobeRefs.look / costume`)
+  const count = ids.length === 2 ? '两人' : ids.length === 3 ? '三人' : `${ids.length}人`
+  const order = ['其一', '其二', '其三', '其四', '其五']
+  return { line: `主体：${count}同框，外形与服装各不相同——${descs.map((d, i) => `${order[i] || `其${i + 1}`}：${d}`).join('；')}。`, notes }
+}
+
+/** drop clauses that contradict the on-screen count (无人物 with people on screen / person words in an empty shot) */
+export function dropContradictions(prompt: string, onscreen: number): { prompt: string; notes: string[] } {
+  const notes: string[] = []
+  const bad = onscreen > 0 ? NO_PERSON_RE : PERSON_RE
+  const out = prompt.split('\n').map((line, li) => {
+    if (PROTECTED_LINE.test(line)) return line
+    // the beat header names the shot type (…，空镜无人物。)
+    if (li === 0 && /^竖屏9:16，[\d.]+秒单镜/.test(line)) return line
+    // tokens keep their separator; labelled sections 风格/限制/光线 inside a one-line prompt stay untouched
+    const toks = line.match(/[^，,；;。]+[，,；;。]?/g) || []
+    let guarded = false
+    let changed = false
+    const kept: string[] = []
+    for (const tok of toks) {
+      const lab = tok.match(/^\s*([^：:，。]{1,8})[：:]/)?.[1]
+      if (lab) guarded = /^(?:风格|限制|光线|景别)$/.test(lab)
+      const body = lab ? tok.replace(/^\s*[^：:，。]{1,8}[：:]/, '') : tok
+      const text = body.replace(/[，,；;。]$/, '').trim()
+      if (guarded || !text || !bad.test(text) || (onscreen === 0 && /没有人物|无人物|不出现人物/.test(text))) {
+        kept.push(tok)
+        continue
+      }
+      notes.push(`${onscreen > 0 ? '有人物入画，删去' : '空镜，删去人物描述'}：${text}`)
+      changed = true
+      const sep = tok.slice(-1)
+      if (lab) kept.push(tok.slice(0, tok.length - body.length))
+      // a dropped sentence end moves to the previous kept clause
+      if (/[。；;]/.test(sep) && kept.length && /[，,]$/.test(kept[kept.length - 1])) kept[kept.length - 1] = kept[kept.length - 1].slice(0, -1) + sep
+      else if (/[。；;]/.test(sep) && kept.length && /[：:]$/.test(kept[kept.length - 1])) kept.push(sep)
+    }
+    if (!changed) return line
+    let nl = kept.join('').replace(/[，,]([。；;])/g, '$1').replace(/([：:])[，,]/g, '$1')
+    if (BEAT_SEG.test(nl) && /秒，[^：]*：[。；]?$/.test(nl)) nl = nl.replace(/：[。；]?$/, '：画面静止，只有细微的光影与物件动态。')
+    nl = nl.replace(/([：:])([。；])/g, '$1画面静止，只有细微的光影与物件动态$2')
+    return nl
+  })
+  return { prompt: out.join('\n'), notes }
+}
+const BEAT_SEG = /^\d+(?:\.\d+)?–\d+(?:\.\d+)?秒，/
+
+export interface RenderContext {
+  /** characters on screen in this shot (onscreenCast) */
+  onscreen: string[]
+  wardrobeState: Record<string, string>
+  chars: WardrobeMeta[]
+}
+
+/**
+ * Every prompt: no 【】 tags (speed tags → words); with a context also one data-built subject per character when 2+
+ * are on screen and no 无人物 / person contradictions; camera size words consistent with the framing; framing in
+ * words; fixed no-text line. Idempotent. `notes` = review notes for what was changed.
+ */
+export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderContext): { prompt: string; notes: string[] } {
+  const notes: string[] = []
   let p = stripRenderLines(prompt)
   p = p.replace(/【(快|慢|恢复常速)】/g, (_m, k: string) => `，${SPEED_TAG_WORDS[k]}`).replace(/秒，，/g, '秒，')
   p = p.replace(/[【】]/g, '')
-  if (framing === 'closeup_dialogue') p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${closeupCamera(cam)}`)
-  return `${p}\n景别：${FRAMING_WORDS[framing]}。\n${NO_TEXT_CONSTRAINT}`
+  const n = ctx ? ctx.onscreen.length : framing === 'empty' ? 0 : 1
+  if (ctx && n >= 2) {
+    p = p.replace(/主体[：:][^。\n]*。?/, (old) => {
+      const r = multiSubjectLine(ctx.onscreen, ctx.wardrobeState, ctx.chars, old)
+      notes.push(...r.notes)
+      return r.line
+    })
+  }
+  if (ctx) {
+    const r = dropContradictions(p, n)
+    p = r.prompt
+    notes.push(...r.notes)
+  }
+  p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${normalizeCamera(cam, framing, n)}`)
+  return { prompt: `${p}\n景别：${framingWords(framing, n)}。\n${NO_TEXT_CONSTRAINT}`, notes }
+}
+function framingWords(f: Framing, n: number): string {
+  if (f === 'medium' && n >= 2) return `${n === 2 ? '双人' : '多人'}中景，${n === 2 ? '两人' : '多人'}同框`
+  if (f === 'full' && n >= 2) return `${n === 2 ? '双人' : '多人'}全景，${n === 2 ? '两人' : '多人'}同框`
+  return FRAMING_WORDS[f]
+}
+
+/** renderPrompt without context (tags, camera, framing words, no-text line) */
+export function finalizePrompt(prompt: string, framing: Framing): string {
+  return renderPrompt(prompt, framing).prompt
 }
 
 export function baseWardrobeState(c: WardrobeMeta | undefined): string {
@@ -402,15 +610,20 @@ export function annotateShots(exp: VideoPipelineExport): VideoPipelineExport {
     ...e,
     shots: e.shots.map((s, i) => {
       const framing = framingOf(s, chars)
-      return {
+      const r = renderPrompt(s.prompt, framing, { onscreen: onscreenCast(s, chars), wardrobeState: ws[i], chars })
+      const review = [...new Set(r.notes)]
+      const out: VideoPipelineShot = {
         ...s,
         framing,
         wardrobeState: ws[i],
         seed: shotSeed(pid, s.id),
         dialogueLines: timedDialogueLines(s, chars),
         audio: s.audio ?? null,
-        prompt: finalizePrompt(s.prompt, framing),
+        prompt: r.prompt,
       }
+      if (review.length) out.renderReview = review
+      else delete out.renderReview
+      return out
     }),
   }
 }

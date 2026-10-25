@@ -5,15 +5,16 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { scanPack } from './scan-prompts'
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { applyBeatMode, BEAT_LINE_RE, buildBeatPrompt, CLOSE_DIALOGUE_FRAMING, dialogueFraming, isNearDup, LONG_SHOT_SEC } from '../src/lib/beatPrompt'
+import { applyBeatMode, BEAT_LINE_RE, buildBeatPrompt, charOverlapDup, listToClauses, sharedRunDup, CLOSE_DIALOGUE_FRAMING, dialogueFraming, isNearDup, LONG_SHOT_SEC } from '../src/lib/beatPrompt'
 import { actionCap, countActions } from '../src/lib/actionDensity'
 import { applyCrossCutSplit, correctScenes, explicitPlaces } from '../src/lib/crosscutSplit'
 import { postProcessExport } from '../src/lib/segmentPost'
 import {
-  annotateShots, baseWardrobeState, CLOSEUP_CAMERA, closeupCamera, finalizePrompt, FRAMINGS, framingOf, missingAnnotations, NO_TEXT_CONSTRAINT, sha1Hex, shotSeed, timedDialogueLines,
+  annotateShots, baseWardrobeState, castDescription, CLOSEUP_CAMERA, dropContradictions, multiSubjectLine, normalizeCamera, renderPrompt, closeupCamera, finalizePrompt, FRAMINGS, framingOf, missingAnnotations, NO_TEXT_CONSTRAINT, sha1Hex, shotSeed, timedDialogueLines,
   proposeWardrobeTimelines, wardrobeReport, wardrobeStates } from '../src/lib/shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from '../src/lib/videoExport'
 
@@ -213,7 +214,7 @@ t('finalizePrompt: no 【】, pacing words, framing words + fixed no-text line o
   assert.equal(finalizePrompt(c, 'closeup_dialogue'), c, 'idempotent')
   const m = finalizePrompt(finalizePrompt(raw, 'closeup_dialogue'), 'medium')
   assert.ok(m.includes('景别：中景。') && !m.includes('景别：近景') && m.split(NO_TEXT_CONSTRAINT).length === 2, m)
-  assert.ok(finalizePrompt(raw, 'medium').includes('镜头：侧打近景'), 'non-closeup camera line untouched')
+  assert.ok(finalizePrompt(raw, 'medium').includes('镜头：侧打中景，半身，过肩，缓推。'), 'medium: size word normalized, angles kept')
   assert.ok(finalizePrompt('镜头：特写空镜。', 'empty').includes('景别：空镜，画面中没有人物。'))
   assert.ok(finalizePrompt('x', 'full').includes('景别：全景。'))
   assert.equal(closeupCamera('侧身中景，固定'), `${CLOSEUP_CAMERA}，固定`)
@@ -275,6 +276,116 @@ t('beat lines: pacing in words, near-dup reordered short clause dropped, solo sh
   // two people: the other person stays
   const duo = buildBeatPrompt({ ...s, characterIds: ['a1', 'b1'] }, chars)
   assert.ok(/学生/.test(duo.prompt), 'only solo shots drop other people')
+})
+
+// ---------------- round 4: multi-person subjects, contradictions, paraphrase repeats, camera vs framing ----------------
+const WC = (id: string, extra: Record<string, unknown>) => ({ id, name: id, age: '17', ...extra })
+const plainC = WC('p1', { name: '甲（前）', baseName: '甲', visualLock: '东亚少年，短发略乱，五官柔和', costumePrompt: '灰色连帽卫衣，牛仔裤', wardrobeState: 'plain' })
+const upC = WC('p2', {
+  name: '甲（后）', baseName: '甲', visualLock: '升级版：下颌线清晰，眼神自信', costume: '黑色拉链短夹克（胸口小刺绣标），白T恤', wardrobeState: 'up',
+  wardrobeRefs: { up: { refSet: 'x' }, wet: { refSet: null, costume: '白色T恤', look: '湿发贴额' } },
+})
+
+t('multi-person subject: each character from their own look + outfit for their wardrobe state, never shared', () => {
+  const cs = [plainC, upC]
+  const a = castDescription(plainC, 'plain', cs)
+  const b = castDescription(upC, 'up', cs)
+  assert.ok(a.text.includes('灰色连帽卫衣') && !a.text.includes('夹克'), a.text)
+  assert.ok(b.text.includes('黑色拉链短夹克') && !b.text.includes('卫衣') && !/刺绣|甲/.test(b.text), b.text)
+  assert.ok(b.text.includes('下颌线清晰') && !b.text.includes('升级版'), 'visualLock label prefix dropped')
+  const w = castDescription(upC, 'wet', cs)
+  assert.ok(w.text.includes('湿发贴额') && w.text.includes('白色T恤') && !w.text.includes('夹克') && !w.note, w.text)
+  const miss = castDescription(plainC, 'other', cs)
+  assert.ok(miss.note && miss.text.includes('灰色连帽卫衣'), 'state without outfit data → base outfit + note')
+  const r = multiSubjectLine(['p1', 'p2'], { p1: 'plain', p2: 'up' }, cs, '主体：甲，灰色卫衣；甲，黑夹克，前襟拉链拉开。')
+  assert.ok(r.line.startsWith('主体：两人同框，外形与服装各不相同——其一：') && r.line.includes('；其二：'), r.line)
+  const [x, y] = r.line.split('；')
+  assert.ok(x.includes('卫衣') && !x.includes('夹克') && y.includes('夹克') && !y.includes('卫衣'), r.line)
+  assert.ok(y.includes('拉链短夹克（前襟拉链拉开）'), 'zip state goes to the character whose piece named it')
+  assert.deepEqual(r.notes, [])
+  const same = multiSubjectLine(['p1', 'p3'], {}, [plainC, { ...plainC, id: 'p3' }])
+  assert.ok(same.notes.some((n) => n.includes('描述相同')), 'identical descriptions are flagged')
+  // annotateShots rewrites the subject of a 2-person shot (copied outfit in the input) and keeps solo subjects
+  const pc = [PC('a1', '甲', { costume: '灰色连帽卫衣' }), PC('b1', '乙乙', { costume: '黑色短夹克' })]
+  const e = annotateShots(pack([SH({ id: 'two', characterIds: ['a1', 'b1'], prompt: '竖屏9:16。主体：少年，灰色连帽卫衣；另一人：少年，灰色连帽卫衣。镜头：中景。' }), SH({ id: 'one' })], pc))
+  const sub = e.shots[0].prompt.match(/主体：[^\n]*/)![0]
+  assert.ok(sub.split('；')[1].includes('黑色短夹克') && !sub.split('；')[1].includes('卫衣'), sub)
+  assert.ok(e.shots[1].prompt.includes('主体：17岁东亚少年，米白夹克。'), 'solo subject untouched')
+})
+
+t('contradictions: 无人物 / 空镜 dropped when people are on screen, person words dropped in empty shots, noted', () => {
+  const p = '竖屏9:16，6秒单镜。夜，卧室，单人。\n0–2秒，正常节奏：纱帘晃动，无人物，靠帘角表现风。\n2–6秒，接着放慢：空镜，他抬头。\n风格：禁止二次元漫画脸。'
+  const r = dropContradictions(p, 1)
+  assert.ok(!/无人物|空镜/.test(r.prompt) && r.prompt.includes('纱帘晃动，靠帘角表现风') && r.prompt.includes('他抬头'), r.prompt)
+  assert.equal(r.notes.length, 2)
+  const e = '竖屏9:16，6秒单镜。夜，窗外，空镜无人物。\n0–3秒，正常节奏：蛋液往下淌，神情透出挑衅。\n3–6秒，接着放慢：他笑了。\n限制：服装无标志。'
+  const q = dropContradictions(e, 0)
+  assert.ok(q.prompt.includes('空镜无人物') && q.prompt.includes('蛋液往下淌。') && !/神情|他笑/.test(q.prompt), q.prompt)
+  assert.ok(q.prompt.includes('3–6秒，接着放慢：画面静止'), 'an emptied segment keeps a neutral body')
+  assert.ok(q.prompt.includes('限制：服装无标志。'), 'protected lines untouched')
+  assert.equal(dropContradictions('0–2秒，正常节奏：其他杂物落下。', 0).notes.length, 0, '其他 is not a person')
+  const out = annotateShots(pack([SH({ id: 'e', characterIds: [], prompt: '竖屏9:16。夜，窗外。时间轴：0–5s玻璃上的蛋液往下淌，神情透出挑衅。镜头：特写。' })]))
+  assert.ok(out.shots[0].renderReview?.some((n) => n.includes('神情透出挑衅')), JSON.stringify(out.shots[0].renderReview))
+})
+
+t('paraphrase repeats inside a segment: character-overlap rule, with false-positive guards', () => {
+  assert.ok(charOverlapDup('说完嘴角没忍住翘起来', '说完嘴角压不住地翘'))
+  assert.ok(isNearDup('说完嘴角没忍住翘起来', '说完嘴角压不住地翘'))
+  for (const [a, b] of [
+    ['他抬起头看向窗外', '他低下头看向窗外'],
+    ['手指在桌面敲了两下', '手指在桌面上划了一下'],
+    ['说完低下头', '说完抬起头'],
+    ['他转身走向门口', '他转身走向窗边'],
+    ['眼睛盯着对面的窗', '眼睛没离开对面'],
+    ['嘴角先动再出声', '说完嘴角翘起来'],
+    ['肩膀往下一沉', '肩膀往上一耸'],
+  ])
+    assert.ok(!charOverlapDup(a, b) && !sharedRunDup(a, b) && !isNearDup(a, b), `${a} / ${b}`)
+  assert.equal(listToClauses('先屏住呼吸、说话时声音压得很轻'), '先屏住呼吸，说话时声音压得很轻')
+  assert.equal(listToClauses('靠窗帘、纸张、水面的细微动态表现空气流动'), '靠窗帘、纸张、水面的细微动态表现空气流动', 'noun list stays one clause')
+  // same action repeated under a different lead-in
+  for (const [a, b] of [
+    ['开口前肩膀先往前一顶', '他喊话时肩膀往前一顶'],
+    ['喊完偏头避开对面视线', '说完偏头避开视线'],
+    ['眼神压向对面又迅速移开', '视线压向对面'],
+    ['开口前先哼出一口气', '说完鼻子里哼出一口气'],
+    ['对面窗灯灭的同一刻', '对面窗灯灭下去的瞬间'],
+  ])
+    assert.ok(sharedRunDup(a, b), `${a} / ${b}`)
+  for (const [a, b] of [
+    ['眼睛盯着对面窗户', '手指向对面窗户'],
+    ['指尖在台面上多停了一拍', '指尖在台面轻轻蹭了一下'],
+    ['他抬手看向窗外', '他转头看向窗外'],
+    ['把杯子放回桌上', '把书放回桌上'],
+  ])
+    assert.ok(!sharedRunDup(a, b), `false positive: ${a} / ${b}`)
+  const s = SH({
+    durationSec: 5,
+    dialogue: '真的。',
+    speaker: 'a1',
+    size: '近景',
+    prompt: '竖屏9:16。夜，卧室。主体：17岁东亚少年。时间轴（一镜5秒，小节拍）：0–2s他抬手；2–5s随后他凑近半步，说完嘴角没忍住翘起来（甲开口说台词），表演：先屏住呼吸，说完嘴角压不住地翘。镜头：近景。',
+  })
+  const r = buildBeatPrompt(s, chars)
+  assert.ok(r.prompt.includes('说完嘴角没忍住翘起来') && !r.prompt.includes('压不住地翘'), r.prompt)
+})
+
+t('camera size words follow the framing; angle and movement words stay', () => {
+  assert.equal(normalizeCamera('侧打中近景，轻推', 'medium', 1), '侧打中近景，轻推', 'solo medium 中近景 is fine')
+  assert.equal(normalizeCamera('侧打中近景，轻推，最后一秒推近镜面', 'medium', 2), '侧打双人中景，轻推，最后一秒推近镜面')
+  assert.equal(normalizeCamera('近景，固定', 'medium', 2), '双人中景，固定')
+  assert.equal(normalizeCamera('中景，缓慢横移', 'medium', 2), '双人中景，缓慢横移')
+  assert.equal(normalizeCamera('侧打双人，固定', 'medium', 2), '侧打双人中景，固定')
+  assert.equal(normalizeCamera('缓慢横移', 'medium', 2), '双人中景，缓慢横移')
+  assert.equal(normalizeCamera('双人中景，固定', 'medium', 2), '双人中景，固定', 'already consistent')
+  assert.equal(normalizeCamera('手部特写，缓推，最后一秒上摇', 'medium', 1), '中景，缓推，最后一秒上摇')
+  assert.equal(normalizeCamera('中景，跟移', 'full', 1), '全景，跟移')
+  assert.equal(normalizeCamera('大全景，缓推', 'full', 2), '大全景，缓推')
+  assert.equal(normalizeCamera('特写，轻推', 'empty', 0), '特写，轻推', 'empty shots keep their insert size')
+  assert.equal(normalizeCamera('缓慢横移', 'medium', 1), '缓慢横移', 'solo without a size word: untouched')
+  assert.equal(normalizeCamera('，略仰拍', 'medium', 1), '略仰拍')
+  const r = renderPrompt('镜头：近景，固定。', 'medium', { onscreen: ['a', 'b'], wardrobeState: {}, chars: [] })
+  assert.ok(r.prompt.includes('镜头：双人中景，固定。') && r.prompt.includes('景别：双人中景，两人同框。'), r.prompt)
 })
 
 // ---------------- auto-proposed wardrobe timeline ----------------
@@ -370,6 +481,27 @@ if (existsSync(P2)) {
     for (const id of ['s1-21a', 's1-21b']) assert.equal(m[id].framing, /近景|特写/.test(m[id].size) ? 'closeup_dialogue' : /全景|远景/.test(m[id].size) ? 'full' : 'medium', `${id} framing vs size ${m[id].size}`)
     assert.ok(!m['s1-21b'].prompt.includes('眼睛眯起'), 's1-21b repeated phrase')
     assert.ok(!/学生|几双手|有人跟着|集体/.test(m['s5-18'].prompt), 's5-18 solo: no other people')
+    // round 4: two-person subject from each character's own data + wardrobe state; no contradictions; no paraphrase repeat
+    const sub18 = m['s1-18'].prompt.match(/主体：[^\n]*/)![0].split('；')
+    const c1 = e.characters.find((c) => c.id === 'c1')!
+    const c2 = e.characters.find((c) => c.id === 'c2')!
+    assert.ok(sub18[0].includes((c1.costumePrompt || c1.costume).split('，')[0]) && !sub18[0].includes('夹克'), sub18[0])
+    assert.ok(sub18[1].includes(c2.costume.split('，')[0]) && !sub18[1].includes('卫衣'), sub18[1])
+    assert.ok(/穿夹克的少年正脸朝镜头开口/.test(m['s1-18'].prompt), 'the speaker (c2) is referred to by their own garment')
+    assert.ok(!m['s1-18'].prompt.includes('压不住地翘'), 's1-18 paraphrase repeat')
+    assert.ok(!/无人物/.test(m['s1-18'].prompt) && m['s1-18'].renderReview!.length > 0)
+    assert.ok(/镜头：[^\n]*双人中景/.test(m['s1-18'].prompt), 's1-18 camera reads as a two-shot')
+    // QA scan over every shot: no subject / framing / camera / 无人物 disagreement left
+    const bad = scanPack(e).filter((x) => !['repeat', 'pronoun'].includes(x.kind))
+    assert.deepEqual(bad, [], JSON.stringify(bad))
+    for (const s of e.shots) {
+      const lines = s.prompt.split('\n').slice(1).filter((l) => !/^(?:景别|风格|限制)/.test(l))
+      if (s.framing !== 'empty') assert.ok(!lines.some((l) => /无人物|空镜/.test(l)), `${s.id} 无人物 with people on screen`)
+      if (s.characterIds.length >= 2) {
+        const parts = s.prompt.match(/主体：[^\n]*/)![0].split('；')
+        assert.equal(new Set(parts.map((x) => x.replace(/^.*其.：/, ''))).size, parts.length, `${s.id} distinct subjects`)
+      }
+    }
     for (const s of e.shots) {
       assert.ok(!/[【】]/.test(s.prompt), `${s.id} tag brackets`)
       assert.ok(s.prompt.endsWith(NO_TEXT_CONSTRAINT), `${s.id} no-text line`)

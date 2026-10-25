@@ -122,6 +122,8 @@ console.log(
       warnings: warn,
       stats,
       overridesFile: oi >= 0 ? args[oi + 1] : null,
+      // final render rules: rewritten multi-person subjects, dropped 无人物 / person contradictions (review)
+      renderReview: exp.shots.filter((s) => s.renderReview?.length).map((s) => ({ id: s.id, notes: s.renderReview })),
       framing: exp.shots.reduce<Record<string, number>>((a, s) => ((a[s.framing!] = (a[s.framing!] || 0) + 1), a), {}),
       wardrobeState: exp.shots.reduce<Record<string, number>>((a, s) => {
         for (const [id, st] of Object.entries(s.wardrobeState || {})) a[`${id}:${st}`] = (a[`${id}:${st}`] || 0) + 1
