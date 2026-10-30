@@ -17,6 +17,7 @@
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import type { DialogueLineOut } from './segmentPost'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
+import { assignSceneGroups, regroupSplitChildren, type RegroupMove } from './sceneGroup'
 import { fitSplitRhythm, type RhythmOptions } from './rhythm'
 import { clause, CROSSCUT_RE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, MARK_RE, nameVariants, parseMergedTimeline, SOLO_SPLIT_LIMIT, splitTop } from './beatPrompt'
 
@@ -817,8 +818,8 @@ export function correctScenes(exp: VideoPipelineExport, overrides: Record<string
 /** scene corrections + split + angle keys (the opt-in pass used by postProcess / repack). */
 export function applyCrossCutSplit(
   exp: VideoPipelineExport,
-  opts: { sceneOverrides?: Record<string, string>; rhythm?: RhythmOptions | false } = {},
-): { exp: VideoPipelineExport; splits: SplitInfo[]; corrections: SceneCorrection[]; rhythmNotes: string[] } {
+  opts: { sceneOverrides?: Record<string, string>; rhythm?: RhythmOptions | false; regroup?: boolean } = {},
+): { exp: VideoPipelineExport; splits: SplitInfo[]; corrections: SceneCorrection[]; rhythmNotes: string[]; regroupMoves: RegroupMove[] } {
   const c = correctScenes(exp, opts.sceneOverrides)
   const r = splitCrossCutShots(c.exp)
   // rhythm (a)/(b)/(c): lengthen split children only (never invents or touches other shots)
@@ -831,5 +832,8 @@ export function applyCrossCutSplit(
       if (mine.length) sp.notes.push(...mine.map((n) => `节奏：${n}`))
     }
   }
-  return { exp: assignAngleKeys(f.exp), splits: r.splits, corrections: c.corrections, rhythmNotes: f.notes }
+  // scene grouping: silent split inserts move to their own location's side (never reorders lines), then
+  // angle keys / carry chains on the final order, then locationKey + sceneGroup
+  const g = opts.regroup === false ? { exp: f.exp, moves: [] } : regroupSplitChildren(f.exp, { pairMinSec: (opts.rhythm || {}).pairMinSec })
+  return { exp: assignSceneGroups(assignAngleKeys(g.exp)), splits: r.splits, corrections: c.corrections, rhythmNotes: f.notes, regroupMoves: g.moves }
 }

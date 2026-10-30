@@ -42,6 +42,7 @@ import { PERFORMANCE_NOTE } from '../src/lib/beatPrompt'
 import { ABSTRACT_PERFORMANCE_RE } from '../src/lib/emotionVisual'
 import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
 import { DEFAULT_DIALOGUE_PAD, dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
+import { applyCrosscutGate, locationStats, parseCrosscutBudget, type RegroupMove } from '../src/lib/sceneGroup'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -62,7 +63,11 @@ const speechRate = si >= 0 ? { charsPerSec: Number(args[si + 1]) } : {}
 // --dialogue-pad 0.3,0.4 : silence before / after a line inside its dialogue segment (beat-mode dialogue fit)
 const pi = args.indexOf('--dialogue-pad')
 const dialoguePad = pi >= 0 ? (([h, tl]) => ({ headSec: h, tailSec: tl ?? h }))(args[pi + 1].split(',').map(Number)) : {}
-const pos = args.filter((a, i) => !a.startsWith('--') && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1) && (pi < 0 || i !== pi + 1))
+// --crosscut-budget maxSwitchesPer=1,perShots=3,maxAlternation=4,gate=warn|hold|fail (split packs; sceneGroup.ts)
+const cbi = args.indexOf('--crosscut-budget')
+const crosscutBudget = parseCrosscutBudget(cbi >= 0 ? args[cbi + 1] : undefined)
+const regroup = !flags.has('--no-regroup')
+const pos = args.filter((a, i) => !a.startsWith('--') && (cbi < 0 || i !== cbi + 1) && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1) && (pi < 0 || i !== pi + 1))
 const [inp, outp] = pos
 if (!inp) {
   console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G] [--beat-mode speed] [--beat-only]')
@@ -75,12 +80,17 @@ const splitCrossCut = flags.has('--split-crosscut') || flags.has('--split-only')
 let splits: SplitInfo[] | null = null
 let sceneCorrections: SceneCorrection[] | null = null
 let rhythmNotes: string[] | null = null
+let regroupMoves: RegroupMove[] | null = null
+let locationBefore: ReturnType<typeof locationStats> | null = null
 const lite = flags.has('--beat-only') || flags.has('--split-only')
 const { exp: exp0, stats } = lite
   ? (() => {
       let e = cast.exp
       if (splitCrossCut) {
-        const r = applyCrossCutSplit(e, { sceneOverrides, rhythm })
+        const r = applyCrossCutSplit(e, { sceneOverrides, rhythm, regroup })
+        // same pass without the regroup rule: before-stats for the report
+        locationBefore = locationStats(applyCrossCutSplit(e, { sceneOverrides, rhythm, regroup: false }).exp, crosscutBudget)
+        regroupMoves = r.regroupMoves
         e = r.exp
         splits = r.splits
         sceneCorrections = r.corrections
@@ -90,7 +100,17 @@ const { exp: exp0, stats } = lite
     })()
   : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides, speechRate, dialoguePad })
 // render hold: shots with a blocking issue left after every rule (GPU runner defers them, --defer-flag)
-const { exp, renderHold } = applyRenderHold(exp0, { speechRate })
+const held = applyRenderHold(exp0, { speechRate })
+const location = splitCrossCut ? locationStats(held.exp, crosscutBudget) : null
+const exp = location ? applyCrosscutGate(held.exp, location.groups, crosscutBudget) : held.exp
+const renderHold = location && crosscutBudget.gate === 'hold'
+  ? exp.shots.filter((s) => s.hold).map((s) => ({ shotId: s.id, episode: s.episode, reasons: s.hold!.reason }))
+  : held.renderHold
+const overBudget = location ? location.groups.filter((g) => g.exceeded) : []
+if (overBudget.length && crosscutBudget.gate === 'fail') {
+  console.error(`cross-cut budget exceeded in ${overBudget.length} scene group(s):\n  ${overBudget.map((g) => `${g.group}: ${g.reasons.join('; ')}`).join('\n  ')}`)
+  process.exit(7)
+}
 const missing = missingAnnotations(exp)
 if (missing.length) {
   console.error(`shots missing framing / wardrobeState: ${missing.join(', ')}`)
@@ -331,6 +351,18 @@ console.log(
               return acc
             }, [])),
             sceneCorrections,
+            // scene grouping + cross-cut budget (sceneGroup.ts): before = same split without the regroup rule
+            sceneGrouping: location
+              ? {
+                  budget: crosscutBudget,
+                  regroup,
+                  regroupMoves,
+                  episodes: location.episodes,
+                  episodesBeforeRegroup: locationBefore?.episodes ?? null,
+                  groups: location.groups,
+                  overBudget: overBudget.map((g) => ({ group: g.group, reasons: g.reasons, switches: g.switches, turnDriven: g.turnDriven, shotIds: g.shotIds })),
+                }
+              : null,
             carryChainErrors: validateCarryChain(exp.shots),
             carryChainReview: reviewCarryChains(exp.shots),
             rhythmFit: rhythmNotes,

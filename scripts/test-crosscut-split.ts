@@ -442,7 +442,11 @@ if (existsSync(P2)) {
     assert.deepEqual(r.crossEpisode, [])
     assert.deepEqual(r.placeConflict, [])
     assert.deepEqual(r.longGap, [])
-    assert.deepEqual(r.splitResolved.map((x) => x.split(':')[0]), ['s1-11', 's2-24', 's3-29'])
+    // sceneGroup regroup moves the silent c3 inserts s2-22b / s3-25b ahead of their c2 siblings, so s2-24 / s3-29 now
+    // follow their own carry source directly (no longer split-resolved); s1-11 follows a c3 line child (lines never move)
+    assert.deepEqual(r.splitResolved.map((x) => x.split(':')[0]), ['s1-11'])
+    assert.deepEqual(applyCrossCutSplit(p2, { sceneOverrides: OV, regroup: false }).exp.shots.length, exp.shots.length)
+    assert.deepEqual(reviewCarryChains(applyCrossCutSplit(p2, { sceneOverrides: OV, regroup: false }).exp.shots).splitResolved.map((x) => x.split(':')[0]), ['s1-11', 's2-24', 's3-29'])
     const ep = new Map(exp.shots.map((s) => [s.id, s.episode]))
     for (const s of exp.shots) if (s.carryFromShotId) assert.equal(ep.get(s.carryFromShotId), s.episode, s.id)
     const m = Object.fromEntries(exp.shots.map((s) => [s.id, s]))
@@ -481,7 +485,11 @@ if (existsSync(P2)) {
       assert.ok(tot >= x.durationSec && tot <= x.durationSec + 2.5, `${x.id} ${x.durationSec}→${tot}`)
     }
     const rawDur = new Map(raw.exp.shots.map((s) => [s.id, s.durationSec]))
-    assert.deepEqual(exp.shots.map((s) => s.id), raw.exp.shots.map((s) => s.id), 'rhythm fit never adds / removes shots')
+    // (order may differ: the sceneGroup regroup guard sees the fitted durations)
+    assert.deepEqual(exp.shots.map((s) => s.id).sort(), raw.exp.shots.map((s) => s.id).sort(), 'rhythm fit never adds / removes shots')
+    // regroup never reorders dialogue: the line sequence is identical with and without it
+    const seqOf = (ss: VideoPipelineShot[]) => ss.flatMap((s) => (s.dialogueLines || []).map((l) => `${l.speaker}:${l.text}`))
+    assert.deepEqual(seqOf(exp.shots), seqOf(applyCrossCutSplit(p2, { regroup: false }).exp.shots))
     for (const s of exp.shots) {
       if (s.splitFrom) assert.ok(s.durationSec >= rawDur.get(s.id)!, `${s.id} only lengthened`)
       else assert.equal(s.durationSec, rawDur.get(s.id), `${s.id} non-split duration untouched`)

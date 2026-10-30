@@ -105,6 +105,10 @@ export interface VideoPipelineShot {
    * carryFromShotId is the immediately previous shot.
    */
   carryFromShotId?: string | null
+  /** opt-in splitCrossCut (sceneGroup.ts): camera location = placeKey (fallback sceneId) */
+  locationKey?: string
+  /** opt-in splitCrossCut (sceneGroup.ts): `ep<N>_g<k>` run of shots of one time band linked by one place / a cross-cut exchange */
+  sceneGroup?: string
   /** renderer framing (shotAnnotate.framingOf): closeup_dialogue = 近景/特写 + on-screen dialogue; set on every shot */
   framing?: 'closeup_dialogue' | 'medium' | 'full' | 'empty'
   /**
