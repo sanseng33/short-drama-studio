@@ -109,6 +109,18 @@ export interface VideoPipelineShot {
   locationKey?: string
   /** opt-in splitCrossCut (sceneGroup.ts): `ep<N>_g<k>` run of shots of one time band linked by one place / a cross-cut exchange */
   sceneGroup?: string
+  /** multiCast.ts: on-screen cast (subject / speaker tag / screenPos locked per sceneGroup) */
+  cast?: import('./multiCast').CastEntry[]
+  /** multiCast.ts: exact on-screen character count */
+  castCountLock?: number
+  /** multiCast.ts: (digest `dialogue[]`; `dialogue` is the legacy string) lines bound to a speaker tag + time window; listenerMouth closed for listeners */
+  castDialogue?: import('./multiCast').MultiDialogue[]
+  /** multiCast.ts: always 1 */
+  maxSpeakersPerSegment?: 1
+  /** multiCast.ts */
+  speakerFraming?: 'two_shot_single_speaker' | 'single'
+  /** multiCast.ts: shared establishing-frame key of a multi-character scene group */
+  sceneKeyframe?: string | null
   /** renderer framing (shotAnnotate.framingOf): closeup_dialogue = 近景/特写 + on-screen dialogue; set on every shot */
   framing?: 'closeup_dialogue' | 'medium' | 'full' | 'empty'
   /**

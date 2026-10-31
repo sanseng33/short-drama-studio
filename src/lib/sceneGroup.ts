@@ -54,7 +54,16 @@ export function parseCrosscutBudget(s: string | undefined): CrosscutBudget {
   return b
 }
 
-export const locationKeyOf = (s: Pick<Shot, 'placeKey' | 'sceneId'>): string => s.placeKey || s.sceneId || ''
+/** placeKey, unless missing / 'unknown' → `loc:<location text>` (so unrelated unknown places never merge), then sceneId */
+export const locationKeyOf = (s: Pick<Shot, 'placeKey' | 'sceneId'> & { location?: string }): string =>
+  (s.placeKey && s.placeKey !== 'unknown' ? s.placeKey : '') || ((s.location || '').trim() ? `loc:${s.location!.trim()}` : '') || s.sceneId || ''
+
+/** placeKeys shared by different location texts (coarse place classification; report only) */
+export function placeKeyConflicts(shots: Shot[]): { placeKey: string; locations: string[] }[] {
+  const by = new Map<string, Set<string>>()
+  for (const s of shots) if (s.placeKey && s.placeKey !== 'unknown' && s.location) by.set(s.placeKey, (by.get(s.placeKey) || new Set()).add(s.location.trim()))
+  return [...by].filter(([, l]) => l.size > 1).map(([placeKey, l]) => ({ placeKey, locations: [...l] }))
+}
 const hasLine = (s: Shot) => Boolean(s.dialogueLines?.length || (s.dialogue || '').trim())
 const speakers = (s: Shot) => new Set((s.dialogueLines?.length ? s.dialogueLines.map((l) => l.speaker) : [s.speaker]).filter(Boolean) as string[])
 

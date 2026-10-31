@@ -42,7 +42,8 @@ import { PERFORMANCE_NOTE } from '../src/lib/beatPrompt'
 import { ABSTRACT_PERFORMANCE_RE } from '../src/lib/emotionVisual'
 import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
 import { DEFAULT_DIALOGUE_PAD, dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
-import { applyCrosscutGate, locationStats, parseCrosscutBudget, type RegroupMove } from '../src/lib/sceneGroup'
+import { applyCrosscutGate, assignSceneGroups, locationStats, parseCrosscutBudget, placeKeyConflicts, type RegroupMove } from '../src/lib/sceneGroup'
+import { applyMultiCast } from '../src/lib/multiCast'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -101,8 +102,12 @@ const { exp: exp0, stats } = lite
   : postProcessExportWithStats(pack, { mergeToSegments: !flags.has('--no-merge'), genre, beatMode, splitCrossCut, sceneOverrides, rhythm, beatOverrides, speechRate, dialoguePad })
 // render hold: shots with a blocking issue left after every rule (GPU runner defers them, --defer-flag)
 const held = applyRenderHold(exp0, { speechRate })
-const location = splitCrossCut ? locationStats(held.exp, crosscutBudget) : null
-const exp = location ? applyCrosscutGate(held.exp, location.groups, crosscutBudget) : held.exp
+// scene grouping on every pack (split packs already carry it; unsplit packs get locationKey / sceneGroup here)
+const grouped = held.exp.shots.every((s) => s.sceneGroup) ? held.exp : assignSceneGroups(held.exp)
+const location = locationStats(grouped, crosscutBudget)
+// multi-character fields (cast[] / castDialogue[] / screenPos / castCountLock / sceneKeyframe), multiCast.ts
+const multi = applyMultiCast(applyCrosscutGate(grouped, location.groups, crosscutBudget))
+const exp = multi.exp
 const renderHold = location && crosscutBudget.gate === 'hold'
   ? exp.shots.filter((s) => s.hold).map((s) => ({ shotId: s.id, episode: s.episode, reasons: s.hold!.reason }))
   : held.renderHold
@@ -342,6 +347,9 @@ console.log(
             beatRemovedProps: exp.shots.filter((s) => s.beatRemovedProps?.length).map((s) => ({ id: s.id, removed: s.beatRemovedProps })),
           }
         : {}),
+      // sceneGroup.ts on every pack; multiCast.ts summary
+      sceneGroupingAll: { budget: crosscutBudget, episodes: location.episodes, overBudget: overBudget.map((g) => ({ group: g.group, reasons: g.reasons, switches: g.switches, turnDriven: g.turnDriven, shotIds: g.shotIds })), placeKeyConflicts: placeKeyConflicts(exp.shots) },
+      multiCast: multi.report,
       ...(splitCrossCut
         ? {
             crossCutSplits: (splits ? (splits as SplitInfo[]).map((sp) => ({ ...sp, children: sp.children.map((c) => ({ ...c, durationSec: exp.shots.find((x) => x.id === c.id)?.durationSec ?? c.durationSec })) })) : null) ?? (exp.shots.filter((s) => s.splitFrom).reduce<{ id: string; children: string[] }[]>((acc, s) => {
