@@ -217,10 +217,10 @@ export function lookalikeOfChar(c: IdentityChar, chars: IdentityChar[]): string 
   const key = (x: IdentityChar) => x.characterKey || personKeyOf(x)
   const others = chars.filter((o) => key(o) !== key(c))
   const ex = c.lookalikeOf?.trim()
-  if (ex) return others.find((o) => o.id === ex || o.name === ex || personKeyOf(o) === ex)?.id ?? null
+  if (ex) return others.find((o) => o.id === ex || o.name === ex || o.baseName === ex)?.id ?? null
   const t = `${c.visualLock || ''} ${c.background || ''}`
   for (const o of others) {
-    const n = personKeyOf(o)
+    const n = o.baseName?.trim() || (o.name || '').replace(/[（(][^）)]*[）)]\s*$/, '').trim()
     if (n.length >= 2 && new RegExp(`(与|和|跟|酷似|像)${n}[^，。；]{0,6}(相似|相像|一样|相同|酷似|神似|如出一辙)|酷似${n}|神似${n}`).test(t)) return o.id
   }
   return null
