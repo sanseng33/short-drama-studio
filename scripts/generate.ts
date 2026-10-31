@@ -148,6 +148,8 @@ const main = async () => {
 
 /** storyboards (when missing) + gate loop from a project with scripts (checkpoint: --resume <project_*.json>) */
 async function resume(proj: Project) {
+  // identity rule re-applied with the current code (auto refImage placeholders `${characterKey}_v<n>` dropped: video side fills refImage)
+  proj.characters = withCharacterIdentity(proj.characters.map((c) => (c.refImage && c.characterKey && new RegExp(`^${c.characterKey}_v\\d+$`).test(c.refImage) ? { ...c, refImage: undefined } : c)), proj.id)
   for (const o of proj.outline.filter((x) => !proj.scripts[x.episode])) {
     const text = await llm(SCRIPT_SYSTEM, scriptUser(proj, o), 0.8)
     proj.scripts[o.episode] = { episode: o.episode, title: o.title, beats: [{ label: '全文', content: text }], fullText: text }
