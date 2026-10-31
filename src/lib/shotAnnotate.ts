@@ -40,7 +40,7 @@ import {
   stripFirstLineNoText,
   withFirstLineNoText,
 } from './renderHygiene'
-import { autoVoices, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
+import { autoVoices, withCharacterIdentity, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
 
 export type Framing = 'closeup_dialogue' | 'medium' | 'full' | 'empty'
 export const FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full', 'empty']
@@ -686,7 +686,7 @@ export function withDelivery<T extends { delivery?: string; voiceOnly?: boolean 
  */
 export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Partial<SpeechRate> } = {}): VideoPipelineExport {
   const { exp: e0 } = withProposedWardrobe(exp)
-  const e = { ...e0, characters: withCharacterVoices(e0.characters) }
+  const e = { ...e0, characters: withCharacterIdentity(withCharacterVoices(e0.characters), e0.project?.id || e0.project?.title || '') }
   const chars = e.characters as WardrobeMeta[]
   const extraVoices = (e.project?.voices || {}) as Record<string, unknown>
   const auto = autoVoices(e.shots, e.characters, extraVoices, e.project?.id || e.project?.title || '')

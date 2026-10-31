@@ -700,12 +700,14 @@ if (existsSync(P2)) {
       assert.deepEqual(lineVoice({ speaker: null, speakerName: '乙乙', text: 'x' }, vc), { description: '低沉少年音', id: 'voice_b' })
       assert.equal(lineVoice({ speaker: null, speakerName: '路人', text: 'x' }, vc, { 路人: 'voice_x' }), 'voice_x')
     })
-    t('voice: missing → error only when truly unresolvable (listed character without voice / no speaker name); exit 3', () => {
+    t('voice: listed character without voice → auto voice from gender+age (shared by characterKey); missing only without speaker name; exit 3', () => {
       const cs = vc.map((c) => (c.characterKey === 'key_a' ? { ...c, voice: undefined } : c))
       const off = [...L, { speaker: null, speakerName: '路人', text: '让一让。' }, { speaker: null, speakerName: '', text: '喂！' }]
       const e = two(cs, off)
-      assert.equal(e.shots[0].dialogueLines![0].voice, null, 'a listed character is never auto-voiced')
-      assert.deepEqual(missingVoices(e.shots), ['v1: 甲「我来吧。」', 'v1: ?「喂！」'])
+      const av = e.shots[0].dialogueLines![0].voice as { description: string; id: string }
+      assert.ok(av && /^auto_/.test(av.id) && /声/.test(av.description), JSON.stringify(av))
+      assert.deepEqual(e.characters.find((c) => c.id === 'a1')!.voice, e.characters.find((c) => c.id === 'a2')!.voice, 'variants share the auto voice')
+      assert.deepEqual(missingVoices(e.shots), ['v1: ?「喂！」'])
       assert.equal(e.shots[0].dialogueLines![2].autoVoice, true, 'off-list named speaker → auto voice')
       const dir = mkdtempSync(join(tmpdir(), 'voice-'))
       const inp = join(dir, 'in.json')
@@ -714,20 +716,20 @@ if (existsSync(P2)) {
       let code = 0
       let err = ''
       try {
-        execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8', stdio: 'pipe' })
+        execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8', stdio: 'pipe' })
       } catch (x) {
         code = (x as { status: number }).status
         err = String((x as { stderr: string }).stderr)
       }
       assert.equal(code, 3)
-      assert.ok(err.includes('甲「我来吧。」') && err.includes('?「喂！」') && !err.includes('路人'), err)
+      assert.ok(!err.includes('甲「我来吧。」') && err.includes('?「喂！」') && !err.includes('路人'), err)
       assert.ok(!existsSync(join(dir, 'out.json')), 'no pack written')
-      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice'], { encoding: 'utf8' }))
-      assert.equal(rep.voiceMissing.length, 2)
-      assert.equal(rep.dialogueLinesWithVoice, 2)
+      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice'], { encoding: 'utf8' }))
+      assert.equal(rep.voiceMissing.length, 1)
+      assert.equal(rep.dialogueLinesWithVoice, 3)
       // all named: the default repack passes; the auto voice is listed for review
       writeFileSync(inp, mk(vc, off.slice(0, 3)))
-      const ok = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'ok.json'), '--beat-only'], { encoding: 'utf8' }))
+      const ok = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', inp, join(dir, 'ok.json'), '--beat-only'], { encoding: 'utf8' }))
       assert.deepEqual(ok.voiceMissing, [])
       assert.deepEqual(ok.voiceNeedsReview.map((x: { speakerName: string }) => x.speakerName), ['路人'])
       assert.equal(ok.dialogueLinesAutoVoice, 1)
@@ -850,7 +852,7 @@ if (existsSync(P2)) {
       const dir = mkdtempSync(join(tmpdir(), 'cast-'))
       const inp = join(dir, 'in.json')
       writeFileSync(inp, JSON.stringify(pack(kshots(), vcs)))
-      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice'], { encoding: 'utf8' }))
+      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice'], { encoding: 'utf8' }))
       assert.deepEqual(rep.castCorrections.map((c: { shotId: string }) => c.shotId), ['k3', 'k4'])
       assert.deepEqual(rep.castConsistency, [])
       const out = JSON.parse(readFileSync(join(dir, 'out.json'), 'utf8')) as VideoPipelineExport
@@ -907,7 +909,7 @@ if (existsSync(P2)) {
       let code = 0
       let err = ''
       try {
-        execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8', stdio: 'pipe' })
+        execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8', stdio: 'pipe' })
       } catch (x) {
         code = (x as { status: number }).status
         err = String((x as { stderr: string }).stderr)
@@ -916,7 +918,7 @@ if (existsSync(P2)) {
       assert.ok(err.includes('q1: quote'), err)
       assert.ok(!existsSync(join(dir, 'out.json')))
       writeFileSync(inp, JSON.stringify(pack([SH({ id: 'q1', durationSec: 5, prompt: '竖屏9:16。白天，房间。主体：17岁东亚少年，米白夹克。时间轴：0–5s他有点紧张，心想别出错。', action: '他有点紧张，心想别出错' })])))
-      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8' }))
+      const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', inp, join(dir, 'out.json'), '--beat-only'], { encoding: 'utf8' }))
       assert.ok(rep.emotionRewrites.length === 1 && rep.emotionRewrites[0].rewrites.some((x: { kind: string }) => x.kind === 'emotion'), JSON.stringify(rep.emotionRewrites))
     })
     t('dialogue overrun: estimated speech (chars / rate + pauses) vs the line slot, configurable rate, remedy within 5–9 s', () => {
@@ -1025,7 +1027,7 @@ if (existsSync(P2)) {
         SH({ id: 'r1', durationSec: 6, action: '他走进来，放下包' }),
         SH({ id: 'r2', durationSec: 3, action: '他推门进来，开口说话', dialogueLines: [DL(line)], dialogue: line, speaker: 'a1', speakerName: '甲' }),
       ])))
-      const run = (...x: string[]) => JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice', ...x], { encoding: 'utf8' }))
+      const run = (...x: string[]) => JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', inp, join(dir, 'out.json'), '--beat-only', '--allow-missing-voice', ...x], { encoding: 'utf8' }))
       const rep = run()
       assert.deepEqual(rep.durationAdjustments.map((x: { shot: string; old: number }) => [x.shot, x.old]), [['r2', 3]])
       const nu = rep.durationAdjustments[0].new
@@ -1056,7 +1058,7 @@ if (existsSync(P2)) {
   t('repack: override file is opt-in only (no flag → nothing read, no beatOverride, rule-only corrections)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'repack-'))
     const out = join(dir, 'pack.json')
-    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', P2, out, '--beat-only', '--split-crosscut'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
+    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', P2, out, '--beat-only', '--split-crosscut'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
     assert.deepEqual(rep.voiceMissing, [], 'default repack passes: every line voiced')
     // look variants: shots re-cast by the wardrobe timeline; the output pack has no remaining contradiction
     assert.ok(rep.castCorrections.length > 0 && rep.castCorrections.every((c: { from: string; to: string; evidence: string[] }) => c.from !== c.to && c.evidence.length))
@@ -1194,7 +1196,7 @@ if (existsSync(FIX)) {
   t('original pack (no wardrobe data): repack auto-proposes timelines from script cues, marked for review', () => {
     const dir = mkdtempSync(join(tmpdir(), 'repack-'))
     const out = join(dir, 'pack.json')
-    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', FIX, out, '--beat-only', '--split-crosscut', '--allow-missing-voice'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
+    const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', '--allow-episode-overrun', FIX, out, '--beat-only', '--split-crosscut', '--allow-missing-voice'], { encoding: 'utf8', maxBuffer: 64 << 20 }))
     const ap = Object.fromEntries(rep.wardrobeAutoProposed.map((x: { id: string; reviewRequired: boolean; timeline: { state: string; fromShotId: string; autoProposed: boolean }[] }) => {
       assert.equal(x.reviewRequired, true)
       assert.ok(x.timeline.every((e) => e.autoProposed))

@@ -202,6 +202,8 @@ export interface VideoPipelineExport {
     /** 定妆图文件名/前缀 (receiver resolves shot refs via characterIds); null when unset */
     refImage: string | null
     age?: string
+    /** female / male (optional) */
+    gender?: string
     background?: string
     /** 定妆负向提示 */
     negative?: string | null
@@ -993,6 +995,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       signatureProp: cleanField(c.signatureProp),
       refImage: c.refImage?.trim() || null,
       ...(c.age?.trim() ? { age: c.age.trim() } : {}),
+      ...(c.gender?.trim() ? { gender: c.gender.trim() } : {}),
       ...(c.background?.trim() ? { background: c.background.trim() } : {}),
       ...(c.negative?.trim() ? { negative: c.negative.trim() } : {}),
       ...(c.characterKey?.trim() ? { characterKey: c.characterKey.trim() } : {}),

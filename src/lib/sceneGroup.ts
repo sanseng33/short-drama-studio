@@ -117,7 +117,7 @@ export function assignSceneGroups(exp0: VideoPipelineExport): VideoPipelineExpor
   let places = new Set<string>()
   const shots = exp.shots.map((s0) => {
     const s = { ...s0 }
-    const loc = s.locationKey
+    const loc = s.locationKey || locationKeyOf(s)
     const same = prev && prev.episode === s.episode && (prev.timeBand || '') === (s.timeBand || '') && (places.has(loc) || [...places].some((p) => links.has(`${p}\u0000${loc}`)))
     if (!same) {
       k = prev && prev.episode === s.episode ? k + 1 : 1

@@ -13,7 +13,8 @@ import {
   mergeLockedCharacters,
   type IdeaResult,
 } from '../lib/idea'
-import { normalizeLlmShots } from '../lib/shotCast'
+import { generateStoryboardChecked, llmOf } from '../lib/generator'
+import { withCharacterIdentity } from '../lib/voice'
 import { chatCompletion, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
 import { scriptUser, storyboardUser } from '../lib/prompts'
 import { generateScript, generateStoryboard } from '../lib/templates'
@@ -104,7 +105,8 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
       const { genre, custom } = mapGenre(result.genre, idea)
       const style = mapStyle(result.artStyle, genre)
       // keep 定妆图 / locked looks from the current project (visualLock/costume authoritative)
-      const characters = mergeLockedCharacters(prevProject.characters, toCharacters(result.characters))
+      // identity rule: characterKey / refImage prefix / gender / auto voice (gender + age) for every character
+      const characters = withCharacterIdentity(mergeLockedCharacters(prevProject.characters, toCharacters(result.characters)), result.title, { refImage: true })
       const outline = toOutline(result.episodes)
       let proj: Project = {
         id: `p_${Date.now()}`,
@@ -118,6 +120,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
         logline: result.logline,
         worldSetting: result.world,
         settingFacts: result.settingFacts,
+        ...(result.locations?.length ? { locations: result.locations } : {}),
         source: 'idea',
         characters,
         outline,
@@ -170,11 +173,10 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
           let shots: Shot[] | null = null
           if (useLlm) {
             try {
-              const user = storyboardUser(proj, o, script?.fullText || '')
-              const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user, { signal: ac.signal })
-              const s = stripFence(text)
-              const raw = JSON.parse(s.slice(s.indexOf('['), s.lastIndexOf(']') + 1)) as Shot[]
-              shots = normalizeLlmShots(raw, o.episode, proj.characters)
+              // self-check / repair loop (generatorRules): re-prompts until the storyboard passes or retries run out
+              const r = await generateStoryboardChecked(llmOf(llm, ac.signal), proj, o, script?.fullText || '')
+              shots = r.shots
+              if (r.issues.length) warnings++
             } catch (e) {
               if (ac.signal.aborted) throw e
               warnings++

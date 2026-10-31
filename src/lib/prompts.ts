@@ -1,3 +1,4 @@
+import { complianceBlock, EPISODE_CAP_SEC } from './generatorRules'
 /** LLM user-prompt builders (pure) — inject setting facts / backgrounds / ages / scene time as hard constraints. */
 import type { Character, EpisodeOutline, Project } from '../types'
 import { forbiddenStyleText, styleTag, styleToneForGenre } from './templates/styleTag'
@@ -22,6 +23,7 @@ export function characterBrief(c: Character, full = true) {
     role: c.role,
     tags: c.tags || [],
     ...(c.age ? { age: c.age } : {}),
+    ...(c.gender ? { gender: c.gender } : {}),
     ...(c.background ? { background: c.background } : {}),
     ...(full ? { visualLock: c.visualLock, costume: c.costume, signatureProp: c.signatureProp } : {}),
     ...(full && c.personality ? { personality: c.personality } : {}),
@@ -59,7 +61,9 @@ export function scriptUser(p: Project, o: EpisodeOutline): string {
   return withFacts(
     p,
     `写第${o.episode}集剧本。大纲:${JSON.stringify(o)} 角色:${JSON.stringify(p.characters.map((c) => characterBrief(c)))} 时长${p.secondsPerEp}秒 题材${promptGenre(p)}${p.worldSetting ? ` 世界观:${p.worldSetting}` : ''}
-每场戏开头标注「场N 地点 · 时间」。`,
+每场戏开头标注「场N 地点 · 时间」。${p.locations?.length ? `
+地点必须从【场景表】原样选用：${p.locations.join(' / ')}。同一地点的戏连续写完再换地点，本集最多 4 场，不要来回切换地点。` : ''}
+单句台词 ≤ 26 字，每集总时长不超过 ${Math.min(p.secondsPerEp + 5, EPISODE_CAP_SEC)} 秒；两人对话时动作描写用角色名，不用「他/她」。`,
   )
 }
 
@@ -94,6 +98,7 @@ export function storyboardUser(p: Project, o: EpisodeOutline, scriptText: string
 - 优先单人；对话用过肩/正反打/反应镜头；同框最多2人。
 - visual 必须含本场地点的家境陈设锚点，并覆盖设定中的空间关系（如对窗邻居须拍到窗对窗）。
 - overlayText 只放界面原文，不放约束或描述；emotion 必须在 action/seedancePrompt 落地为可见表演。
-- 服装/道具描写不要写 logo、校徽、胸标、刺绣标、字样。`,
+- 服装/道具描写不要写 logo、校徽、胸标、刺绣标、字样。
+${complianceBlock(p)}`,
   )
 }

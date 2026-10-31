@@ -195,3 +195,87 @@ export function missingVoices(shots: { id: string; dialogueLines?: (LineLike & {
     for (const l of s.dialogueLines || []) if (!normalizeVoice(l.voice)) out.push(`${s.id}: ${l.speakerName || l.speaker || '?'}「${l.text}」`)
   return out
 }
+
+// ---------------- character identity + auto voice (generic: gender + age → voice design) ----------------
+
+export interface IdentityChar extends VoiceChar {
+  role?: string
+  tags?: string[]
+  visualLock?: string
+  age?: string
+  gender?: string
+  refImage?: string | null
+  autoVoice?: boolean
+}
+
+/** numeric age → age band used in voice descriptions (text age passes through the role table) */
+export function ageBand(age?: string | number | null): string | null {
+  const n = typeof age === 'number' ? age : parseInt(String(age ?? '').replace(/[^\d]/g, ''), 10)
+  if (!Number.isFinite(n)) {
+    const t = String(age ?? '')
+    const hit = AGE_ROLES.find(([re]) => re.test(t))
+    return hit ? hit[1] : null
+  }
+  return n < 12 ? '儿童' : n < 19 ? '青少年' : n < 35 ? '青年' : n < 55 ? '中年人' : '老年人'
+}
+
+const FEMALE_TXT = /(女|她|妻|母|妈|姐|妹|奶奶|外婆|姥姥|阿姨|少女|女孩|千金|小姐|公主|皇后|夫人|太太)/
+const MALE_TXT = /(男|他|夫|父|爸|哥|弟|爷|叔|伯|少年|男孩|少爷|先生|公子|王爷)/
+/** explicit gender field, else a gender word in role / visualLock / tags; null when neither or both */
+export function charGender(c: IdentityChar): 'female' | 'male' | null {
+  const g = c.gender?.trim()
+  if (g) return /^(f|female|女)/i.test(g) ? 'female' : /^(m|male|男)/i.test(g) ? 'male' : null
+  const t = [c.role, c.visualLock, ...(c.tags || [])].join(' ')
+  const f = FEMALE_TXT.test(t)
+  const m = MALE_TXT.test(t)
+  return f === m ? null : f ? 'female' : 'male'
+}
+
+/** person key shared by look variants: explicit characterKey, else baseName, else name minus （…）/(…) */
+export function personKeyOf(c: IdentityChar): string {
+  return c.characterKey?.trim() || c.baseName?.trim() || (c.name || c.id).replace(/[（(][^）)]*[）)]\s*$/, '').trim()
+}
+
+/** stable ASCII character key from the person name (same person → same key in every run) */
+export function stableCharacterKey(person: string): string {
+  return /^[a-z0-9_]+$/i.test(person) ? person : `ck_${sha1Hex(person).slice(0, 8)}`
+}
+
+/** voice-design description from gender + age band (+ authority tone from the role) */
+export function characterVoiceDescription(c: IdentityChar): string {
+  const g = charGender(c)
+  const band = ageBand(c.age) || '成年人'
+  const gv = g === 'female' ? '女声' : g === 'male' ? '男声' : '中性音色'
+  const tone = AUTHORITY.test(`${c.role || ''}`) ? '语气沉稳有分量' : '语速适中，像日常说话一样自然'
+  return `${band}${gv}，${tone}`
+}
+
+/**
+ * Generic identity rule for every character: characterKey (shared by look variants), refImage prefix
+ * `${characterKey}_v<n>` when unset (opts.refImage, generator only), gender when derivable, and an auto voice { description, id } from gender + age
+ * when no own / inherited voice exists (id = stable hash of projectId:characterKey → all variants share it).
+ */
+export function withCharacterIdentity<T extends IdentityChar>(chars: T[], projectId = '', opts: { refImage?: boolean } = {}): T[] {
+  const variantNo = new Map<string, number>()
+  const withKeys = chars.map((c) => {
+    const key = c.characterKey?.trim() || stableCharacterKey(personKeyOf(c))
+    const n = (variantNo.get(key) || 0) + 1
+    variantNo.set(key, n)
+    const g = charGender(c)
+    return {
+      ...c,
+      characterKey: key,
+      ...(c.refImage?.trim() || !opts.refImage ? {} : { refImage: `${key}_v${n}` }),
+      ...(!c.gender?.trim() && g ? { gender: g } : {}),
+    }
+  })
+  const inherited = withCharacterVoices(withKeys)
+  const firstOfKey = new Map<string, IdentityChar>()
+  for (const c of inherited) if (!firstOfKey.has(c.characterKey!)) firstOfKey.set(c.characterKey!, c)
+  return inherited.map((c) => {
+    if (normalizeVoice(c.voice)) return c
+    const head = firstOfKey.get(c.characterKey!)!
+    const src = charGender(c) || !head ? c : head
+    return { ...c, voice: { description: characterVoiceDescription({ ...src, age: c.age || head?.age }), id: autoVoiceId(projectId, c.characterKey!) }, autoVoice: true }
+  })
+}

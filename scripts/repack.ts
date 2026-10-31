@@ -28,6 +28,7 @@
  * time/offlist/logo fixes, sceneId/carryFromPrev) to an already exported pack, and print stats.
  */
 import { readFileSync, writeFileSync } from 'node:fs'
+import { episodeCapCheck } from '../src/lib/generatorRules'
 import { hasNightConflict, postProcessExportWithStats } from '../src/lib/segmentPost'
 import type { VideoPipelineExport } from '../src/lib/videoExport'
 import { applyBeatMode, type BeatOverrides } from '../src/lib/beatPrompt'
@@ -68,7 +69,10 @@ const dialoguePad = pi >= 0 ? (([h, tl]) => ({ headSec: h, tailSec: tl ?? h }))(
 const cbi = args.indexOf('--crosscut-budget')
 const crosscutBudget = parseCrosscutBudget(cbi >= 0 ? args[cbi + 1] : undefined)
 const regroup = !flags.has('--no-regroup')
-const pos = args.filter((a, i) => !a.startsWith('--') && (cbi < 0 || i !== cbi + 1) && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1) && (pi < 0 || i !== pi + 1))
+// --episode-cap N: per-episode seconds cap of the final pack (default 90; exit 8 unless --allow-episode-overrun)
+const eci = args.indexOf('--episode-cap')
+const episodeCap = eci >= 0 ? Number(args[eci + 1]) : 90
+const pos = args.filter((a, i) => !a.startsWith('--') && (eci < 0 || i !== eci + 1) && (cbi < 0 || i !== cbi + 1) && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1) && (pi < 0 || i !== pi + 1))
 const [inp, outp] = pos
 if (!inp) {
   console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G] [--beat-mode speed] [--beat-only]')
@@ -140,6 +144,12 @@ const mouthRisks = exp.shots.map((s) => ({ id: s.id, risks: shotMouthRisks(s) })
 if (mouthRisks.length) {
   console.error(`prompts occluding the mouth during a line (${mouthRisks.length}):\n  ${mouthRisks.map((x) => `${x.id}: ${x.risks.join('; ')}`).join('\n  ')}`)
   process.exit(6)
+}
+// per-episode duration cap (owner rule: an episode never exceeds the cap after beat stretching)
+const episodeOverruns = episodeCapCheck(exp.shots, episodeCap)
+if (episodeOverruns.length && !flags.has('--allow-episode-overrun')) {
+  console.error(`episodes over the ${episodeCap}s cap: ${episodeOverruns.map((x) => `ep${x.episode} ${x.seconds}s`).join(', ')}`)
+  process.exit(8)
 }
 // every dialogue line needs a voice: speaker → character voice (characterKey inheritance) or project.voices[speakerName]
 const voiceMissing = missingVoices(exp.shots)
@@ -350,6 +360,8 @@ console.log(
           }
         : {}),
       // sceneGroup.ts on every pack; multiCast.ts summary
+      episodeCap: { capSec: episodeCap, overruns: episodeOverruns },
+      characterVoices: exp.characters.map((c) => ({ id: c.id, characterKey: c.characterKey ?? null, gender: c.gender ?? null, age: c.age ?? null, voice: c.voice ?? null, autoVoice: !!(c as { autoVoice?: boolean }).autoVoice })),
       sceneGroupingAll: { budget: crosscutBudget, episodes: location.episodes, overBudget: overBudget.map((g) => ({ group: g.group, reasons: g.reasons, switches: g.switches, turnDriven: g.turnDriven, shotIds: g.shotIds })), placeKeyConflicts: placeKeyConflicts(exp.shots) },
       multiCast: multi.report,
       carryBreaks: carry.breaks,

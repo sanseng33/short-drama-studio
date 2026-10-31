@@ -37,6 +37,8 @@ export interface Character {
   background?: string
   /** Age (number or text like 17) — injected into prompts; never invent conflicting ages */
   age?: string
+  /** female / male (also 女 / 男) — drives pronoun mapping and the auto voice */
+  gender?: string
   /** 定妆图文件名/前缀, e.g. char_a_plain — exported as characters[].refImage */
   refImage?: string
   /** visualLock/costume are authoritative (also implied by refImage): regeneration must not overwrite */
@@ -172,6 +174,8 @@ export interface Shot {
   timeOfDay?: string
   /** Optional short location tag, e.g. 别墅卧室 / 教室 (helps sceneId; post-process still derives when absent) */
   location?: string
+  /** generator hint: first shot of a new place / time band (wide establishing frame) */
+  establishing?: boolean
 }
 
 export interface Project {
@@ -187,6 +191,8 @@ export interface Project {
   customGenre?: string
   /** World / setting text from idea pipeline */
   worldSetting?: string
+  /** canonical location list (one name per physical place, reused verbatim by every episode's shots) */
+  locations?: string[]
   /** Key setting facts (hard constraints for LLM prompts), e.g. 甲家境富裕，住高档小区 */
   settingFacts?: string[]
   /** 'idea' when created by 从想法一键生成 — genre template tropes are not injected */
