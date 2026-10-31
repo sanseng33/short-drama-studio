@@ -121,6 +121,8 @@ export interface VideoPipelineShot {
   speakerFraming?: 'two_shot_single_speaker' | 'single'
   /** multiCast.ts: shared establishing-frame key of a multi-character scene group */
   sceneKeyframe?: string | null
+  /** sceneGroup.breakCarries: first shot of its (sceneGroup, locationKey) or a broken carry → render from the sceneKeyframe */
+  establishing?: boolean
   /** renderer framing (shotAnnotate.framingOf): closeup_dialogue = 近景/特写 + on-screen dialogue; set on every shot */
   framing?: 'closeup_dialogue' | 'medium' | 'full' | 'empty'
   /**

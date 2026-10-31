@@ -22,6 +22,7 @@
  *   a different speaker (a genuine exchange — only a two-shot / off-screen voice could remove it).
  */
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
+import { locationNamer, normalizeLocation } from './locationNorm'
 
 type Shot = VideoPipelineShot
 
@@ -54,9 +55,40 @@ export function parseCrosscutBudget(s: string | undefined): CrosscutBudget {
   return b
 }
 
-/** placeKey, unless missing / 'unknown' → `loc:<location text>` (so unrelated unknown places never merge), then sceneId */
-export const locationKeyOf = (s: Pick<Shot, 'placeKey' | 'sceneId'> & { location?: string }): string =>
-  (s.placeKey && s.placeKey !== 'unknown' ? s.placeKey : '') || ((s.location || '').trim() ? `loc:${s.location!.trim()}` : '') || s.sceneId || ''
+/**
+ * locationKey (round 16): normalized location text (locationNorm.ts) — the script's own words for where the camera is;
+ * placeKey is a coarse classifier bucket and only the fallback (missing / 'unknown' → sceneId). Packs without location
+ * text keep the legacy placeKey key. A set shot.locationKey wins (assignLocationKeys / assignSceneGroups).
+ */
+export const locationKeyOf = (s: Pick<Shot, 'placeKey' | 'sceneId'> & { location?: string; locationKey?: string }): string =>
+  s.locationKey || ((s.location || '').trim() ? normalizeLocation(s.location) : '') || (s.placeKey && s.placeKey !== 'unknown' ? s.placeKey : '') || s.sceneId || s.placeKey || ''
+
+/**
+ * Set locationKey on every shot: normalized location text with the pack's character names as owner prefixes.
+ * A split child that the split moved to another placeKey (cross-cut window) gets the dominant text key of that placeKey.
+ */
+export function assignLocationKeys(exp: VideoPipelineExport): VideoPipelineExport {
+  const namer = locationNamer(exp.characters)
+  const own = (s: Shot) => ((s.location || '').trim() ? normalizeLocation(s.location, namer) : '') || (s.placeKey && s.placeKey !== 'unknown' ? s.placeKey : '') || s.sceneId || s.placeKey || ''
+  const count = <K>(m: Map<K, Map<string, number>>, k: K, v: string) => {
+    const x = m.get(k) || new Map<string, number>()
+    x.set(v, (x.get(v) || 0) + 1)
+    m.set(k, x)
+  }
+  const byPlace = new Map<string, Map<string, number>>()
+  const byKey = new Map<string, Map<string, number>>()
+  for (const s of exp.shots) if (!s.splitFrom && s.placeKey) {
+    count(byPlace, s.placeKey, own(s))
+    count(byKey, own(s), s.placeKey)
+  }
+  const top = (m?: Map<string, number>) => (m ? [...m].sort((a, b) => b[1] - a[1])[0]?.[0] : undefined)
+  const shots = exp.shots.map((s) => {
+    let k = own(s)
+    if (s.splitFrom && s.placeKey && top(byKey.get(k)) !== undefined && top(byKey.get(k)) !== s.placeKey) k = top(byPlace.get(s.placeKey)) || s.placeKey
+    return { ...s, locationKey: k }
+  })
+  return { ...exp, shots }
+}
 
 /** placeKeys shared by different location texts (coarse place classification; report only) */
 export function placeKeyConflicts(shots: Shot[]): { placeKey: string; locations: string[] }[] {
@@ -77,13 +109,14 @@ function linkedPlaces(shots: Shot[]): Set<string> {
 }
 
 /** Set locationKey + sceneGroup on every shot (output order). */
-export function assignSceneGroups(exp: VideoPipelineExport): VideoPipelineExport {
+export function assignSceneGroups(exp0: VideoPipelineExport): VideoPipelineExport {
+  const exp = assignLocationKeys(exp0)
   const links = linkedPlaces(exp.shots)
   let k = 0
   let prev: Shot | null = null
   let places = new Set<string>()
   const shots = exp.shots.map((s0) => {
-    const s = { ...s0, locationKey: locationKeyOf(s0) }
+    const s = { ...s0 }
     const loc = s.locationKey
     const same = prev && prev.episode === s.episode && (prev.timeBand || '') === (s.timeBand || '') && (places.has(loc) || [...places].some((p) => links.has(`${p}\u0000${loc}`)))
     if (!same) {
@@ -108,7 +141,7 @@ export interface RegroupMove {
 
 /** Move silent split children toward the side of their sibling block that touches their own location. */
 export function regroupSplitChildren(exp: VideoPipelineExport, opts: { pairMinSec?: number } = {}): { exp: VideoPipelineExport; moves: RegroupMove[] } {
-  const shots = [...exp.shots]
+  const shots = [...assignLocationKeys(exp).shots]
   const moves: RegroupMove[] = []
   let i = 0
   while (i < shots.length) {
@@ -275,4 +308,44 @@ export function applyCrosscutGate(exp: VideoPipelineExport, groups: GroupStats[]
       return { ...s, hold: { reason: [...(s.hold?.reason || []), note] } }
     }),
   }
+}
+
+export interface CarryBreak { id: string; field: 'carryFromPrev' | 'carryFromShotId'; from: string; reason: string }
+
+/**
+ * Carries never cross a location change or a time-band change (round 16): carryFromPrev → false and a carryFromShotId
+ * whose source is at another locationKey / timeBand → null (start from the pack ref + the group's sceneKeyframe).
+ * Every shot gets sceneKeyframe `<sceneGroup>@<locationKey>`; establishing = true on the first shot of each
+ * (sceneGroup, locationKey) and on every shot whose carry was broken.
+ */
+export function breakCarries(exp: VideoPipelineExport): { exp: VideoPipelineExport; breaks: CarryBreak[] } {
+  const breaks: CarryBreak[] = []
+  const byId = new Map(exp.shots.map((s) => [s.id, s] as const))
+  const seen = new Set<string>()
+  const same = (a: Shot, b: Shot) => a.episode === b.episode && locationKeyOf(a) === locationKeyOf(b) && (a.timeBand || '') === (b.timeBand || '')
+  const why = (a: Shot, b: Shot) => (locationKeyOf(a) !== locationKeyOf(b) ? `地点 ${locationKeyOf(a)} → ${locationKeyOf(b)}` : `时段 ${a.timeBand} → ${b.timeBand}`)
+  const shots = exp.shots.map((s0, i) => {
+    const s: Shot = { ...s0 }
+    const prev = exp.shots[i - 1]
+    let broke = false
+    if (s.carryFromPrev && prev && prev.episode === s.episode && !same(prev, s)) {
+      breaks.push({ id: s.id, field: 'carryFromPrev', from: prev.id, reason: why(prev, s) })
+      s.carryFromPrev = false
+      broke = true
+    }
+    if (typeof s.carryFromShotId === 'string') {
+      const src = byId.get(s.carryFromShotId)
+      if (src && !same(src, s)) {
+        breaks.push({ id: s.id, field: 'carryFromShotId', from: src.id, reason: why(src, s) })
+        s.carryFromShotId = null
+        broke = true
+      }
+    }
+    const kf = `${s.sceneGroup || `ep${s.episode}`}@${locationKeyOf(s)}`
+    s.sceneKeyframe = kf
+    s.establishing = broke || !seen.has(kf)
+    seen.add(kf)
+    return s
+  })
+  return { exp: { ...exp, shots }, breaks }
 }

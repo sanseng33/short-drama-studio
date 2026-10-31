@@ -17,6 +17,7 @@
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import type { DialogueLineOut } from './segmentPost'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
+import { locationNamer, normalizeLocation } from './locationNorm'
 import { assignSceneGroups, regroupSplitChildren, type RegroupMove } from './sceneGroup'
 import { fitSplitRhythm, type RhythmOptions } from './rhythm'
 import { clause, CROSSCUT_RE, dedupeClauses, DIALOGUE_PAD_SEC, isBeatPrompt, MARK_RE, nameVariants, parseMergedTimeline, SOLO_SPLIT_LIMIT, splitTop } from './beatPrompt'
@@ -811,6 +812,26 @@ export function correctScenes(exp: VideoPipelineExport, overrides: Record<string
       continue
     }
     fix(target, 'rule', `${c} 单人镜标在他人常驻窗 ${pk}，改回自己的 ${mine}`)
+  }
+  // 5. same place, same scene (round 16): a text-explicit / continuity correction applies to every unsplit, non-overridden
+  //    shot of the same contiguous run (same episode, same normalized location text + time band) — one scene never
+  //    sits in two classifier buckets; other scenes at that place are left to their own cues
+  const namer = locationNamer(exp.characters)
+  const lk = (s: Shot) => ((s.location || '').trim() ? `${s.episode}\u0000${normalizeLocation(s.location, namer)}\u0000${s.timeBand || ''}` : '')
+  const runOf: number[] = []
+  out.forEach((s, q) => runOf.push(q && lk(s) && lk(s) === lk(out[q - 1]) ? runOf[q - 1] : q))
+  const fixed = new Map<number, string>()
+  for (const c of corrections) if (c.by === 'rule' && !c.reason.includes('常驻窗')) {
+    const q = out.findIndex((x) => x.id === c.id)
+    if (lk(out[q]) && !fixed.has(runOf[q])) fixed.set(runOf[q], c.to)
+  }
+  const done = new Set(corrections.map((c) => c.id))
+  for (let q = 0; q < out.length; q++) {
+    const s = out[q]
+    const target = fixed.get(runOf[q])
+    if (!target || !lk(s) || done.has(s.id) || s.splitFrom || overrides[s.id] || s.sceneId === target || !scenes.has(target)) continue
+    corrections.push({ id: s.id, from: s.sceneId || '', to: target, by: 'rule', reason: `同一场景（${s.location}，连续同地点）随同组校正 → ${target}` })
+    out[q] = moveTo(s, target)
   }
   return { exp: corrections.length ? { ...exp, shots: out } : exp, corrections }
 }

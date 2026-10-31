@@ -62,12 +62,12 @@ export function scanPack(e: VideoPipelineExport): { id: string; kind: string; de
       for (let i = 0; i < cls.length; i++)
         for (let j = i + 1; j < cls.length; j++) if (isNearDup(cls[i], cls[j])) add(s.id, 'repeat', `${cls[i]} / ${cls[j]}`)
     }
-    // across segments: clause-level repeats, then any verbatim 5-char run (character reference labels like 穿X的少年 excluded)
+    // across segments: clause-level repeats, then any verbatim 5-char run (character reference labels like 穿X的少年 / 画面左侧的少女 excluded)
     const all = segs.map((x) => splitClauses(x.split('；')[0]))
     for (let i = 0; i < all.length; i++)
       for (let j = i + 1; j < all.length; j++)
         for (const a of all[i]) for (const b of all[j]) if (isNearDup(a, b)) add(s.id, 'repeat', `across segments: ${a} / ${b}`)
-    const tl = segs.map((x) => x.split('；')[0].replace(/穿[^，。；]{1,6}?的(?:少年|少女|男人|女人|人)/g, '|')).join('|')
+    const tl = segs.map((x) => x.split('；')[0].replace(/(?:穿[^，。；]{1,6}?|画面(?:左侧|右侧|中间))的(?:少年|少女|男人|女人|人)/g, '|')).join('|')
     const seen = new Set<string>()
     for (let i = 0; i + 5 <= tl.length; i++) {
       const sub = tl.slice(i, i + 5)

@@ -369,7 +369,7 @@ export function multiSubjectLine(ids: string[], ws: Record<string, string>, char
 /** note prefix for a 他/她 the source does not resolve (beatPrompt writes it to beatTodo; copied to renderReview) */
 export const UNCLEAR_PRONOUN_NOTE = '多人同框，「他/她」指代不明：'
 /** a person descriptor the beat prompt uses for one of several on-screen characters (穿夹克的少年) */
-export const PERSON_DESCRIPTOR = /穿[^，。；、\s]{1,8}?的(?:少年|少女|男生|女生|男人|女人|男孩|女孩|青年|学生|同学|人)/
+export const PERSON_DESCRIPTOR = /(?:穿[^，。；、\s]{1,8}?|画面(?:左侧|右侧|中间))的(?:少年|少女|男生|女生|男人|女人|男孩|女孩|青年|学生|同学|人)/
 /**
  * Clauses of a multi-person shot's timeline whose bare 他/她 has no descriptor earlier in the same segment
  * (the pronoun cannot be resolved by the reader / the video model).
