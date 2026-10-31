@@ -37,6 +37,7 @@ import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotatio
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
 import { applyRenderHold, shotMouthRisks } from '../src/lib/renderHold'
+import { applyRenderSkip } from '../src/lib/renderSkip'
 import { META_NOTE, metaRisks, ORPHAN_NOTE, ABSTRACT_PERF_NOTE, TIME_REPEAT_NOTE, CAPTION_NOTE, parseCaptionNote, EMPTY_SCRUB_NOTE, EMPTY_STYLE_NOTE, emptyShotRisks, speechChars, SUBJECT_CARRY_NOTE, SUBJECT_UNRESOLVED_NOTE } from '../src/lib/renderHygiene'
 import { TEXT_PROP_NOTE } from '../src/lib/textProps'
 import { PERFORMANCE_NOTE } from '../src/lib/beatPrompt'
@@ -113,7 +114,8 @@ const multi = applyMultiCast(carry.exp)
 const holdsBeforePronoun = applyRenderHold(carry.exp, { speechRate }).renderHold.length
 const held = applyRenderHold(multi.exp, { speechRate })
 const location = locationStats(held.exp, crosscutBudget)
-const exp = applyCrosscutGate(held.exp, location.groups, crosscutBudget)
+const renderFlags = applyRenderSkip(applyCrosscutGate(held.exp, location.groups, crosscutBudget))
+const exp = renderFlags.exp
 const renderHold = location && crosscutBudget.gate === 'hold'
   ? exp.shots.filter((s) => s.hold).map((s) => ({ shotId: s.id, episode: s.episode, reasons: s.hold!.reason }))
   : held.renderHold
@@ -365,6 +367,7 @@ console.log(
       sceneGroupingAll: { budget: crosscutBudget, episodes: location.episodes, overBudget: overBudget.map((g) => ({ group: g.group, reasons: g.reasons, switches: g.switches, turnDriven: g.turnDriven, shotIds: g.shotIds })), placeKeyConflicts: placeKeyConflicts(exp.shots) },
       multiCast: multi.report,
       carryBreaks: carry.breaks,
+      renderSkip: { skipped: renderFlags.skipped, carryRewired: renderFlags.rewired },
       renderHoldCount: { beforePronounRule: holdsBeforePronoun, after: held.renderHold.length },
       ...(splitCrossCut
         ? {

@@ -610,7 +610,7 @@ export function validateCarryChain(shots: (Pick<Shot, 'id' | 'angleKey' | 'carry
     const j = idx.get(s.carryFromShotId)
     if (j === undefined) errs.push(`${s.id} → ${s.carryFromShotId} 不存在`)
     else if (j >= i) errs.push(`${s.id} → ${s.carryFromShotId} 不是更早的镜头`)
-    else if (shots[j].angleKey !== s.angleKey) errs.push(`${s.id} → ${s.carryFromShotId} angleKey 不一致 (${s.angleKey} ≠ ${shots[j].angleKey})`)
+    else if (shots[j].angleKey !== s.angleKey && !(s as { carryRewiredFrom?: string }).carryRewiredFrom) errs.push(`${s.id} → ${s.carryFromShotId} angleKey 不一致 (${s.angleKey} ≠ ${shots[j].angleKey})`)
     else if (shots[j].episode !== s.episode) errs.push(`${s.id} → ${s.carryFromShotId} 跨集承接 (第${s.episode}集 ← 第${shots[j].episode}集)`)
   })
   // cycle check (independent of the ordering rule)

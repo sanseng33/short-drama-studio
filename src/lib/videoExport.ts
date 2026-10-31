@@ -105,6 +105,11 @@ export interface VideoPipelineShot {
    * carryFromShotId is the immediately previous shot.
    */
   carryFromShotId?: string | null
+  /** false = runner must not render this shot (see renderSkip.ts); never a carry source */
+  render?: boolean
+  renderSkip?: { reason: string } | null
+  /** set when the carry source was a non-rendered shot and got rewired (angleKey may differ from the new source) */
+  carryRewiredFrom?: string
   /** opt-in splitCrossCut (sceneGroup.ts): camera location = placeKey (fallback sceneId) */
   locationKey?: string
   /** opt-in splitCrossCut (sceneGroup.ts): `ep<N>_g<k>` run of shots of one time band linked by one place / a cross-cut exchange */
