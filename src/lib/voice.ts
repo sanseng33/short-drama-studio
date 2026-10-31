@@ -206,6 +206,24 @@ export interface IdentityChar extends VoiceChar {
   gender?: string
   refImage?: string | null
   autoVoice?: boolean
+  ageBand?: string
+  lookVariants?: string[]
+  lookalikeOf?: string | null
+  background?: string
+}
+
+/** lookalike: explicit lookalikeOf (id or name), else visualLock / background saying it resembles another person's name */
+export function lookalikeOfChar(c: IdentityChar, chars: IdentityChar[]): string | null {
+  const key = (x: IdentityChar) => x.characterKey || personKeyOf(x)
+  const others = chars.filter((o) => key(o) !== key(c))
+  const ex = c.lookalikeOf?.trim()
+  if (ex) return others.find((o) => o.id === ex || o.name === ex || personKeyOf(o) === ex)?.id ?? null
+  const t = `${c.visualLock || ''} ${c.background || ''}`
+  for (const o of others) {
+    const n = personKeyOf(o)
+    if (n.length >= 2 && new RegExp(`(与|和|跟|酷似|像)${n}[^，。；]{0,6}(相似|相像|一样|相同|酷似|神似|如出一辙)|酷似${n}|神似${n}`).test(t)) return o.id
+  }
+  return null
 }
 
 /** numeric age → age band used in voice descriptions (text age passes through the role table) */
@@ -265,6 +283,7 @@ export function withCharacterIdentity<T extends IdentityChar>(chars: T[], projec
     return {
       ...c,
       characterKey: key,
+      ...(ageBand(c.age) ? { ageBand: ageBand(c.age)! } : {}),
       ...(c.refImage?.trim() || !opts.refImage ? {} : { refImage: `${key}_v${n}` }),
       ...(!c.gender?.trim() && g ? { gender: g } : {}),
     }
@@ -272,7 +291,13 @@ export function withCharacterIdentity<T extends IdentityChar>(chars: T[], projec
   const inherited = withCharacterVoices(withKeys)
   const firstOfKey = new Map<string, IdentityChar>()
   for (const c of inherited) if (!firstOfKey.has(c.characterKey!)) firstOfKey.set(c.characterKey!, c)
-  return inherited.map((c) => {
+  const linked = inherited.map((c) => ({
+    ...c,
+    lookVariants: inherited.filter((o) => o.id !== c.id && o.characterKey === c.characterKey).map((o) => o.id),
+    lookalikeOf: lookalikeOfChar(c, inherited),
+  }))
+  // a lookalike pair (different people) never shares a voice id
+  return linked.map((c) => {
     if (normalizeVoice(c.voice)) return c
     const head = firstOfKey.get(c.characterKey!)!
     const src = charGender(c) || !head ? c : head

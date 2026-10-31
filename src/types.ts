@@ -39,6 +39,12 @@ export interface Character {
   age?: string
   /** female / male (also 女 / 男) — drives pronoun mapping and the auto voice */
   gender?: string
+  /** age band derived from age (儿童/青少年/青年/中年人/老年人) — voice + casting */
+  ageBand?: string
+  /** ids of the other look variants of the same person (same characterKey) */
+  lookVariants?: string[]
+  /** id of a DIFFERENT person this character closely resembles (keep refs / voices apart) */
+  lookalikeOf?: string | null
   /** 定妆图文件名/前缀, e.g. char_a_plain — exported as characters[].refImage */
   refImage?: string
   /** visualLock/costume are authoritative (also implied by refImage): regeneration must not overwrite */

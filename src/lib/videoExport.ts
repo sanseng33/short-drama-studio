@@ -204,6 +204,9 @@ export interface VideoPipelineExport {
     age?: string
     /** female / male (optional) */
     gender?: string
+    ageBand?: string
+    lookVariants?: string[]
+    lookalikeOf?: string | null
     background?: string
     /** 定妆负向提示 */
     negative?: string | null
@@ -996,6 +999,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
       refImage: c.refImage?.trim() || null,
       ...(c.age?.trim() ? { age: c.age.trim() } : {}),
       ...(c.gender?.trim() ? { gender: c.gender.trim() } : {}),
+      ...(c.ageBand ? { ageBand: c.ageBand } : {}),
+      ...(c.lookVariants ? { lookVariants: c.lookVariants } : {}),
+      ...(c.lookalikeOf !== undefined ? { lookalikeOf: c.lookalikeOf } : {}),
       ...(c.background?.trim() ? { background: c.background.trim() } : {}),
       ...(c.negative?.trim() ? { negative: c.negative.trim() } : {}),
       ...(c.characterKey?.trim() ? { characterKey: c.characterKey.trim() } : {}),

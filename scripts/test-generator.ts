@@ -71,6 +71,7 @@ const main = async () => {
     ] as (Character & { voice?: string })[], 'p1', { refImage: true })
     assert.equal(cs[0].characterKey, cs[1].characterKey)
     assert.deepEqual([cs[0].refImage, cs[1].refImage], [`${cs[0].characterKey}_v1`, `${cs[0].characterKey}_v2`])
+    assert.deepEqual(cs[0].lookVariants, ['c2']); assert.equal(cs[0].ageBand, '青少年')
     assert.deepEqual(cs[0].voice, cs[1].voice, 'variants share one voice')
     assert.match((cs[0].voice as { description: string }).description, /青少年女声/)
     assert.match((cs[2].voice as { description: string }).description, /中年人男声/)
@@ -78,6 +79,15 @@ const main = async () => {
     assert.equal(charGender({ id: 'x', role: '母亲' }), 'female')
     assert.deepEqual([ageBand('8'), ageBand('26岁'), ageBand('70'), ageBand('老师')], ['儿童', '青年', '老年人', '成年人'])
     assert.equal(withCharacterIdentity([{ id: 'a', name: 'A' }])[0].refImage, undefined, 'export path never invents a refImage')
+  })
+  await t('lookalikeOf: explicit name, or visualLock says it resembles another person; distinct voices', () => {
+    const cs = withCharacterIdentity([
+      { id: 'a', name: '甲一', role: '学生', age: '19', visualLock: '短发' },
+      { id: 'b', name: '乙', role: '男人', age: '26', visualLock: '五官与甲一极为相似却更成熟' },
+      { id: 'c', name: '丙', role: '男人', age: '30', lookalikeOf: '甲一' },
+    ] as Character[], 'p')
+    assert.deepEqual(cs.map((c) => c.lookalikeOf), [null, 'a', 'a'])
+    assert.notDeepEqual(cs[0].voice, cs[1].voice)
   })
   await t('episode cap check', () => assert.deepEqual(episodeCapCheck([{ episode: 1, durationSec: 50 }, { episode: 1, durationSec: 45 }, { episode: 2, durationSec: 90 }]), [{ episode: 1, seconds: 95 }]))
   await t('repack: episode over the 90s cap → exit 8 (opt-out --allow-episode-overrun)', () => {

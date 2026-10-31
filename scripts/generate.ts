@@ -18,6 +18,8 @@ import { scriptUser } from '../src/lib/prompts'
 import { generateStoryboardChecked, parseJsonArray, type Llm } from '../src/lib/generator'
 import { buildVideoPipelineExport, type VideoPipelineExport } from '../src/lib/videoExport'
 import { withCharacterIdentity } from '../src/lib/voice'
+import { assignSceneGroups, breakCarries } from '../src/lib/sceneGroup'
+import { applyMultiCast } from '../src/lib/multiCast'
 import type { StoryboardIssue } from '../src/lib/generatorRules'
 
 const args = process.argv.slice(2)
@@ -106,9 +108,10 @@ const main = async () => {
   const style = src ? (src.project.style as Project['style']) : mapStyle(idea.artStyle, genre)
   const fromIdea = toCharacters(idea.characters)
   const gOf = (c: Character) => fromIdea.find((x) => x.name === c.name || (x.baseName && x.baseName === (c.baseName || c.name)))?.gender
-  const cast0 = lockedCast ? lockedCast.map((c) => ({ ...c, ...(c.gender || !gOf(c) ? {} : { gender: gOf(c) }) })) : fromIdea
+  const laOf = (c: Character) => fromIdea.find((x) => x.name === c.name)?.lookalikeOf
+  const cast0 = lockedCast ? lockedCast.map((c) => ({ ...c, ...(c.gender || !gOf(c) ? {} : { gender: gOf(c) }), ...(c.lookalikeOf || !laOf(c) ? {} : { lookalikeOf: laOf(c) }) })) : fromIdea
   const pid = src?.project.id || `p_${Date.now()}`
-  const characters = withCharacterIdentity(cast0, pid, { refImage: true })
+  const characters = withCharacterIdentity(cast0, pid)
   let proj: Project = {
     id: pid,
     title: src?.project.title || idea.title,
@@ -166,11 +169,17 @@ async function resume(proj: Project) {
     await pool(Object.keys(gate.byEpisode).map(Number), (ep) => board(proj.outline.find((o) => o.episode === ep)!, gate.byEpisode[ep]))
     gate = runGates(proj)
   }
-  const exp = buildVideoPipelineExport(proj)
+  const exp = withShotContract(buildVideoPipelineExport(proj))
   writeFileSync(out!, JSON.stringify(exp, null, 2) + '\n')
   writeFileSync(join(work, 'project.json'), JSON.stringify(proj, null, 2))
   writeFileSync(join(work, 'generate-report.json'), JSON.stringify({ model: settings.model, episodes: proj.outline.length, locations: proj.locations, openIssues: issues, finalGate: gate }, null, 2))
   log(`wrote ${out}; final gate exit ${gate.exit}; failing episodes: ${Object.keys(gate.byEpisode).join(',') || 'none'}`)
+}
+
+/** per-shot contract fields in the generated script: sceneGroup / sceneKeyframe / establishing, cast[] + screenPos,
+ *  castCountLock, castDialogue (listenerMouth closed), maxSpeakersPerSegment 1, wardrobeState (from export) */
+function withShotContract(e: VideoPipelineExport): VideoPipelineExport {
+  return applyMultiCast(breakCarries(assignSceneGroups(e)).exp).exp
 }
 
 interface Gate {

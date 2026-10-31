@@ -29,6 +29,7 @@ export interface IdeaCharacter {
   age: string
   /** female / male when stated or clearly implied */
   gender?: string
+  lookalikeOf?: string
 }
 
 export interface IdeaEpisode {
@@ -59,7 +60,7 @@ export const IDEA_SYSTEM = `你是资深AI短剧/漫剧策划。用户会给出�
  "logline": "一句话故事",
  "world": "世界观/背景设定，2-4句",
  "settingFacts": ["想法中明确给出的关键设定事实，每条一句，如「主角是富二代，家住江景别墅」「对手家境贫寒，住城中村」「系统每天早上7点出现」「全剧只有两个主要角色」；3-10条"],
- "characters": [{"name":"","role":"自由定位，如主角/对手/导师","tags":["protagonist|antagonist|support|mentor|romantic|deuteragonist 中选"],"baseName":"本名（仅造型变体需要，如 甲）","age":"年龄（想法给出就照抄，未给出按身份合理推断，同一人各变体一致）","gender":"female 或 male（同一人各变体一致）","background":"家境/阶层/住处（严格按想法，如 富三代·住高档小区；家境贫寒·住老楼）","appearance":"外貌视觉锁定（脸型/发型/体型/年龄），适合AI绘图","costume":"服装（必填，具体到颜色款式，必须与 background 一致：富裕角色不写旧/破/洗得发白，贫寒角色不写名牌）","signatureProp":"标志道具（必填，与身份家境一致）","personality":"性格","arc":"人物弧光"}],
+ "characters": [{"name":"","role":"自由定位，如主角/对手/导师","tags":["protagonist|antagonist|support|mentor|romantic|deuteragonist 中选"],"baseName":"本名（仅造型变体需要，如 甲）","age":"年龄（想法给出就照抄，未给出按身份合理推断，同一人各变体一致）","gender":"female 或 male（同一人各变体一致）","lookalikeOf":"若此人与另一个【不同的人】长相极像，写那个人的 name，否则空字符串","background":"家境/阶层/住处（严格按想法，如 富三代·住高档小区；家境贫寒·住老楼）","appearance":"外貌视觉锁定（脸型/发型/体型/年龄），适合AI绘图","costume":"服装（必填，具体到颜色款式，必须与 background 一致：富裕角色不写旧/破/洗得发白，贫寒角色不写名牌）","signatureProp":"标志道具（必填，与身份家境一致）","personality":"性格","arc":"人物弧光"}],
  "episodes": [{"title":"","summary":"本集剧情2-3句","hook":"开场3秒钩子或结尾悬念"}],
  "locations": ["全剧场景表：每个物理场所一个规范名（2-8字，如「病房」「公司会议室」「天台」），不带人名/梦中现实/时间/括号；全剧所有分集只能使用表中名字；4-12个"]
 }
@@ -94,6 +95,7 @@ export function normalizeIdea(raw: Partial<IdeaResult>): IdeaResult {
       background: str(c?.background),
       age: str((c as { age?: unknown })?.age),
       gender: str((c as { gender?: unknown })?.gender) || undefined,
+      lookalikeOf: str((c as { lookalikeOf?: unknown })?.lookalikeOf) || undefined,
       baseName: str(c?.baseName) || str(c?.name).match(/^(.+?)[（(][^）)]+[）)]$/)?.[1] || undefined,
     }))
     .filter((c) => c.name)
@@ -184,6 +186,7 @@ export function toCharacters(list: IdeaCharacter[]): Character[] {
       ...(c.background ? { background: c.background } : {}),
       ...(c.age ? { age: c.age } : {}),
       ...(c.gender ? { gender: c.gender } : {}),
+      ...(c.lookalikeOf ? { lookalikeOf: c.lookalikeOf } : {}),
     }
   })
 }

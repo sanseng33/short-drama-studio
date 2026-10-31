@@ -31,6 +31,7 @@ export function complianceBlock(p: { secondsPerEp: number; locations?: string[] 
 - 台词：每镜最多一句、一个说话人；按 4 字/秒 + 标点停顿 + ${DEFAULT_DIALOGUE_PAD.headSec + DEFAULT_DIALOGUE_PAD.tailSec} 秒余量估算，必须在本镜时长内说完（9 秒镜约 ≤26 字，6 秒镜约 ≤16 字）；说不完就拆成两镜。
 - 动作：action 与 seedancePrompt 时间轴每段最多 ${MAX_ACTIONS_PER_SEGMENT} 个可见动作（有台词的段只做 1 个动作，其余写表情）。
 - 同框最多 ${MAX_CAST_PER_SHOT} 人；两人同框镜头的 visual/action/seedancePrompt 禁止用「他/她/他们/她们」，一律写角色名，或写「画面左侧的…/画面右侧的…」；同一场两人左右站位保持不变（screenPos 字段：{"角色名":"left|right"}）。
+- 长相相似的不同人物（角色的 lookalikeOf）出现时，visual 必须写出两人的区分特征（年龄感/发型/服装），绝不只写「他」；同一人的造型变体（梦中/现实等）按剧情写对应变体全名。
 - 场景分组：同一地点的镜头连续排完再换地点，本集最多换 ${MAX_LOCATION_CHANGES} 次地点，禁止 A→B→A 来回切（交叉剪辑只在剧情必须时用，且每段至少 3 镜）。
 - 换地点或换时间（白天/夜）后的第一镜：establishing=true，景别用远景/全景交代环境，carryFromPrev=false；同地点同时间的后续镜头 carryFromPrev=true。${locs}`
 }

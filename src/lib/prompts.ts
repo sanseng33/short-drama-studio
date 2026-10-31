@@ -24,6 +24,7 @@ export function characterBrief(c: Character, full = true) {
     tags: c.tags || [],
     ...(c.age ? { age: c.age } : {}),
     ...(c.gender ? { gender: c.gender } : {}),
+    ...(c.lookalikeOf ? { lookalikeOf: c.lookalikeOf } : {}),
     ...(c.background ? { background: c.background } : {}),
     ...(full ? { visualLock: c.visualLock, costume: c.costume, signatureProp: c.signatureProp } : {}),
     ...(full && c.personality ? { personality: c.personality } : {}),

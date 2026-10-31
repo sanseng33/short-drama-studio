@@ -106,7 +106,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
       const style = mapStyle(result.artStyle, genre)
       // keep 定妆图 / locked looks from the current project (visualLock/costume authoritative)
       // identity rule: characterKey / refImage prefix / gender / auto voice (gender + age) for every character
-      const characters = withCharacterIdentity(mergeLockedCharacters(prevProject.characters, toCharacters(result.characters)), result.title, { refImage: true })
+      const characters = withCharacterIdentity(mergeLockedCharacters(prevProject.characters, toCharacters(result.characters)), result.title)
       const outline = toOutline(result.episodes)
       let proj: Project = {
         id: `p_${Date.now()}`,
