@@ -3,11 +3,16 @@ import { applyRenderSkip } from '../src/lib/renderSkip'
 const sh = (id: string, o: any = {}) => ({ id, episode: 1, sceneGroup: 'g1', locationKey: 'L', timeBand: 'day', angleKey: 'a', castDialogue: [{ onScreen: true }], ...o })
 let n = 0
 const t = (name: string, f: () => void) => { f(); n++ }
-t('offscreen-only shot is skipped and rewired around', () => {
-  const r = applyRenderSkip({ shots: [sh('1'), sh('2', { castDialogue: [{ onScreen: false }], carryFromShotId: '1', carryFromPrev: true }), sh('3', { carryFromShotId: '2', carryFromPrev: true })] } as any)
+t('off-screen-voice reaction and empty frames render and stay carry sources', () => {
+  const r = applyRenderSkip({ shots: [sh('1'), sh('2', { castDialogue: [{ onScreen: false }], carryFromShotId: '1', carryFromPrev: true }), sh('3', { carryFromShotId: '2', carryFromPrev: true }), sh('4', { cast: [], castDialogue: [], framing: 'empty', carryFromShotId: '3' }), sh('5', { carryFromShotId: '4' })] } as any)
   const s = r.exp.shots as any[]
-  assert.equal(s[1].render, false); assert.deepEqual(s[1].renderSkip, { reason: 'offscreen_only' })
-  assert.equal(s[2].carryFromShotId, '1'); assert.equal(s[2].carryFromPrev, false); assert.equal(s[0].render, true)
+  assert.ok(s.every((x) => x.render === true && x.renderSkip === null))
+  assert.equal(s[2].carryFromShotId, '2'); assert.equal(s[4].carryFromShotId, '4'); assert.equal(r.rewired.length, 0)
+})
+t('held source rewired to nearest rendered shot', () => {
+  const r = applyRenderSkip({ shots: [sh('1'), sh('2', { hold: { reason: ['x'] }, carryFromShotId: '1' }), sh('3', { carryFromShotId: '2', carryFromPrev: true })] } as any)
+  const s = r.exp.shots as any[]
+  assert.equal(s[1].render, false); assert.equal(s[2].carryFromShotId, '1'); assert.equal(s[2].carryFromPrev, false)
   assert.deepEqual(r.rewired.map((x) => [x.id, x.from, x.to]), [['3', '2', '1']])
 })
 t('held source with no rendered peer → carry dropped, establishing', () => {

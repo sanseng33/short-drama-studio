@@ -4,8 +4,7 @@
  * Every shot gets `render: boolean` and `renderSkip: { reason } | null` so runner and exporter agree on which
  * shots are NOT rendered:
  *   - 'hold'          shot.hold is set (render hold / cross-cut gate)
- *   - 'offscreen_only' every dialogue line is off-screen (voiceOnly / castDialogue onScreen false) and no line is
- *                      spoken on screen (e.g. a phone voice over a listener)
+ *   (off-screen-voice reaction shots and empty frames DO render: voice on the audio track, picture shows the listener)
  *   - 'explicit'      the input already had render === false / renderSkip set
  * A non-rendered shot is never a carry source: carryFromShotId / carryFromPrev pointing at one are rewired to the
  * nearest previous RENDERED shot in the same episode + sceneGroup (else locationKey) + time band (same angleKey
@@ -17,13 +16,8 @@ type S = VideoPipelineExport['shots'][number] & Record<string, any>
 export interface CarryRewire { id: string; from: string; to: string | null; reason: string }
 
 export function renderSkipReason(s: S): string | null {
-  if (s.render === false || (s.renderSkip && s.renderSkip.reason && !['hold', 'offscreen_only'].includes(s.renderSkip.reason))) return 'explicit'
+  if (s.render === false || (s.renderSkip && s.renderSkip.reason && !['hold'].includes(s.renderSkip.reason))) return 'explicit'
   if (s.hold) return 'hold'
-  const lines: any[] = s.castDialogue?.length ? s.castDialogue : (s.dialogueLines || [])
-  if (lines.length) {
-    const on = lines.some((l) => (l.onScreen !== undefined ? l.onScreen : !l.voiceOnly))
-    if (!on) return 'offscreen_only'
-  }
   return null
 }
 
