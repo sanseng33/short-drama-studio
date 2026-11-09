@@ -182,6 +182,18 @@ export interface Shot {
   location?: string
   /** generator hint: first shot of a new place / time band (wide establishing frame) */
   establishing?: boolean
+  /** generator (P0-1): first / last frame state per on-screen character (keys: name or id) { pos, facing, pose, gaze, hands } */
+  startState?: Record<string, Record<string, unknown>>
+  endState?: Record<string, Record<string, unknown>>
+  /** generator (P0-2): master | A | B side of the scene's 180° line; eyeline { name: left | right | front } */
+  cameraSide?: string
+  eyeline?: Record<string, unknown>
+  /** generator (P0-2): scene blocking { positions, facing, door, window, holding } (first shot of a scene) */
+  blocking?: Record<string, unknown>
+  /** generator (P0-3): scene lighting { key, soft, temp } (first shot of a scene) */
+  lighting?: Record<string, unknown>
+  /** generator (P0-3): onscreen | inner | offscreen */
+  voiceMode?: string
 }
 
 export interface Project {

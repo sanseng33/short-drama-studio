@@ -6,6 +6,7 @@
 import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, SHOT_TARGET_SEC } from './dialogueTiming'
 import { isVisibleAction } from './actionDensity'
 import { locationNamer, normalizeLocation } from './locationNorm'
+import { normCameraSide, normFacing, normHands, normPose, normSide, normVoiceMode } from './blocking'
 
 export const EPISODE_CAP_SEC = 90
 export const MAX_ACTIONS_PER_SEGMENT = 2
@@ -33,7 +34,11 @@ export function complianceBlock(p: { secondsPerEp: number; locations?: string[] 
 - 同框最多 ${MAX_CAST_PER_SHOT} 人；两人同框镜头的 visual/action/seedancePrompt 禁止用「他/她/他们/她们」，一律写角色名，或写「画面左侧的…/画面右侧的…」；同一场两人左右站位保持不变（screenPos 字段：{"角色名":"left|right"}）。
 - 长相相似的不同人物（角色的 lookalikeOf）出现时，visual 必须写出两人的区分特征（年龄感/发型/服装），绝不只写「他」；同一人的造型变体（梦中/现实等）按剧情写对应变体全名。
 - 场景分组：同一地点的镜头连续排完再换地点，本集最多换 ${MAX_LOCATION_CHANGES} 次地点，禁止 A→B→A 来回切（交叉剪辑只在剧情必须时用，且每段至少 3 镜）。
-- 换地点或换时间（白天/夜）后的第一镜：establishing=true，景别用远景/全景交代环境，carryFromPrev=false；同地点同时间的后续镜头 carryFromPrev=true。${locs}`
+- 换地点或换时间（白天/夜）后的第一镜：establishing=true，景别用远景/全景交代环境，carryFromPrev=false；同地点同时间的后续镜头 carryFromPrev=true。
+- 起止状态：每个有人物的镜头必须给 startState/endState（画面内每个角色的 pos/facing/pose/gaze/hands）；carryFromPrev=true 时本镜 startState 与上一镜 endState 完全一致，姿势/手持物的变化必须在时间轴里有对应动作；被下一镜承接的镜头最后约 1 秒只保持姿态。
+- 站位与机位：每场第一镜给 blocking（左右站位、朝向、门窗在哪侧、谁拿什么），本场人物不换边；每镜给 cameraSide（master/A/B）与 eyeline，A 与 B 之间必须隔一个 master 镜（否则越轴）。
+- 一场一套光：每场第一镜给 lighting（key 主光方向、soft 软硬、temp 冷暖），同场每镜光线一致。
+- 台词 voiceMode：onscreen / inner / offscreen；inner 与 offscreen 时画面人物嘴唇闭合。${locs}`
 }
 
 export interface RawShotLike {
@@ -48,11 +53,18 @@ export interface RawShotLike {
   establishing?: boolean
   carryFromPrev?: boolean
   screenPos?: Record<string, string>
+  startState?: Record<string, Record<string, unknown>>
+  endState?: Record<string, Record<string, unknown>>
+  cameraSide?: string
+  eyeline?: Record<string, unknown>
+  voiceMode?: string
+  blocking?: Record<string, unknown>
+  lighting?: Record<string, unknown>
 }
 
 export interface StoryboardIssue {
   shot: number | null
-  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay'
+  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode'
   detail: string
 }
 
@@ -102,6 +114,8 @@ export function validateStoryboard(
     if (!(s.timeOfDay || '').trim()) out.push({ shot: n, rule: 'timeOfDay', detail: '缺 timeOfDay' })
   })
   if (total > cap + 1e-6) out.push({ shot: null, rule: 'episodeSeconds', detail: `本集合计 ${total}s > ${cap}s` })
+  // P0-1/2/3: start / end states, carry continuity, axis, scene lighting, voice mode
+  out.push(...validateContinuity(shots, namer))
   // grouped scenes: count place switches and returns to an earlier place
   const seq = shots.map((s) => normalizeLocation(s.location, namer) || (s.location || '').trim())
   let changes = 0
@@ -123,13 +137,14 @@ export function autoFixStoryboard<T extends RawShotLike>(shots: T[], ctx: { char
   const namer = locationNamer(ctx.characters)
   const canon = new Map((ctx.locations || []).map((l) => [normalizeLocation(l, namer) || l, l]))
   const band = (t?: string) => (/(夜|晚|深夜|凌晨|黄昏|傍晚)/.test(t || '') ? 'night' : 'day')
-  return shots.map((s, i) => {
+  const fixed = shots.map((s, i) => {
     const loc = canon.get(normalizeLocation(s.location, namer)) || s.location
     const prev = i ? shots[i - 1] : null
     const prevLoc = prev ? canon.get(normalizeLocation(prev.location, namer)) || prev.location : null
     const change = !prev || prevLoc !== loc || band(prev.timeOfDay) !== band(s.timeOfDay)
     return { ...s, ...(loc ? { location: loc } : {}), establishing: change, carryFromPrev: change ? false : s.carryFromPrev !== false }
   })
+  return autoFixContinuity(fixed, namer)
 }
 
 /** repair prompt for the LLM from a list of issues */
@@ -138,4 +153,99 @@ export function repairPrompt(issues: StoryboardIssue[]): string {
     .slice(0, 40)
     .map((x) => `- ${x.shot ? `第${x.shot}镜` : '全集'} [${x.rule}] ${x.detail}`)
     .join('\n')}`
+}
+
+// ---------------- P0-1/2/3 (generator side) ----------------
+type StateLike = { pos: string; facing: string; pose: string; gaze: string; hands: string }
+/** name-keyed raw state → normalised name-keyed state (enum values normalised for strict comparison) */
+export function normRawState(raw: unknown): Record<string, StateLike> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out: Record<string, StateLike> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue
+    const o = v as Record<string, unknown>
+    const pos = normSide(o.pos)
+    if (!pos) continue
+    out[k.trim()] = { pos, facing: normFacing(o.facing) || 'front', pose: normPose(o.pose) || '站', gaze: String(o.gaze ?? '').trim() || 'front', hands: normHands(o.hands) }
+  }
+  return Object.keys(out).length ? out : null
+}
+const lightSig = (l: unknown): string | null => {
+  if (!l || typeof l !== 'object') return null
+  const o = l as Record<string, unknown>
+  const key = String(o.key ?? '').trim()
+  return key ? `${key}|${o.soft === false || /硬|hard/i.test(String(o.soft)) ? 'hard' : 'soft'}|${String(o.temp ?? '').trim()}` : null
+}
+const runKey = (s: RawShotLike, namer: ReturnType<typeof locationNamer>) => `${normalizeLocation(s.location, namer) || (s.location || '').trim()}|${/(夜|晚|凌晨|黄昏|傍晚)/.test(s.timeOfDay || '') ? 'night' : 'day'}`
+
+export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeof locationNamer>): StoryboardIssue[] {
+  const out: StoryboardIssue[] = []
+  let lastSide: string | null = null
+  let runLight: string | null = null
+  shots.forEach((s, i) => {
+    const n = i + 1
+    const cast = s.characters || []
+    const prev = i ? shots[i - 1] : null
+    const newRun = !prev || runKey(prev, namer) !== runKey(s, namer)
+    if (newRun) (lastSide = null, (runLight = lightSig(s.lighting)))
+    const st = normRawState(s.startState)
+    const en = normRawState(s.endState)
+    if (cast.length && (!st || !en || cast.some((c) => !st[c] || !en[c]))) out.push({ shot: n, rule: 'state', detail: '缺 startState/endState（画面内每个角色的 pos/facing/pose/gaze/hands）' })
+    if (prev && s.carryFromPrev && st) {
+      const pe = normRawState(prev.endState)
+      for (const [c, a] of Object.entries(pe || {})) {
+        const b = st[c]
+        if (!b) continue
+        const diff = (['pos', 'facing', 'pose', 'gaze', 'hands'] as const).filter((k) => a[k] !== b[k])
+        if (diff.length) out.push({ shot: n, rule: 'stateJump', detail: `「${c}」与上一镜末帧不一致：${diff.map((k) => `${k} ${a[k]}→${b[k]}`).join('，')}` })
+      }
+    }
+    const side = normCameraSide(s.cameraSide)
+    if (cast.length && !side) out.push({ shot: n, rule: 'axisCross', detail: '缺 cameraSide（master/A/B）' })
+    if (side && cast.length >= 1) {
+      if (lastSide && side !== 'master' && lastSide !== 'master' && side !== lastSide) out.push({ shot: n, rule: 'axisCross', detail: `机位 ${lastSide}→${side} 中间没有 master 镜（越轴）` })
+      lastSide = side
+    }
+    if (newRun && cast.length && !lightSig(s.lighting)) out.push({ shot: n, rule: 'lighting', detail: '本场第一镜缺 lighting（key/soft/temp）' })
+    const ls = lightSig(s.lighting)
+    if (!newRun && ls && runLight && ls !== runLight) out.push({ shot: n, rule: 'lighting', detail: `同场光线不一致：${ls} ≠ ${runLight}` })
+    if ((s.dialogue || '').trim() && s.voiceMode && !normVoiceMode(s.voiceMode)) out.push({ shot: n, rule: 'voiceMode', detail: `voiceMode「${s.voiceMode}」不是 onscreen/inner/offscreen` })
+  })
+  return out
+}
+
+/**
+ * generic auto-fix of the P0 fields (no LLM): enum normalisation, carry → startState := previous endState for shared
+ * characters, scene lighting + blocking locked to the run's first value (same place + time band)
+ */
+export function autoFixContinuity<T extends RawShotLike>(shots: T[], namer: ReturnType<typeof locationNamer>): T[] {
+  let light: Record<string, unknown> | undefined
+  let blocking: Record<string, unknown> | undefined
+  const out: T[] = []
+  shots.forEach((s0, i) => {
+    const s = { ...s0 } as T
+    const prev = i ? out[i - 1] : null
+    const newRun = !prev || runKey(prev, namer) !== runKey(s, namer)
+    if (newRun) (light = s.lighting && lightSig(s.lighting) ? s.lighting : undefined, (blocking = s.blocking && typeof s.blocking === 'object' ? s.blocking : undefined))
+    if (!light && lightSig(s.lighting)) light = s.lighting
+    if (!blocking && s.blocking && typeof s.blocking === 'object') blocking = s.blocking
+    if (light) s.lighting = light
+    if (blocking) s.blocking = blocking
+    const st = normRawState(s.startState)
+    const en = normRawState(s.endState)
+    if (st) s.startState = st as never
+    if (en) s.endState = en as never
+    const side = normCameraSide(s.cameraSide)
+    if (side) s.cameraSide = side
+    const vm = normVoiceMode(s.voiceMode)
+    if (vm) s.voiceMode = vm
+    if (prev && s.carryFromPrev && st) {
+      const pe = normRawState(prev.endState) || {}
+      const fixed = { ...st }
+      for (const c of Object.keys(st)) if (pe[c]) fixed[c] = { ...pe[c] }
+      s.startState = fixed as never
+    }
+    out.push(s)
+  })
+  return out
 }

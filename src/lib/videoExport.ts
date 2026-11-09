@@ -150,6 +150,23 @@ export interface VideoPipelineShot {
   castCorrection?: { from: string; to: string; characterKey: string; wardrobeState: string }
   /** beat mode lengthened the shot so its dialogue fits (estimated speech + head / tail pad); fromSec = source length */
   durationAdjustment?: { fromSec: number; toSec: number; reason: string }
+  /** blocking.ts (P0-1): on-screen cast state at the first / last frame { [characterId]: { pos, facing, pose, gaze, hands } } */
+  startState?: import('./blocking').ShotState
+  endState?: import('./blocking').ShotState
+  /** blocking.ts: the carry source this shot's startState was corrected from (state gate fix) */
+  stateFixedFrom?: string
+  /** blocking.ts (P0-2): camera side of the scene's 180° line (A standard, B mirrored, master re-establishes) */
+  cameraSide?: import('./blocking').CameraSide
+  /** blocking.ts (P0-2): per on-screen character, look direction on screen + who they look at */
+  eyeline?: Record<string, import('./blocking').Eyeline>
+  /** blocking.ts: key into pack sceneBlocking / sceneLighting (`<sceneGroup>@<locationKey>`) */
+  blockingScene?: string
+  /** blocking.ts (P0-3): the scene's lighting set (same on every shot of the scene) */
+  lighting?: { scene: string; key: string; soft: boolean; temp: string; band: string }
+  /** generator hints (P0-1..3), consumed by blocking.ts: shot voice mode, scene blocking / lighting hints */
+  voiceMode?: string
+  blockingHint?: Record<string, unknown>
+  lightingHint?: Record<string, unknown>
 }
 
 export interface VideoPipelineWarning {
@@ -234,6 +251,10 @@ export interface VideoPipelineExport {
   }[]
   shots: VideoPipelineShot[]
   warnings: VideoPipelineWarning[]
+  /** blocking.ts (P0-2): scene blocking per `<sceneGroup>@<locationKey>` */
+  sceneBlocking?: Record<string, import('./blocking').SceneBlocking>
+  /** blocking.ts (P0-3): one lighting set per scene */
+  sceneLighting?: Record<string, import('./blocking').SceneLighting>
   /** auto-designed voices of off-list speakers ({ description, id }, autoVoice: true) — review before TTS */
   autoVoices?: Record<string, AutoVoice>
 }
@@ -795,6 +816,27 @@ const DAY_MARK = /(清晨|早上|早晨|上午|中午|白天|日间|[六七八�
 const NIGHT_MARK = /(晚上|深夜|夜里|半夜|今晚|夜晚|夜$|^夜)/
 const NIGHT_PROMPT = /(夜戏|夜景|深夜|夜色|夜空)/
 
+/** generator P0 hints → pack fields (name keys → character ids); a shot split into segments: start state on the first, end state on the last */
+function generatorHints(s: Shot, chars: Character[], idx: number, total: number): Partial<VideoPipelineShot> {
+  const idOf = (k: string) => chars.find((c) => c.id === k)?.id || chars.find((c) => c.name === k)?.id || chars.find((c) => c.baseName === k)?.id || k
+  const ids = <T,>(o: Record<string, T> | undefined): Record<string, T> | undefined =>
+    o && typeof o === 'object' && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).map(([k, v]) => [idOf(k), v])) : undefined
+  const st = idx === 0 ? ids(s.startState) : undefined
+  const en = idx === total - 1 ? ids(s.endState) : undefined
+  const bl = s.blocking && typeof s.blocking === 'object'
+    ? Object.fromEntries(Object.entries(s.blocking).map(([k, v]) => [k, ['positions', 'facing', 'holding'].includes(k) ? ids(v as Record<string, unknown>) : v]))
+    : undefined
+  return {
+    ...(st ? { startState: st as never } : {}),
+    ...(en ? { endState: en as never } : {}),
+    ...(s.cameraSide ? { cameraSide: s.cameraSide as never } : {}),
+    ...(s.eyeline ? { eyeline: ids(s.eyeline) as never } : {}),
+    ...(s.voiceMode ? { voiceMode: s.voiceMode } : {}),
+    ...(bl ? { blockingHint: bl } : {}),
+    ...(s.lighting && typeof s.lighting === 'object' ? { lightingHint: s.lighting } : {}),
+  }
+}
+
 export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOptions = {}): VideoPipelineExport {
   const maxSec = Math.max(MIN_SEG_SEC, opts.maxShotSec ?? 10)
   const max = toUnits(maxSec)
@@ -938,6 +980,7 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         ...(s.timeOfDay ? { timeOfDay: s.timeOfDay } : {}),
         ...(s.location?.trim() ? { location: s.location.trim() } : {}),
         ...(multi ? { segment: { index: idx, total: group.length, parentId: s.id } } : {}),
+        ...generatorHints(s, chars, idx, group.length),
       })
       if (sg.dialogue && sg.need > sg.u)
         warnings.push({

@@ -11,7 +11,9 @@ let pass = 0
 const t = async (name: string, fn: () => void | Promise<void>) => { await fn(); pass++; console.log(`✓ ${name}`) }
 const chars = [{ name: '甲' }, { name: '乙' }]
 const LOCS = ['病房', '客厅']
-const ok = (p: Partial<RawShotLike> = {}): RawShotLike => ({ durationSec: 7, visual: '病房里', action: '甲抬头', dialogue: '', seedancePrompt: '', characters: ['甲'], location: '病房', timeOfDay: '白天', ...p })
+const stOf = (cast: string[]) => Object.fromEntries(cast.map((c, i) => [c, { pos: cast.length > 1 ? (i ? 'right' : 'left') : 'center', facing: 'front', pose: '站', gaze: 'front', hands: '空手' }]))
+const P0 = (cast: string[]) => ({ startState: stOf(cast), endState: stOf(cast), cameraSide: 'master', lighting: { key: '左侧窗光', soft: true, temp: '暖' } })
+const ok = (p: Partial<RawShotLike> = {}): RawShotLike => ({ durationSec: 7, visual: '病房里', action: '甲抬头', dialogue: '', seedancePrompt: '', characters: ['甲'], location: '病房', timeOfDay: '白天', ...P0(p.characters || ['甲']), ...p })
 const ctx = { characters: chars, locations: LOCS, secondsPerEp: 75 }
 const rules = (xs: RawShotLike[]) => validateStoryboard(xs, ctx).map((x) => x.rule)
 

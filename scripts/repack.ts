@@ -24,6 +24,12 @@
  * Every output shot gets `framing` + `wardrobeState` (shotAnnotate); the run fails if any shot lacks either.
  * Characters without wardrobeTimeline / wardrobeCues get an AUTO-PROPOSED timeline from script cues
  * (report: wardrobeAutoProposed, reviewRequired) — hand data in the character JSON always wins.
+ * Research P0-1/2/3 (blocking.ts), every pack: pack `sceneBlocking` / `sceneLighting` per `<sceneGroup>@<locationKey>`;
+ *   every shot `cameraSide` master|A|B, `eyeline`, `startState` / `endState`, `lighting`; castDialogue / dialogueLines
+ *   `voiceMode` onscreen|inner|offscreen (inner / offscreen: listener + speaker mouth closed); prompt 站位 line before
+ *   the timeline, one 光线 line per scene, carry sources hold still for the last ~1 s.
+ *   --axis-gate warn|hold|fail  : A↔B switch inside a scene without a master shot (report blocking.axisCross; fail exit 9)
+ *   --state-gate fix|warn|fail  : carry source endState ≠ shot startState (fix copies the source state; fail exit 10)
  * Re-apply the deterministic video-pipeline@1 post-processing (style lock, 5–9s merge,
  * time/offlist/logo fixes, sceneId/carryFromPrev) to an already exported pack, and print stats.
  */
@@ -46,6 +52,7 @@ import { parseRewriteNote, promptTextRisks } from '../src/lib/emotionVisual'
 import { DEFAULT_DIALOGUE_PAD, dialogueOverruns, DEFAULT_SPEECH_RATE } from '../src/lib/dialogueTiming'
 import { applyCrosscutGate, assignSceneGroups, breakCarries, locationStats, parseCrosscutBudget, placeKeyConflicts, type RegroupMove } from '../src/lib/sceneGroup'
 import { applyMultiCast } from '../src/lib/multiCast'
+import { applyBlocking, applyStateContinuity, parseAxisGate, parseStateGate } from '../src/lib/blocking'
 import { applyCrossCutSplit, reviewCarryChains, validateCarryChain, type SceneCorrection, type SplitInfo } from '../src/lib/crosscutSplit'
 
 const args = process.argv.slice(2)
@@ -70,10 +77,16 @@ const dialoguePad = pi >= 0 ? (([h, tl]) => ({ headSec: h, tailSec: tl ?? h }))(
 const cbi = args.indexOf('--crosscut-budget')
 const crosscutBudget = parseCrosscutBudget(cbi >= 0 ? args[cbi + 1] : undefined)
 const regroup = !flags.has('--no-regroup')
+// --axis-gate warn|hold|fail : A↔B camera-side switch inside a scene without a master shot (blocking.ts; fail exits 9)
+const agi = args.indexOf('--axis-gate')
+const axisGate = parseAxisGate(agi >= 0 ? args[agi + 1] : undefined)
+// --state-gate fix|warn|fail : carry source endState ≠ shot startState (fix = copy the source end state; fail exits 10)
+const sgi = args.indexOf('--state-gate')
+const stateGate = parseStateGate(sgi >= 0 ? args[sgi + 1] : undefined)
 // --episode-cap N: per-episode seconds cap of the final pack (default 90; exit 8 unless --allow-episode-overrun)
 const eci = args.indexOf('--episode-cap')
 const episodeCap = eci >= 0 ? Number(args[eci + 1]) : 90
-const pos = args.filter((a, i) => !a.startsWith('--') && (eci < 0 || i !== eci + 1) && (cbi < 0 || i !== cbi + 1) && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1) && (pi < 0 || i !== pi + 1))
+const pos = args.filter((a, i) => !a.startsWith('--') && (eci < 0 || i !== eci + 1) && (agi < 0 || i !== agi + 1) && (sgi < 0 || i !== sgi + 1) && (cbi < 0 || i !== cbi + 1) && (gi < 0 || i !== gi + 1) && (bi < 0 || i !== bi + 1) && (oi < 0 || i !== oi + 1) && (ri < 0 || i !== ri + 1) && (si < 0 || i !== si + 1) && (pi < 0 || i !== pi + 1))
 const [inp, outp] = pos
 if (!inp) {
   console.error('usage: tsx scripts/repack.ts <in.json> [out.json] [--no-merge] [--genre G] [--beat-mode speed] [--beat-only]')
@@ -114,9 +127,21 @@ const multi = applyMultiCast(carry.exp)
 const holdsBeforePronoun = applyRenderHold(carry.exp, { speechRate }).renderHold.length
 const held = applyRenderHold(multi.exp, { speechRate })
 const location = locationStats(held.exp, crosscutBudget)
-const renderFlags = applyRenderSkip(applyCrosscutGate(held.exp, location.groups, crosscutBudget))
-const exp = renderFlags.exp
-const renderHold = location && crosscutBudget.gate === 'hold'
+// research P0-1/2/3: scene blocking + camera side / eyeline + axis check, scene lighting, start / end states
+const blocking = applyBlocking(applyCrosscutGate(held.exp, location.groups, crosscutBudget), { axisGate })
+const renderFlags = applyRenderSkip(blocking.exp)
+// carry continuity on the final carries (after rewiring), voice modes, 站位 / 光线 / hold-tail prompt lines
+const continuity = applyStateContinuity(renderFlags.exp, { stateGate })
+const exp = continuity.exp
+if (blocking.report.axisCross.length && axisGate === 'fail') {
+  console.error(`axis crossings (${blocking.report.axisCross.length}):\n  ${blocking.report.axisCross.map((x) => `${x.shotId}: ${x.prevShotId} ${x.from} → ${x.to} without a master`).join('\n  ')}`)
+  process.exit(9)
+}
+if (continuity.failed.length) {
+  console.error(`state jumps at carries (${continuity.failed.length}):\n  ${continuity.failed.map((x) => `${x.shotId}: from ${x.from} ${x.characterId} ${x.detail}`).join('\n  ')}`)
+  process.exit(10)
+}
+const renderHold = location && (crosscutBudget.gate === 'hold' || axisGate === 'hold')
   ? exp.shots.filter((s) => s.hold).map((s) => ({ shotId: s.id, episode: s.episode, reasons: s.hold!.reason }))
   : held.renderHold
 const overBudget = location ? location.groups.filter((g) => g.exceeded) : []
@@ -368,6 +393,28 @@ console.log(
       multiCast: multi.report,
       carryBreaks: carry.breaks,
       renderSkip: { skipped: renderFlags.skipped, carryRewired: renderFlags.rewired },
+      // research P0-1/2/3 (blocking.ts)
+      blocking: {
+        scenes: blocking.report.scenes,
+        generatorBlocking: blocking.report.generatorBlocking,
+        axisGate,
+        axisCross: blocking.report.axisCross,
+        eyelineFixes: blocking.report.eyelineFixes,
+        cameraSide: exp.shots.reduce<Record<string, number>>((a, s) => ((a[String(s.cameraSide)] = (a[String(s.cameraSide)] || 0) + 1), a), {}),
+        cameraAnchorTrims: continuity.report.cameraAnchorTrims,
+      },
+      stateContinuity: {
+        gate: stateGate,
+        generatorStates: blocking.report.generatorStates,
+        inferredStates: blocking.report.inferredStates,
+        carriesChecked: continuity.report.carriesChecked,
+        stateJumps: continuity.report.stateJumps,
+        fixed: continuity.report.stateFixed,
+        holdTailShots: continuity.report.holdTailShots,
+      },
+      lighting: { scenes: Object.keys(exp.sceneLighting || {}).length, conflicts: blocking.report.lightingConflicts },
+      voiceModes: continuity.report.voiceModes,
+      innerFramingChanges: continuity.report.innerFramingChanges,
       renderHoldCount: { beforePronounRule: holdsBeforePronoun, after: held.renderHold.length },
       ...(splitCrossCut
         ? {

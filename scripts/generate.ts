@@ -203,6 +203,8 @@ function runGates(proj: Project): Gate {
     const rep = JSON.parse(execFileSync('npx', ['tsx', 'scripts/repack.ts', inp, pk, '--beat-only', '--split-crosscut'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 28 }))
     for (const h of rep.renderHold || []) add(h.shotId, `render hold (${[].concat(h.reasons).join('/')})`)
     for (const g of rep.sceneGroupingAll?.overBudget || []) for (const id of (g.shotIds || []).slice(0, 1)) add(id, `cross-cut budget: ${g.reasons.join('; ')}`)
+    // P0-2: A↔B camera-side switch without a master shot (state jumps are auto-fixed by the export and not fed back)
+    for (const x of rep.blocking?.axisCross || []) add(x.shotId, `越轴：${x.prevShotId} 机位${x.from} → 本镜机位${x.to}，中间没有 master 镜；加一个 master 镜或改 cameraSide`)
     const scan = JSON.parse(execFileSync('npx', ['tsx', 'scripts/scan-prompts.ts', pk], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1 << 28 }))
     for (const a of scan.anomalies || []) if (a.kind !== 'repeat') add(a.id, `scan ${a.kind}: ${a.detail}`)
   } catch (e) {

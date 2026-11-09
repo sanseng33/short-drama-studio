@@ -29,12 +29,12 @@ export const inferGender = (c?: { gender?: string; visualLock?: string; role?: s
   const text = `${c.visualLock || ''} ${c.role || ''} ${(c.tags || []).join(' ')}`
   return FEMALE_RE.test(text) ? 'female' : /(男|少年|先生|哥|他)/.test(text) ? 'male' : null
 }
-const nounOf = (g: Gender | null, age?: string): string => {
+export const nounOf = (g: Gender | null, age?: string): string => {
   if (!g) return '人'
   const n = Number((age || '').match(/\d+/)?.[0] ?? NaN)
   return n < 20 ? (g === 'female' ? '少女' : '少年') : g === 'female' ? '女人' : '男人'
 }
-const POS_WORD: Record<ScreenPos, string> = { left: '画面左侧', right: '画面右侧', center: '画面中间' }
+export const POS_WORD: Record<ScreenPos, string> = { left: '画面左侧', right: '画面右侧', center: '画面中间' }
 /** person 他/她 (not 其他 / 他们 / 他人 / 他乡 …), same as shotAnnotate.unclearPronouns */
 const PRONOUN = /(?<![其吉利])[他她](?![们人乡处日])/g
 const BEAT_LINE = /^(\d+(?:\.\d+)?[–-]\d+(?:\.\d+)?秒[，,：:])(.*)$/
@@ -104,10 +104,24 @@ export function applyMultiCast(exp: VideoPipelineExport): { exp: VideoPipelineEx
   // screenPos per group: first-appearance order among multi-character shots of the group
   const posBy = new Map<string, Map<string, ScreenPos>>()
   const groupKey = (s: VideoPipelineShot) => s.sceneGroup || `ep${s.episode}@${locationKeyOf(s)}`
+  // generator scene blocking (blockingHint.positions { name | id: left | right }) seeds the group's sides
+  const idOf = (k: string) => exp.characters.find((c) => c.id === k || c.name === k || c.baseName === k)?.id
+  for (const s of exp.shots) {
+    const hp = (s.blockingHint as { positions?: Record<string, string> } | undefined)?.positions
+    if (!hp || typeof hp !== 'object') continue
+    const g = groupKey(s)
+    const m = posBy.get(g) || new Map<string, ScreenPos>()
+    for (const [k, v] of Object.entries(hp)) {
+      const id = idOf(k)
+      const p: ScreenPos | null = /左|^l(eft)?$/i.test(String(v)) ? 'left' : /右|^r(ight)?$/i.test(String(v)) ? 'right' : null
+      if (id && p && !m.has(id) && ![...m.values()].includes(p)) m.set(id, p)
+    }
+    posBy.set(g, m)
+  }
   for (const s of exp.shots) {
     const g = groupKey(s)
     const m = posBy.get(g) || new Map<string, ScreenPos>()
-    if (s.characterIds.length > 1) for (const id of s.characterIds) if (!m.has(id)) m.set(id, POS[Math.min(m.size, 2)])
+    if (s.characterIds.length > 1) for (const id of s.characterIds) if (!m.has(id)) m.set(id, POS.find((p) => p === 'center' || ![...m.values()].includes(p))!)
     posBy.set(g, m)
   }
   const multiGroups = new Set(exp.shots.filter((s) => s.characterIds.length > 1).map(groupKey))
