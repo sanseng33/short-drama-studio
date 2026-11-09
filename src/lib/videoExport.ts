@@ -165,6 +165,10 @@ export interface VideoPipelineShot {
   lighting?: { scene: string; key: string; soft: boolean; temp: string; band: string }
   /** generator hints (P0-1..3), consumed by blocking.ts: shot voice mode, scene blocking / lighting hints */
   voiceMode?: string
+  /** realm.ts: scene realm reality | dream | memory (generator value or inferred) */
+  realm?: string
+  /** realm.ts: generator | location | text | default */
+  realmSource?: string
   blockingHint?: Record<string, unknown>
   lightingHint?: Record<string, unknown>
 }
@@ -832,6 +836,7 @@ function generatorHints(s: Shot, chars: Character[], idx: number, total: number)
     ...(s.cameraSide ? { cameraSide: s.cameraSide as never } : {}),
     ...(s.eyeline ? { eyeline: ids(s.eyeline) as never } : {}),
     ...(s.voiceMode ? { voiceMode: s.voiceMode } : {}),
+    ...(s.realm ? { realm: s.realm } : {}),
     ...(bl ? { blockingHint: bl } : {}),
     ...(s.lighting && typeof s.lighting === 'object' ? { lightingHint: s.lighting } : {}),
   }

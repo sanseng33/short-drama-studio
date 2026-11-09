@@ -20,6 +20,7 @@ import { buildVideoPipelineExport, type VideoPipelineExport } from '../src/lib/v
 import { withCharacterIdentity } from '../src/lib/voice'
 import { assignSceneGroups, breakCarries } from '../src/lib/sceneGroup'
 import { applyMultiCast } from '../src/lib/multiCast'
+import { assignRealms } from '../src/lib/realm'
 import type { StoryboardIssue } from '../src/lib/generatorRules'
 
 const args = process.argv.slice(2)
@@ -181,7 +182,7 @@ async function resume(proj: Project) {
 /** per-shot contract fields in the generated script: sceneGroup / sceneKeyframe / establishing, cast[] + screenPos,
  *  castCountLock, castDialogue (listenerMouth closed), maxSpeakersPerSegment 1, wardrobeState (from export) */
 function withShotContract(e: VideoPipelineExport): VideoPipelineExport {
-  return applyMultiCast(breakCarries(assignSceneGroups(e)).exp).exp
+  return applyMultiCast(breakCarries(assignSceneGroups(assignRealms(e).exp)).exp).exp
 }
 
 interface Gate {

@@ -6,6 +6,7 @@
 import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, SHOT_TARGET_SEC } from './dialogueTiming'
 import { isVisibleAction } from './actionDensity'
 import { locationNamer, normalizeLocation } from './locationNorm'
+import { normRealm, realmOfText } from './realm'
 import { normCameraSide, normFacing, normHands, normPose, normSide, normVoiceMode } from './blocking'
 
 export const EPISODE_CAP_SEC = 90
@@ -38,7 +39,8 @@ export function complianceBlock(p: { secondsPerEp: number; locations?: string[] 
 - 起止状态：每个有人物的镜头必须给 startState/endState（画面内每个角色的 pos/facing/pose/gaze/hands）；carryFromPrev=true 时本镜 startState 与上一镜 endState 完全一致，姿势/手持物的变化必须在时间轴里有对应动作；被下一镜承接的镜头最后约 1 秒只保持姿态。
 - 站位与机位：每场第一镜给 blocking（左右站位、朝向、门窗在哪侧、谁拿什么），本场人物不换边；每镜给 cameraSide（master/A/B）与 eyeline，A 与 B 之间必须隔一个 master 镜（否则越轴）。
 - 一场一套光：每场第一镜给 lighting（key 主光方向、soft 软硬、temp 冷暖），同场每镜光线一致。
-- 台词 voiceMode：onscreen / inner / offscreen；inner 与 offscreen 时画面人物嘴唇闭合。${locs}`
+- 台词 voiceMode：onscreen / inner / offscreen；inner 与 offscreen 时画面人物嘴唇闭合。
+- 场景层 realm：每镜写 reality / dream / memory，同一场相同；梦境/回忆里用角色对应的造型变体；现实与梦境/回忆切换的第一镜 establishing=true、carryFromPrev=false。${locs}`
 }
 
 export interface RawShotLike {
@@ -60,11 +62,12 @@ export interface RawShotLike {
   voiceMode?: string
   blocking?: Record<string, unknown>
   lighting?: Record<string, unknown>
+  realm?: string
 }
 
 export interface StoryboardIssue {
   shot: number | null
-  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode'
+  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode' | 'realm'
   detail: string
 }
 
@@ -137,12 +140,16 @@ export function autoFixStoryboard<T extends RawShotLike>(shots: T[], ctx: { char
   const namer = locationNamer(ctx.characters)
   const canon = new Map((ctx.locations || []).map((l) => [normalizeLocation(l, namer) || l, l]))
   const band = (t?: string) => (/(夜|晚|深夜|凌晨|黄昏|傍晚)/.test(t || '') ? 'night' : 'day')
-  const fixed = shots.map((s, i) => {
+  const fixed: T[] = []
+  shots.forEach((s, i) => {
     const loc = canon.get(normalizeLocation(s.location, namer)) || s.location
-    const prev = i ? shots[i - 1] : null
-    const prevLoc = prev ? canon.get(normalizeLocation(prev.location, namer)) || prev.location : null
-    const change = !prev || prevLoc !== loc || band(prev.timeOfDay) !== band(s.timeOfDay)
-    return { ...s, ...(loc ? { location: loc } : {}), establishing: change, carryFromPrev: change ? false : s.carryFromPrev !== false }
+    const prev = i ? fixed[i - 1] : null
+    const prevLoc = prev ? prev.location : null
+    const place = !prev || prevLoc !== loc || band(prev.timeOfDay) !== band(s.timeOfDay)
+    // realm: the generator's value, else the scene's (same place) or the shot's own text, else reality
+    const realm = normRealm(s.realm) || (!place && prev?.realm) || realmOfText(`${s.location || ''} ${s.visual || ''}`) || 'reality'
+    const change = place || prev!.realm !== realm
+    fixed.push({ ...s, ...(loc ? { location: loc } : {}), realm, establishing: change, carryFromPrev: change ? false : s.carryFromPrev !== false })
   })
   return autoFixContinuity(fixed, namer)
 }
@@ -176,7 +183,7 @@ const lightSig = (l: unknown): string | null => {
   const key = String(o.key ?? '').trim()
   return key ? `${key}|${o.soft === false || /硬|hard/i.test(String(o.soft)) ? 'hard' : 'soft'}|${String(o.temp ?? '').trim()}` : null
 }
-const runKey = (s: RawShotLike, namer: ReturnType<typeof locationNamer>) => `${normalizeLocation(s.location, namer) || (s.location || '').trim()}|${/(夜|晚|凌晨|黄昏|傍晚)/.test(s.timeOfDay || '') ? 'night' : 'day'}`
+const runKey = (s: RawShotLike, namer: ReturnType<typeof locationNamer>) => `${normalizeLocation(s.location, namer) || (s.location || '').trim()}|${/(夜|晚|凌晨|黄昏|傍晚)/.test(s.timeOfDay || '') ? 'night' : 'day'}|${normRealm(s.realm) || 'reality'}`
 
 export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeof locationNamer>): StoryboardIssue[] {
   const out: StoryboardIssue[] = []
@@ -213,6 +220,9 @@ export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeo
     if (newRun && cast.length && !lightSig(s.lighting)) out.push({ shot: n, rule: 'lighting', detail: '本场第一镜缺 lighting（key/soft/temp）' })
     const ls = lightSig(s.lighting)
     if (!newRun && ls && runLight && ls !== runLight) out.push({ shot: n, rule: 'lighting', detail: `同场光线不一致：${ls} ≠ ${runLight}` })
+    // a missing realm is filled by autoFixStoryboard (scene / text / reality); an invalid one is an error
+    if (s.realm && !normRealm(s.realm)) out.push({ shot: n, rule: 'realm', detail: `realm「${s.realm}」无效，只能是 reality/dream/memory` })
+    if (prev && (normRealm(s.realm) || 'reality') !== (normRealm(prev.realm) || 'reality') && s.carryFromPrev) out.push({ shot: n, rule: 'realm', detail: '现实与梦境/回忆切换时不能 carryFromPrev' })
     if ((s.dialogue || '').trim() && s.voiceMode && !normVoiceMode(s.voiceMode)) out.push({ shot: n, rule: 'voiceMode', detail: `voiceMode「${s.voiceMode}」不是 onscreen/inner/offscreen` })
   })
   return out
@@ -250,6 +260,8 @@ export function autoFixContinuity<T extends RawShotLike>(shots: T[], namer: Retu
     if (side) s.cameraSide = side
     const vm = normVoiceMode(s.voiceMode)
     if (vm) s.voiceMode = vm
+    const rl = normRealm(s.realm)
+    if (rl) s.realm = rl
     if (prev && s.carryFromPrev && st) {
       const pe = normRawState(prev.endState) || {}
       const fixed = { ...st }

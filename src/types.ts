@@ -194,6 +194,8 @@ export interface Shot {
   lighting?: Record<string, unknown>
   /** generator (P0-3): onscreen | inner | offscreen */
   voiceMode?: string
+  /** generator: scene realm reality | dream | memory (look variants may switch at a realm boundary) */
+  realm?: string
 }
 
 export interface Project {

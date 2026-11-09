@@ -11,6 +11,8 @@
  * state as its wardrobe (`castCorrection.wardrobeState`; the state's wardrobeRefs entry is copied to w when missing).
  * Text naming v in a corrected shot is reported (`textConflict`): the structured timeline wins over stale text.
  * Ambiguous / text-only / continuity-only signals → no change, a `cast_consistency` warning.
+ * A run of v whose realm (realm.ts: reality / dream / memory) differs from a neighbour's is a look switch at a realm
+ * boundary — allowed, reported as `realmSwitches`, never an island warning (and so never a render hold).
  * Idempotent: a corrected shot casts w, whose timeline no longer contradicts.
  */
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
@@ -81,12 +83,15 @@ const distinctName = (c: WardrobeMeta) => {
   return n && n !== (c.baseName || '').trim() ? n : ''
 }
 
-export function checkCastConsistency(exp: VideoPipelineExport): { corrections: CastCorrection[]; warnings: CastWarning[] } {
+export interface RealmSwitch { shotId: string; episode: number; characterKey: string; cast: string; realm: string; neighbours: string[] }
+
+export function checkCastConsistency(exp: VideoPipelineExport): { corrections: CastCorrection[]; warnings: CastWarning[]; realmSwitches: RealmSwitch[] } {
   const chars = exp.characters as WardrobeMeta[]
   const g = groups(chars)
   const corrections: CastCorrection[] = []
   const warnings: CastWarning[] = []
-  if (!g.size) return { corrections, warnings }
+  const realmSwitches: RealmSwitch[] = []
+  if (!g.size) return { corrections, warnings, realmSwitches }
   // timeline state of every character at every shot (not only the cast): cast every char for the computation
   const all = chars.map((c) => c.id)
   const ws = wardrobeStates(exp.shots.map((s) => ({ ...s, characterIds: all })), chars.map((c) => ({ ...c, wardrobeCues: undefined })))
@@ -127,19 +132,30 @@ export function checkCastConsistency(exp: VideoPipelineExport): { corrections: C
       while (b < keyed.length - 1 && keyed[b + 1].cast.join() === v.id) b++
       const prev = keyed[a - 1]
       const next = keyed[b + 1]
+      // a look switch at a realm boundary (reality ↔ dream / memory scene) is the story, not an island
+      const realmOf = (y: { s: VideoPipelineShot }) => (y.s as { realm?: string }).realm || 'reality'
+      const run = keyed.slice(a, b + 1)
+      if (prev && next && run.every((y) => realmOf(y) === realmOf(run[0])) && (realmOf(prev) !== realmOf(run[0]) || realmOf(next) !== realmOf(run[0]))) {
+        realmSwitches.push({ shotId: x.s.id, episode: x.s.episode, characterKey: key, cast: v.id, realm: realmOf(x), neighbours: [`${prev.s.id}:${realmOf(prev)}`, `${next.s.id}:${realmOf(next)}`] })
+        return
+      }
       if (prev && next && prev.cast.length === 1 && next.cast.length === 1 && prev.cast[0] === next.cast[0] && prev.cast[0] !== v.id && prev.s.episode === x.s.episode && next.s.episode === x.s.episode)
         warnings.push({ shotId: x.s.id, episode: x.s.episode, characterKey: key, cast: v.id, implied: [prev.cast[0]], reason: 'continuity_island', detail: `${prev.s.id} and ${next.s.id} cast ${prev.cast[0]}` })
     })
   }
-  return { corrections, warnings }
+  return { corrections, warnings, realmSwitches }
 }
 
 const swap = (ids: string[] | undefined, from: string, to: string) => (ids ? [...new Set(ids.map((x) => (x === from ? to : x)))] : ids)
 
 /** Apply the unambiguous corrections (shots carry `castCorrection`), add `cast_consistency` warnings for the rest. */
-export function applyCastConsistency(exp: VideoPipelineExport): { exp: VideoPipelineExport; corrections: CastCorrection[]; warnings: CastWarning[] } {
-  const { corrections, warnings } = checkCastConsistency(exp)
-  if (!corrections.length && !warnings.length) return { exp, corrections, warnings }
+export function applyCastConsistency(exp0: VideoPipelineExport): { exp: VideoPipelineExport; corrections: CastCorrection[]; warnings: CastWarning[]; realmSwitches: RealmSwitch[] } {
+  const { corrections, warnings, realmSwitches } = checkCastConsistency(exp0)
+  // an island warning left by an earlier, realm-unaware pass on a shot that is now an allowed realm switch is stale
+  const allowed = new Set(realmSwitches.map((x) => x.shotId))
+  const stale = (w: VideoPipelineWarning) => w.code === 'cast_consistency' && allowed.has(w.shotId || '') && /^continuity_island\b/.test(w.message)
+  const exp = exp0.warnings.some(stale) ? { ...exp0, warnings: exp0.warnings.filter((w) => !stale(w)) } : exp0
+  if (!corrections.length && !warnings.length) return { exp, corrections, warnings, realmSwitches }
   const byShot = new Map(corrections.map((c) => [c.shotId, c]))
   const byId = new Map(exp.characters.map((c) => [c.id, c as WardrobeMeta]))
   const shots = exp.shots.map((s) => {
@@ -177,5 +193,5 @@ export function applyCastConsistency(exp: VideoPipelineExport): { exp: VideoPipe
   const newWarn: VideoPipelineWarning[] = warnings
     .map((w) => ({ episode: w.episode, shotId: w.shotId, characterId: w.cast, code: 'cast_consistency' as const, message: `${w.reason}: 镜头选角 ${w.cast}，时间线/文本指向 ${w.implied.join('/')}（${w.detail}），未自动改，请核对` }))
     .filter((w) => !seen.has(`${w.shotId}|${w.message}`))
-  return { exp: { ...exp, characters, shots, warnings: [...exp.warnings, ...newWarn] }, corrections, warnings }
+  return { exp: { ...exp, characters, shots, warnings: [...exp.warnings, ...newWarn] }, corrections, warnings, realmSwitches }
 }

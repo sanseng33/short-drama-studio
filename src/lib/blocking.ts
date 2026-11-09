@@ -504,6 +504,8 @@ export function applyStateContinuity(exp: Exp, opts: { stateGate?: StateGate } =
     if (!src) return
     const from = byId.get(src)
     if (!from || from.render === false) return
+    // state continuity never crosses a realm boundary (reality ↔ dream / memory)
+    if ((from.realm || 'reality') !== (s.realm || 'reality')) return
     carriedFrom.add(src)
     if (!s.startState || !from.endState) return
     rep.carriesChecked++

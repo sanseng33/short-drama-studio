@@ -20,6 +20,7 @@ import { applyBeatMode, type BeatModeOptions, type BeatOverrides } from './beatP
 import { applyCrossCutSplit } from './crosscutSplit'
 import { annotateShots } from './shotAnnotate'
 import { applyCastConsistency } from './castConsistency'
+import { assignRealms } from './realm'
 import type { RhythmOptions } from './rhythm'
 
 export interface PostProcessOptions {
@@ -617,7 +618,8 @@ export function postProcessExportWithStats(
   opts: PostProcessOptions = {},
 ): { exp: VideoPipelineExport; stats: PostProcessStats } {
   // look variants (shared characterKey) re-cast where the wardrobe timeline unambiguously implies the other variant
-  exp = applyCastConsistency(exp).exp
+  // (scene realm first: a look switch at a reality ↔ dream / memory boundary is allowed, not an island)
+  exp = applyCastConsistency(assignRealms(exp).exp).exp
   const style = exp.project.style
   const genre = opts.genre ?? ''
   const minSec = opts.segmentMinSec ?? SEGMENT_MIN_SEC

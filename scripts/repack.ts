@@ -24,6 +24,9 @@
  * Every output shot gets `framing` + `wardrobeState` (shotAnnotate); the run fails if any shot lacks either.
  * Characters without wardrobeTimeline / wardrobeCues get an AUTO-PROPOSED timeline from script cues
  * (report: wardrobeAutoProposed, reviewRequired) — hand data in the character JSON always wins.
+ * Scene realm (realm.ts): every shot `realm` reality|dream|memory (generator field, else inferred per scene run from the
+ *   location / shot text / look-variant qualifier); look variants may switch at a realm boundary (no continuity_island
+ *   warning / hold; report realms.realmSwitches); carries break at a realm change or a look switch.
  * Research P0-1/2/3 (blocking.ts), every pack: pack `sceneBlocking` / `sceneLighting` per `<sceneGroup>@<locationKey>`;
  *   every shot `cameraSide` master|A|B, `eyeline`, `startState` / `endState`, `lighting`; castDialogue / dialogueLines
  *   `voiceMode` onscreen|inner|offscreen (inner / offscreen: listener + speaker mouth closed); prompt 站位 line before
@@ -42,6 +45,7 @@ import { checkRhythm, stretchReview } from '../src/lib/rhythm'
 import { annotateShots, knownLimitations, MULTI_REF_LIMITATION, missingAnnotations, wardrobeReport } from '../src/lib/shotAnnotate'
 import { missingVoices } from '../src/lib/voice'
 import { applyCastConsistency } from '../src/lib/castConsistency'
+import { assignRealms } from '../src/lib/realm'
 import { applyRenderHold, shotMouthRisks } from '../src/lib/renderHold'
 import { applyRenderSkip } from '../src/lib/renderSkip'
 import { META_NOTE, metaRisks, ORPHAN_NOTE, ABSTRACT_PERF_NOTE, TIME_REPEAT_NOTE, CAPTION_NOTE, parseCaptionNote, EMPTY_SCRUB_NOTE, EMPTY_STYLE_NOTE, emptyShotRisks, speechChars, SUBJECT_CARRY_NOTE, SUBJECT_UNRESOLVED_NOTE } from '../src/lib/renderHygiene'
@@ -94,7 +98,9 @@ if (!inp) {
 }
 const pack = JSON.parse(readFileSync(inp, 'utf8')) as VideoPipelineExport
 // look variants (shared characterKey): re-cast shots whose wardrobe timeline unambiguously implies the other variant
-const cast = applyCastConsistency(pack)
+// scene realm (reality / dream / memory) first: look switches at a realm boundary are allowed, carries break there
+const realms = assignRealms(pack)
+const cast = applyCastConsistency(realms.exp)
 const splitCrossCut = flags.has('--split-crosscut') || flags.has('--split-only')
 let splits: SplitInfo[] | null = null
 let sceneCorrections: SceneCorrection[] | null = null
@@ -356,6 +362,8 @@ console.log(
       // look-variant cast checks: auto-corrected (timeline unambiguous) / left as is with a cast_consistency warning
       castCorrections: cast.corrections,
       castConsistency: cast.warnings,
+      // realm.ts: scene realm per run + look-variant switches at a realm boundary (allowed, no island / hold)
+      realms: { counts: realms.report.scenes.reduce<Record<string, number>>((a, x) => ((a[x.realm] = (a[x.realm] || 0) + x.shots.length), a), {}), characters: realms.report.characters, variantMismatches: realms.report.variantMismatches, scenes: realms.report.scenes.filter((x) => x.realm !== 'reality'), realmSwitches: cast.realmSwitches },
       characterVoices: Object.fromEntries(exp.characters.map((c) => [c.id, c.voice ?? null])),
       // FreeVideo first frame = one ref image: every 2+ person medium / full shot (generic, not hand-listed)
       knownLimitations: (() => {

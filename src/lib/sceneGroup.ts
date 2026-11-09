@@ -21,6 +21,7 @@
  *   (two unsplit shots, i.e. script order), and turnDriven when both sides of the switch carry a dialogue line of
  *   a different speaker (a genuine exchange — only a two-shot / off-screen voice could remove it).
  */
+import { lookSwitch, variantKeys } from './realm'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { locationNamer, normalizeLocation } from './locationNorm'
 
@@ -322,8 +323,12 @@ export function breakCarries(exp: VideoPipelineExport): { exp: VideoPipelineExpo
   const breaks: CarryBreak[] = []
   const byId = new Map(exp.shots.map((s) => [s.id, s] as const))
   const seen = new Set<string>()
-  const same = (a: Shot, b: Shot) => a.episode === b.episode && locationKeyOf(a) === locationKeyOf(b) && (a.timeBand || '') === (b.timeBand || '')
-  const why = (a: Shot, b: Shot) => (locationKeyOf(a) !== locationKeyOf(b) ? `地点 ${locationKeyOf(a)} → ${locationKeyOf(b)}` : `时段 ${a.timeBand} → ${b.timeBand}`)
+  // also never across a realm boundary (realm.ts) or a look-variant switch of one characterKey
+  const keyOf = variantKeys(exp.characters)
+  const realm = (s: Shot) => (s as { realm?: string }).realm || 'reality'
+  const same = (a: Shot, b: Shot) => a.episode === b.episode && locationKeyOf(a) === locationKeyOf(b) && (a.timeBand || '') === (b.timeBand || '') && realm(a) === realm(b) && !lookSwitch(a, b, keyOf)
+  const why = (a: Shot, b: Shot) =>
+    locationKeyOf(a) !== locationKeyOf(b) ? `地点 ${locationKeyOf(a)} → ${locationKeyOf(b)}` : (a.timeBand || '') !== (b.timeBand || '') ? `时段 ${a.timeBand} → ${b.timeBand}` : realm(a) !== realm(b) ? `场景层 ${realm(a)} → ${realm(b)}` : `造型切换 ${lookSwitch(a, b, keyOf)}`
   const shots = exp.shots.map((s0, i) => {
     const s: Shot = { ...s0 }
     const prev = exp.shots[i - 1]
