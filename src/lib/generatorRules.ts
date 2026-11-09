@@ -182,6 +182,7 @@ export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeo
   const out: StoryboardIssue[] = []
   let lastSide: string | null = null
   let runLight: string | null = null
+  let runCast = new Set<string>()
   shots.forEach((s, i) => {
     const n = i + 1
     const cast = s.characters || []
@@ -202,7 +203,10 @@ export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeo
     }
     const side = normCameraSide(s.cameraSide)
     if (cast.length && !side) out.push({ shot: n, rule: 'axisCross', detail: '缺 cameraSide（master/A/B）' })
-    if (side && cast.length >= 1) {
+    // the 180° line exists only between two people of the scene (solo scenes have no axis)
+    if (newRun) runCast = new Set()
+    for (const c of cast) runCast.add(c)
+    if (side && cast.length >= 1 && runCast.size >= 2) {
       if (lastSide && side !== 'master' && lastSide !== 'master' && side !== lastSide) out.push({ shot: n, rule: 'axisCross', detail: `机位 ${lastSide}→${side} 中间没有 master 镜（越轴）` })
       lastSide = side
     }
@@ -221,6 +225,7 @@ export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeo
 export function autoFixContinuity<T extends RawShotLike>(shots: T[], namer: ReturnType<typeof locationNamer>): T[] {
   let light: Record<string, unknown> | undefined
   let blocking: Record<string, unknown> | undefined
+  let runPos: Record<string, string> = {}
   const out: T[] = []
   shots.forEach((s0, i) => {
     const s = { ...s0 } as T
@@ -235,7 +240,13 @@ export function autoFixContinuity<T extends RawShotLike>(shots: T[], namer: Retu
     const en = normRawState(s.endState)
     if (st) s.startState = st as never
     if (en) s.endState = en as never
-    const side = normCameraSide(s.cameraSide)
+    let side = normCameraSide(s.cameraSide)
+    // B = the camera really crossed the line (positions mirrored); B with the run's own sides is a shot / reverse-shot → A
+    if (newRun) runPos = {}
+    const bp = (blocking?.positions || {}) as Record<string, unknown>
+    for (const [c, v] of Object.entries(bp)) if (!(c in runPos) && normSide(v)) runPos[c] = normSide(v)!
+    if (side === 'B' && st && Object.entries(st).every(([c, x]) => !runPos[c] || x.pos === runPos[c] || x.pos === 'center')) side = 'A'
+    if (side !== 'B' && st) for (const [c, x] of Object.entries(st)) if (!(c in runPos) && x.pos !== 'center') runPos[c] = x.pos
     if (side) s.cameraSide = side
     const vm = normVoiceMode(s.voiceMode)
     if (vm) s.voiceMode = vm

@@ -273,6 +273,8 @@ export interface BlockingReport {
   axisGate: AxisGate
   axisCross: AxisCross[]
   eyelineFixes: { shotId: string; characterId: string; from: string; to: string }[]
+  /** generator cameraSide B without mirrored positions (a shot / reverse shot) → A */
+  cameraSideFixes: { shotId: string; from: CameraSide; to: CameraSide }[]
   lightingConflicts: { shotId: string; scene: string; detail: string }[]
   generatorStates: number
   inferredStates: number
@@ -295,7 +297,7 @@ export function applyBlocking(exp0: VideoPipelineExport, opts: { axisGate?: Axis
     if (!byScene.has(k)) (byScene.set(k, []), sceneOrder.push(k))
     byScene.get(k)!.push(s)
   }
-  const rep: BlockingReport = { scenes: byScene.size, generatorBlocking: 0, axisGate, axisCross: [], eyelineFixes: [], lightingConflicts: [], generatorStates: 0, inferredStates: 0 }
+  const rep: BlockingReport = { scenes: byScene.size, generatorBlocking: 0, axisGate, axisCross: [], eyelineFixes: [], cameraSideFixes: [], lightingConflicts: [], generatorStates: 0, inferredStates: 0 }
   const sceneBlocking: Record<string, SceneBlocking> = {}
   const sceneLighting: Record<string, SceneLighting> = {}
   for (const key of sceneOrder) {
@@ -349,7 +351,13 @@ export function applyBlocking(exp0: VideoPipelineExport, opts: { axisGate?: Axis
     let lastSide: { side: CameraSide; id: string } | null = null
     for (const s of list) {
       const on = onscreenIds(s)
-      const genSide = s.splitFrom ? null : normCameraSide(s.cameraSide)
+      let genSide = s.splitFrom ? null : normCameraSide(s.cameraSide)
+      // B only when the generator's own start state mirrors the scene sides (a real line crossing); else it is a reverse shot → A
+      if (genSide === 'B') {
+        const gs = normalizeState(s.startState, idOf)
+        const mirrored = multi && !!gs && on.some((id) => gs[id] && positions[id] !== 'center' && gs[id].pos !== 'center' && gs[id].pos !== positions[id])
+        if (!mirrored) (rep.cameraSideFixes.push({ shotId: s.id, from: 'B', to: 'A' }), (genSide = 'A'))
+      }
       const allCast = multi && ids.every((id) => on.includes(id))
       const side: CameraSide = genSide || (!on.length || WIDE.test(s.size || '') || allCast ? 'master' : 'A')
       s.cameraSide = side

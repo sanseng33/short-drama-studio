@@ -400,6 +400,7 @@ console.log(
         axisGate,
         axisCross: blocking.report.axisCross,
         eyelineFixes: blocking.report.eyelineFixes,
+        cameraSideFixes: blocking.report.cameraSideFixes,
         cameraSide: exp.shots.reduce<Record<string, number>>((a, s) => ((a[String(s.cameraSide)] = (a[String(s.cameraSide)] || 0) + 1), a), {}),
         cameraAnchorTrims: continuity.report.cameraAnchorTrims,
       },

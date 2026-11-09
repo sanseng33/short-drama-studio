@@ -70,7 +70,8 @@ t('P0-2 blocking: positions from the locked cast, facing toward the partner, eye
 })
 
 t('P0-2 axis: A → B without a master is axisCross (warn); hold gate holds the shot; a master in between clears it', () => {
-  const shots = () => [SH({ id: '1', size: '全景' }), SH({ id: '2', characterIds: ['a'], cameraSide: 'A' }), SH({ id: '3', characterIds: ['b'], cameraSide: 'B' })]
+  const MIR = { 乙: { pos: 'left', facing: 'right', pose: '站', gaze: '甲', hands: '空手' } }
+  const shots = () => [SH({ id: '1', size: '全景' }), SH({ id: '2', characterIds: ['a'], cameraSide: 'A' }), SH({ id: '3', characterIds: ['b'], cameraSide: 'B', startState: MIR })]
   const w = run(shots())
   assert.deepEqual(w.a.report.axisCross.map((x) => [x.prevShotId, x.shotId, x.from, x.to]), [['2', '3', 'A', 'B']])
   assert.ok(!w.shots[2].hold)
@@ -78,8 +79,12 @@ t('P0-2 axis: A → B without a master is axisCross (warn); hold gate holds the 
   const h = run(shots(), { axisGate: 'hold' })
   assert.ok(h.shots[2].hold!.reason.some((r: string) => r.startsWith('越轴')))
   assert.equal(h.shots[2].render, false)
-  const ok = run([SH({ id: '1', size: '全景' }), SH({ id: '2', characterIds: ['a'], cameraSide: 'A' }), SH({ id: '3', size: '全景', cameraSide: 'master' }), SH({ id: '4', characterIds: ['b'], cameraSide: 'B' })])
+  const ok = run([SH({ id: '1', size: '全景' }), SH({ id: '2', characterIds: ['a'], cameraSide: 'A' }), SH({ id: '3', size: '全景', cameraSide: 'master' }), SH({ id: '4', characterIds: ['b'], cameraSide: 'B', startState: MIR })])
   assert.deepEqual(ok.a.report.axisCross, [])
+  // generator B on a plain reverse shot (sides not mirrored) is a shot / reverse-shot → A, no crossing, eyeline not flipped
+  const rv = run([SH({ id: '1', size: '全景' }), SH({ id: '2', characterIds: ['a'], cameraSide: 'A' }), SH({ id: '3', characterIds: ['b'], cameraSide: 'B' })])
+  assert.deepEqual(rv.a.report.axisCross, []); assert.deepEqual(rv.a.report.cameraSideFixes, [{ shotId: '3', from: 'B', to: 'A' }])
+  assert.equal(rv.shots[2].cameraSide, 'A'); assert.deepEqual(rv.shots[2].eyeline, { b: { dir: 'left', target: 'a' } })
 })
 
 t('P0-1 states: inferred from text, transition backfills the defaulted earlier state, carry continuity holds', () => {
@@ -188,8 +193,15 @@ t('generator: prompt + compliance block carry the P0 fields; self-check finds st
   const rules = (xs: RawShotLike[]) => validateStoryboard(xs, ctx).map((x) => x.rule)
   assert.deepEqual(rules([base({}), base({ carryFromPrev: true })]), [])
   assert.ok(rules([base({ endState: st('坐') }), base({ carryFromPrev: true })]).includes('stateJump'))
-  assert.ok(rules([base({}), base({ cameraSide: 'B' })]).includes('axisCross'))
-  assert.ok(!rules([base({}), base({ cameraSide: 'master' }), base({ cameraSide: 'B' })]).includes('axisCross'))
+  const two = (p: Partial<RawShotLike>) => base({ characters: ['甲', '乙'], startState: { ...st('站'), 乙: { pos: 'right', facing: 'left', pose: '站', gaze: 'front', hands: '空手' } }, endState: { ...st('站'), 乙: { pos: 'right', facing: 'left', pose: '站', gaze: 'front', hands: '空手' } }, ...p })
+  assert.ok(rules([two({}), two({ cameraSide: 'B' })]).includes('axisCross'))
+  assert.ok(!rules([two({}), two({ cameraSide: 'master' }), two({ cameraSide: 'B' })]).includes('axisCross'))
+  assert.ok(!rules([base({}), base({ cameraSide: 'B' })]).includes('axisCross'), 'a solo scene has no axis')
+  // auto-fix: B with the run's own sides is a reverse shot → A; mirrored sides stay B
+  const fx = autoFixStoryboard([two({ cameraSide: 'master' }), two({ cameraSide: 'B' })], ctx)
+  assert.equal(fx[1].cameraSide, 'A')
+  const mir = { 甲: { pos: 'right', facing: 'left', pose: '站', gaze: 'front', hands: '空手' }, 乙: { pos: 'left', facing: 'right', pose: '站', gaze: 'front', hands: '空手' } }
+  assert.equal(autoFixStoryboard([two({ cameraSide: 'master' }), two({ cameraSide: 'B', startState: mir, endState: mir })], ctx)[1].cameraSide, 'B')
   assert.ok(rules([base({}), base({ lighting: { key: '顶灯', soft: false, temp: '冷' } })]).includes('lighting'))
   assert.ok(rules([base({ startState: undefined })]).includes('state'))
   // auto-fix: carry copies the previous end state; the run's lighting is locked
@@ -216,7 +228,7 @@ t('export: generator hints pass through with character ids (states, eyeline, blo
 
 t('repack CLI: P0 report sections, every shot carries the fields; --axis-gate fail exits 9 on a crossing; old scripts get inferred fields', () => {
   const dir = mkdtempSync(join(tmpdir(), 'blk-'))
-  const shots = [SH({ id: 's1-1', size: '全景', visual: '甲和乙在客厅' }), SH({ id: 's1-2', characterIds: ['a'], cameraSide: 'A' }), SH({ id: 's1-3', characterIds: ['b'], cameraSide: 'B' })].map((s) => {
+  const shots = [SH({ id: 's1-1', size: '全景', visual: '甲和乙在客厅' }), SH({ id: 's1-2', characterIds: ['a'], cameraSide: 'A' }), SH({ id: 's1-3', characterIds: ['b'], cameraSide: 'B', startState: { b: { pos: 'left', facing: 'right', pose: '站', gaze: 'a', hands: '空手' } } })].map((s) => {
     const { dialogueLines: _d, ...rest } = s as any
     return { ...rest, prompt: '甲和乙在客厅对视', visual: '甲和乙在客厅对视', action: '甲看向乙' }
   })
