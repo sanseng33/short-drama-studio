@@ -24,6 +24,7 @@ import { emotionWords, splitVoice, stripVoiceAdverbs, visibleForEmotion } from '
 export const PERFORMANCE_NOTE = '表演规则：'
 import { clearMouthClause, MOUTH_BLOCK_RE } from './mouthOcclusion'
 import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, dialogueSegmentNeeds, SHOT_TARGET_SEC, type DialoguePad, type SpeechRate } from './dialogueTiming'
+import { promptScaleMode, trimOutOfScale } from './shotScale'
 
 export type BeatMode = 'off' | 'speed'
 export type BeatSpeed = '快' | '慢' | '恢复常速'
@@ -648,6 +649,11 @@ function sceneHeader(s: VideoPipelineShot): string {
     if (bestSub) head = head.replace(bestSub, labelPlace)
   }
   if (s.timeOfDay && !head.includes(s.timeOfDay.trim()) && !/(早|晨|午|夜|晚|白天|黄昏|傍晚)/.test(head)) head = `${s.timeOfDay.trim()}，${head}`
+  const mode = promptScaleMode('medium', (s.characterIds || []).length === 1 ? 1 : (s.characterIds || []).length, s.size, s.camera)
+  if (mode !== 'off') {
+    const t = trimOutOfScale(head, mode)
+    head = t.text.trim() || [s.timeOfDay?.trim(), labelPlace].filter(Boolean).join('，')
+  }
   return head.replace(/^[，\s]+|[，\s]+$/g, '')
 }
 

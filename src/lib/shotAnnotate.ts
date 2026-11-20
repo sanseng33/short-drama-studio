@@ -5,6 +5,8 @@
  *     derived from `size` (first shot-size word of `camera` when size is empty) + on-screen dialogue:
  *     近景/特写 (incl. 中近景, 近景特写) with a non-voiceOnly line spoken by an on-screen cast member → closeup_dialogue;
  *     全景/大全景/中全景/远景 → full; everything else → medium. Never keyed on shot ids.
+ *     A solo 近景/特写 with nobody speaking stays `medium` (not a lip-sync close-up). Its 镜头 / 景别 lines still
+ *     follow `size`, so the prompt is not rewritten into 中景.
  *
  *   wardrobeState: { [characterId]: state }
  *     per character in characterIds, carried forward in pack order:
@@ -41,6 +43,7 @@ import {
   withFirstLineNoText,
 } from './renderHygiene'
 import { autoVoices, withCharacterIdentity, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
+import { applyScaleText, closeFramingWords, lockCloseCamera, promptScaleMode, scaleTrimNotes, trimOutOfScale } from './shotScale'
 
 export type Framing = 'closeup_dialogue' | 'medium' | 'full' | 'empty'
 export const FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full', 'empty']
@@ -438,6 +441,9 @@ export interface RenderContext {
   onscreen: string[]
   wardrobeState: Record<string, string>
   chars: WardrobeMeta[]
+  /** storyboard size / camera; a solo close shot keeps that scale in 镜头 and 景别 */
+  size?: string
+  camera?: string
 }
 
 /**
@@ -480,7 +486,14 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   p = mo.prompt
   notes.push(...mo.notes)
   if (ctx && n >= 2) notes.push(...unclearPronouns(p).map((c) => `${UNCLEAR_PRONOUN_NOTE}${c}`))
-  p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${normalizeCamera(cam, framing, n)}`)
+  const scaleMode = ctx ? promptScaleMode(framing, n, ctx.size, ctx.camera) : 'off'
+  if (scaleMode !== 'off') {
+    const trimmed = trimOutOfScale(p, scaleMode)
+    p = trimmed.text
+    notes.push(...scaleTrimNotes(trimmed))
+  }
+  const soloClose = scaleMode === 'close' && framing !== 'closeup_dialogue'
+  p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${soloClose ? lockCloseCamera(cam, ctx?.size, ctx?.camera) : normalizeCamera(cam, framing, n)}`)
   // empty shot: no skin / face style words, no wardrobe limits (nothing to wear them)
   if (framing === 'empty') {
     const es = scrubEmptyStyle(p)
@@ -510,7 +523,8 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   const tl = dropRepeatedTimeLead(cw.prompt)
   p = withFirstLineNoText(tl.prompt)
   notes.push(...tl.notes)
-  const tail = [tp.negLine, `景别：${framingWords(framing, n)}。`, BAND_NEGATIVE, NO_TEXT_CONSTRAINT].filter(Boolean).join('\n')
+  const words = soloClose ? closeFramingWords(ctx?.size, ctx?.camera) : framingWords(framing, n)
+  const tail = [tp.negLine, `景别：${words}。`, BAND_NEGATIVE, NO_TEXT_CONSTRAINT].filter(Boolean).join('\n')
   return { prompt: `${p}\n${tail}`, notes }
 }
 function framingWords(f: Framing, n: number): string {
@@ -699,7 +713,11 @@ export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Par
     shots: e.shots.map((s, i) => {
       const framing = framingOf(s, chars)
       const onscreen = onscreenCast(s, chars)
-      const r = renderPrompt(s.prompt, framing, { onscreen, wardrobeState: ws[i], chars })
+      const scaleMode = promptScaleMode(framing, onscreen.length, s.size, s.camera)
+      const r = renderPrompt(s.prompt, framing, { onscreen, wardrobeState: ws[i], chars, size: s.size, camera: s.camera })
+      const actionField = applyScaleText(s.action || '', scaleMode)
+      const visualField = applyScaleText(s.visual || '', scaleMode)
+      for (const note of [...actionField.notes, ...visualField.notes]) if (!r.notes.includes(note)) r.notes.push(note)
       const cc = s.castCorrection
       if (cc) {
         // re-cast shot: the upstream subject text describes the replaced variant → solo subject from the pack data
@@ -729,6 +747,8 @@ export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Par
         ]),
         audio: s.audio ?? null,
         prompt: r.prompt,
+        ...(actionField.text !== (s.action || '') ? { action: actionField.text } : {}),
+        ...(visualField.text !== (s.visual || '') ? { visual: visualField.text } : {}),
       }
       if (review.length) out.renderReview = review
       else delete out.renderReview

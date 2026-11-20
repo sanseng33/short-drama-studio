@@ -29,6 +29,7 @@ import { ABSTRACT_PERF_NOTE, dropRepeatedTimeLead, rewriteAbstractPerformance, T
 import { visibleForEmotion } from '../src/lib/emotionVisual'
 import { BAND_NEGATIVE, carrySegmentSubjects, emptyShotRisks, FIRST_LINE_NO_TEXT, rewriteCaptionWords, scrubEmptyStyle, speechChars, withFirstLineNoText } from '../src/lib/renderHygiene'
 import { isPropNegLine, qualifyTextProps } from '../src/lib/textProps'
+import { closeFramingWords, lockCloseCamera, trimOutOfScale } from '../src/lib/shotScale'
 
 let pass = 0
 const t = (name: string, fn: () => void) => {
@@ -234,6 +235,32 @@ t('finalizePrompt: no 【】, pacing words, framing words + fixed no-text line o
   assert.ok(finalizePrompt('镜头：特写空镜。', 'empty').includes('景别：空镜，画面中没有人物。'))
   assert.ok(finalizePrompt('x', 'full').includes('景别：全景。'))
   assert.equal(closeupCamera('侧身中景，固定'), `${CLOSEUP_CAMERA}，固定`)
+})
+
+t('close scale: a 近景 keeps 松手, drops the step / table sweep / second room, and the 景别 line stays close', () => {
+  const src = '竖屏9:16。晨，餐厅与楼梯口相连。主体：17岁东亚少年。\n0–3秒，正常节奏：他松手退半步，视线扫过桌面。\n镜头：远景，拉远。'
+  const ctx = { onscreen: ['a1'], wardrobeState: { a1: 'default' }, chars, size: '近景', camera: '近景' }
+  const r = renderPrompt(src, 'medium', ctx)
+  assert.ok(r.prompt.includes('他松手'), r.prompt)
+  assert.ok(!r.prompt.includes('退半步'), r.prompt)
+  assert.ok(!r.prompt.includes('扫过桌面'), r.prompt)
+  assert.ok(!r.prompt.includes('相连'), r.prompt)
+  assert.ok(r.prompt.includes(`镜头：${lockCloseCamera('远景，拉远', '近景')}`), r.prompt)
+  assert.ok(r.prompt.includes(`景别：${closeFramingWords('近景')}`), r.prompt)
+  assert.ok(!r.prompt.includes('景别：中景'), r.prompt)
+  assert.ok(r.notes.some((n) => n.includes('退半步')) && r.notes.some((n) => n.includes('相连')), r.notes.join('\n'))
+  assert.equal(renderPrompt(r.prompt, 'medium', ctx).prompt, r.prompt, 'idempotent')
+  const stand = trimOutOfScale('0–3秒，正常节奏：他猛地站起。', 'close')
+  assert.ok(stand.text.includes('站起') && stand.kept.length === 1, JSON.stringify(stand))
+  const med = renderPrompt('竖屏9:16。餐厅与楼梯口相连。\n0–3秒，正常节奏：他松手退半步。\n镜头：中景。', 'medium', { ...ctx, size: '中景', camera: '中景' })
+  assert.ok(med.prompt.includes('退半步') && !med.prompt.includes('相连'), med.prompt)
+  assert.ok(med.prompt.includes('景别：中景'), med.prompt)
+  const wide = renderPrompt('竖屏9:16。餐厅与楼梯口相连。镜头：全景。', 'full', { ...ctx, size: '全景', camera: '全景' })
+  assert.ok(wide.prompt.includes('相连'), wide.prompt)
+  const ann = annotateShots(pack([SH({ id: 'c', size: '近景', camera: '近景', action: '松手退半步', visual: '餐厅与楼梯口相连，他坐在桌边', prompt: src })]))
+  assert.equal(ann.shots[0].action, '松手')
+  assert.ok(!ann.shots[0].visual.includes('相连') && ann.shots[0].visual.includes('他坐在桌边'), ann.shots[0].visual)
+  assert.equal(ann.shots[0].framing, 'medium')
 })
 
 t('seed: first 31 bits of sha1(projectId:shotId), stable and integer', () => {
