@@ -6,7 +6,6 @@
 import { readFileSync } from 'node:fs'
 import { isNearDup, splitClauses, BEAT_LINE_RE } from '../src/lib/beatPrompt'
 import { CLOSEUP_CAMERA, castDescription, onscreenCast, unclearPronouns, type WardrobeMeta } from '../src/lib/shotAnnotate'
-import { promptScaleMode } from '../src/lib/shotScale'
 import type { VideoPipelineExport } from '../src/lib/videoExport'
 
 const GARMENTS = /夹克|卫衣|校服|衬衫|西装|T恤|外套|连衣裙|毛衣|风衣|大衣|睡衣|背心|制服|围裙|运动服/g
@@ -45,17 +44,19 @@ export function scanPack(e: VideoPipelineExport): { id: string; kind: string; de
     const headCount = /空镜/.test(head) ? 0 : /单人/.test(head) ? 1 : /双人/.test(head) ? 2 : /多人/.test(head) ? 3 : -1
     if (headCount >= 0 && Math.min(headCount, 3) !== Math.min(n, 3)) add(s.id, 'framing', `header says ${headCount} people, ${n} on screen`)
     const sizes = cam.match(SIZE) || []
-    const scaleMode = promptScaleMode(s.framing || '', n, s.size, s.camera)
-    const soloClose = scaleMode === 'close' && s.framing !== 'closeup_dialogue'
+    const geometric = s.framing === 'closeup' || s.framing === 'extreme_closeup'
     if (s.framing === 'closeup_dialogue' && !cam.startsWith(CLOSEUP_CAMERA)) add(s.id, 'camera', `closeup without close-up camera wording: ${cam}`)
-    if (s.framing === 'medium' && !soloClose && sizes.some((x) => !/^(?:中景|中近景)$/.test(x))) add(s.id, 'camera', `medium with ${sizes.join('/')}: ${cam}`)
-    if (soloClose && sizes.some((x) => !/近景|特写/.test(x))) add(s.id, 'camera', `close size with ${sizes.join('/')}: ${cam}`)
+    if (s.framing === 'closeup' && sizes.some((x) => x !== '近景')) add(s.id, 'camera', `closeup with ${sizes.join('/')}: ${cam}`)
+    if (s.framing === 'extreme_closeup' && sizes.some((x) => !/特写/.test(x))) add(s.id, 'camera', `extreme close-up with ${sizes.join('/')}: ${cam}`)
+    if (s.framing === 'medium_closeup' && sizes.some((x) => x !== '中近景')) add(s.id, 'camera', `medium-close with ${sizes.join('/')}: ${cam}`)
+    if (s.framing === 'medium' && sizes.some((x) => !/^(?:中景|中近景)$/.test(x))) add(s.id, 'camera', `medium with ${sizes.join('/')}: ${cam}`)
     if (s.framing === 'medium' && n >= 2 && !/双人中景|多人中景/.test(cam)) add(s.id, 'camera', `medium two-shot not read as two-shot: ${cam}`)
     if (s.framing === 'full' && sizes.some((x) => !/全景|远景/.test(x))) add(s.id, 'camera', `full with ${sizes.join('/')}: ${cam}`)
-    if (s.framing !== 'closeup_dialogue' && !soloClose && cam.includes(CLOSEUP_CAMERA)) add(s.id, 'camera', `close-up wording on ${s.framing}`)
-    if (soloClose) {
+    if (s.framing !== 'closeup_dialogue' && !geometric && cam.includes(CLOSEUP_CAMERA)) add(s.id, 'camera', `close-up wording on ${s.framing}`)
+    if (geometric) {
       const jb = s.prompt.match(/景别：([^。\n]*)/)?.[1] || ''
-      if (jb && !/^(?:近景|特写)/.test(jb)) add(s.id, 'camera', `景别与近景/特写不一致：${jb}`)
+      const want = s.framing === 'extreme_closeup' ? /^特写/ : /^近景/
+      if (jb && !want.test(jb)) add(s.id, 'camera', `景别与 ${s.framing} 不一致：${jb}`)
     }
     // ---- people vs 无人物
     const body = lines.slice(1).filter((l) => !/^(?:风格|限制|景别|光线)/.test(l)).join('\n')

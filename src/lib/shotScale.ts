@@ -48,11 +48,31 @@ export function closeWord(size?: string, camera?: string): '近景' | '特写' {
  * every other non-wide shot: drop two-place layout only (a step is still visible in a 中景).
  */
 export function promptScaleMode(framing: string, onscreen: number, size?: string, camera?: string): ScaleMode {
+  if (framing === 'closeup' || framing === 'extreme_closeup' || framing === 'closeup_dialogue') return 'close'
+  if (framing === 'medium_closeup') return 'medium'
+  if (framing === 'full' || framing === 'empty') return 'off'
   const scale = scaleOf(size, camera)
-  if (scale === 'wide' || scale === 'unknown' || framing === 'full') return 'off'
-  if (scale === 'close' && onscreen === 1 && framing !== 'empty') return 'close'
-  if (scale === 'close' || scale === 'medium') return 'medium'
-  return 'off'
+  if (scale === 'wide' || scale === 'unknown') return 'off'
+  // a pack that still says framing=medium on a one-person 近景/特写: treat the picture as close
+  if (framing === 'medium' && scale === 'close' && onscreen === 1) return 'close'
+  return 'medium'
+}
+
+/** Replace the shot-size word, leaving angle and movement. No size word: prefix `word`. */
+export function lockSizeWord(cam: string, word: string): string {
+  let c = cam || ''
+  const re = new RegExp(SIZE_WORD_RE.source, 'g')
+  if (!re.test(c)) c = `${word}，${c}`
+  else {
+    re.lastIndex = 0
+    let first = true
+    c = c.replace(re, () => {
+      if (!first) return ''
+      first = false
+      return word
+    })
+  }
+  return c.replace(/[，,]{2,}/g, '，').replace(/^[，,\s]+|[，,\s]+$/g, '')
 }
 
 export interface ScaleHit {

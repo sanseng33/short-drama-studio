@@ -128,8 +128,14 @@ export interface VideoPipelineShot {
   sceneKeyframe?: string | null
   /** sceneGroup.breakCarries: first shot of its (sceneGroup, locationKey) or a broken carry → render from the sceneKeyframe */
   establishing?: boolean
-  /** renderer framing (shotAnnotate.framingOf): closeup_dialogue = 近景/特写 + on-screen dialogue; set on every shot */
-  framing?: 'closeup_dialogue' | 'medium' | 'full' | 'empty'
+  /**
+   * Geometric scale, plus the lip-sync class.
+   * closeup_dialogue = one person, 近景/特写/中近景, on-screen line (legacy map → bprime).
+   * closeup / extreme_closeup / medium_closeup = the same scales with nobody speaking (engine freevideo;
+   *   h3 multiref closeup_framings and the scale guard already list these; the legacy framing_engine map does not).
+   * medium / full / empty = the legacy freevideo classes. Two or more people are medium or full.
+   */
+  framing?: 'closeup_dialogue' | 'closeup' | 'extreme_closeup' | 'medium_closeup' | 'medium' | 'full' | 'empty'
   /**
    * stable render seed: first 31 bits of sha1(`${projectId}:${shotId}`) (shotAnnotate.shotSeed), 0 … 2^31-1.
    * The runner retries a failed / rejected render with seed + attempt (attempt = 1, 2, …).

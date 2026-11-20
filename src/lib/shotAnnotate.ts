@@ -1,12 +1,16 @@
 /**
  * Renderer-facing per-shot annotations (every shot of every pack carries both):
  *
- *   framing: 'closeup_dialogue' | 'medium' | 'full'
- *     derived from `size` (first shot-size word of `camera` when size is empty) + on-screen dialogue:
- *     近景/特写 (incl. 中近景, 近景特写) with a non-voiceOnly line spoken by an on-screen cast member → closeup_dialogue;
- *     全景/大全景/中全景/远景 → full; everything else → medium. Never keyed on shot ids.
- *     A solo 近景/特写 with nobody speaking stays `medium` (not a lip-sync close-up). Its 镜头 / 景别 lines still
- *     follow `size`, so the prompt is not rewritten into 中景.
+ *   framing: geometric scale, with dialogue kept as its own value.
+ *     empty: nobody on screen.
+ *     full: 全景/远景.
+ *     2+ people: medium (a two-shot is not a single close-up).
+ *     one person + 近景/特写/中近景 + an on-screen line → closeup_dialogue (lip-sync class; engine stays on the
+ *       legacy map, bprime). A silent shot is NOT labelled closeup_dialogue.
+ *     one person, nobody speaking: 特写 → extreme_closeup, 中近景 → medium_closeup, 近景 → closeup.
+ *       Those three are already read by h3 multiref / scale guard. They are not in the legacy
+ *       framing→engine map, so the export also sets engine=freevideo when the shot did not set one.
+ *     else medium. Never keyed on shot ids.
  *
  *   wardrobeState: { [characterId]: state }
  *     per character in characterIds, carried forward in pack order:
@@ -18,7 +22,8 @@
  *          the state from that shot on.
  *     All show data lives in the character JSON; this module has no show strings.
  *
- * An optional `engine` field on a shot is passed through untouched. Pure + idempotent.
+ * An explicit `engine` is passed through. A missing engine on closeup / extreme_closeup / medium_closeup
+ * is filled with freevideo (the legacy framing map does not list those values). Pure + idempotent.
  */
 import { EMOTION_VISIBLE } from './emotionVocab'
 import { HOLD_EXPRESSION, parseRewriteNote, rewriteNote, visibleForEmotion, visualizePrompt } from './emotionVisual'
@@ -43,10 +48,18 @@ import {
   withFirstLineNoText,
 } from './renderHygiene'
 import { autoVoices, withCharacterIdentity, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
-import { applyScaleText, closeFramingWords, lockCloseCamera, promptScaleMode, scaleTrimNotes, trimOutOfScale } from './shotScale'
+import { applyScaleText, closeFramingWords, lockCloseCamera, lockSizeWord, promptScaleMode, scaleTrimNotes, trimOutOfScale } from './shotScale'
 
-export type Framing = 'closeup_dialogue' | 'medium' | 'full' | 'empty'
-export const FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full', 'empty']
+export type Framing = 'closeup_dialogue' | 'closeup' | 'extreme_closeup' | 'medium_closeup' | 'medium' | 'full' | 'empty'
+/** values the h3 contract map routes by themselves (closeup_dialogue→bprime, the rest→freevideo) */
+export const LEGACY_FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full', 'empty']
+/**
+ * Geometric labels the runner already understands (multiref closeup_framings, PR16 tight/wider lists)
+ * but which are absent from framing_engine. Export sets engine=freevideo so route_engine does not
+ * reject them as unknown framing.
+ */
+export const FREEVIDEO_FRAMINGS: Framing[] = ['closeup', 'extreme_closeup', 'medium_closeup']
+export const FRAMINGS: Framing[] = [...LEGACY_FRAMINGS, ...FREEVIDEO_FRAMINGS]
 
 export interface WardrobeTimelineEntry {
   state: string
@@ -128,16 +141,26 @@ export function onscreenCast(s: ShotLike & { visual?: string }, chars: { id: str
 }
 
 /**
- * empty: nobody on screen; closeup_dialogue: exactly ONE on-screen character, 近景/特写 size and an on-screen line;
- * 2+ characters are only medium / full; 全景/远景 → full; else medium.
+ * Geometric scale plus the dialogue class. Silent close-ups are closeup / extreme_closeup / medium_closeup,
+ * never closeup_dialogue. Two or more people stay medium / full.
  */
 export function framingOf(s: ShotLike & { visual?: string }, chars: { id: string; name?: string; baseName?: string }[] = []): Framing {
   const on = onscreenCast(s, chars)
   if (!on.length) return 'empty'
   const size = (s.size || '').match(SIZE_RE)?.[0] || (s.camera || '').match(SIZE_RE)?.[0] || ''
-  if (on.length === 1 && CLOSE_RE.test(size) && hasOnscreenDialogue(s)) return 'closeup_dialogue'
   if (FULL_RE.test(size)) return 'full'
+  if (on.length !== 1) return 'medium'
+  if (CLOSE_RE.test(size) && hasOnscreenDialogue(s)) return 'closeup_dialogue'
+  if (size === '近景特写' || size === '特写' || size === '大特写') return 'extreme_closeup'
+  if (size === '中近景') return 'medium_closeup'
+  if (size === '近景') return 'closeup'
   return 'medium'
+}
+
+/** engine the current h3 contract map can route. Legacy framings leave a missing engine unset. */
+export function routeEngine(framing: Framing, existing?: string): string | undefined {
+  if (existing) return existing
+  return FREEVIDEO_FRAMINGS.includes(framing) ? 'freevideo' : undefined
 }
 
 // ---------------- seed ----------------
@@ -212,6 +235,9 @@ export const CLOSEUP_FRAMING_GUARD = '镜头全程保持胸口以上近景，不
 const PUSH_IN = /推|拉近|变焦|逼近/
 const FRAMING_WORDS: Record<Framing, string> = {
   closeup_dialogue: `${CLOSEUP_CAMERA}，单人，${CLOSEUP_FRAMING_GUARD}`,
+  closeup: '近景（胸口以上），保持这个景别，人物不出画，不把镜头外的另一处空间拍进来',
+  extreme_closeup: '特写，保持这个景别，人物不出画，不把镜头外的另一处空间拍进来',
+  medium_closeup: '中近景，保持这个景别，不改成更远的机位',
   medium: '中景',
   full: '全景',
   empty: '空镜，画面中没有人物',
@@ -261,6 +287,8 @@ const GROUP_RE = /双人|两人|三人|多人/
 export function normalizeCamera(cam: string, framing: Framing, onscreen: number): string {
   cam = cam.replace(/^[，,、\s]+/, '')
   if (framing === 'closeup_dialogue') return closeupCamera(cam)
+  if (framing === 'closeup' || framing === 'extreme_closeup') return lockCloseCamera(cam)
+  if (framing === 'medium_closeup') return lockSizeWord(cam, '中近景')
   if (framing === 'empty') return cam
   const group = onscreen >= 3 ? '多人' : onscreen === 2 ? '双人' : ''
   const canon = `${group}${framing === 'medium' ? '中景' : '全景'}`
@@ -492,8 +520,13 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
     p = trimmed.text
     notes.push(...scaleTrimNotes(trimmed))
   }
-  const soloClose = scaleMode === 'close' && framing !== 'closeup_dialogue'
-  p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${soloClose ? lockCloseCamera(cam, ctx?.size, ctx?.camera) : normalizeCamera(cam, framing, n)}`)
+  const geometricClose = framing === 'closeup' || framing === 'extreme_closeup' || (framing === 'medium' && scaleMode === 'close')
+  const camFor = (cam: string) => {
+    if (geometricClose) return lockCloseCamera(cam, ctx?.size, ctx?.camera)
+    if (framing === 'medium_closeup') return lockSizeWord(cam, '中近景')
+    return normalizeCamera(cam, framing, n)
+  }
+  p = p.replace(/镜头[：:]([^。\n]*)/, (_m, cam: string) => `镜头：${camFor(cam)}`)
   // empty shot: no skin / face style words, no wardrobe limits (nothing to wear them)
   if (framing === 'empty') {
     const es = scrubEmptyStyle(p)
@@ -523,7 +556,11 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   const tl = dropRepeatedTimeLead(cw.prompt)
   p = withFirstLineNoText(tl.prompt)
   notes.push(...tl.notes)
-  const words = soloClose ? closeFramingWords(ctx?.size, ctx?.camera) : framingWords(framing, n)
+  const words = geometricClose
+    ? closeFramingWords(ctx?.size, ctx?.camera)
+    : framing === 'medium_closeup'
+      ? '中近景，保持这个景别，不改成更远的机位'
+      : framingWords(framing, n)
   const tail = [tp.negLine, `景别：${words}。`, BAND_NEGATIVE, NO_TEXT_CONSTRAINT].filter(Boolean).join('\n')
   return { prompt: `${p}\n${tail}`, notes }
 }
@@ -747,6 +784,7 @@ export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Par
         ]),
         audio: s.audio ?? null,
         prompt: r.prompt,
+        ...(routeEngine(framing, s.engine) ? { engine: routeEngine(framing, s.engine) } : {}),
         ...(actionField.text !== (s.action || '') ? { action: actionField.text } : {}),
         ...(visualField.text !== (s.visual || '') ? { visual: visualField.text } : {}),
       }
