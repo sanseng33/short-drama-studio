@@ -91,6 +91,26 @@ const main = async () => {
     assert.deepEqual(cs.map((c) => c.lookalikeOf), [null, 'a', 'a'])
     assert.notDeepEqual(cs[0].voice, cs[1].voice)
   })
+  await t('framing: close shot rejects a step, a table sweep and a two-place link; a wide shot and an in-frame 松手 pass', () => {
+    const close = { size: '近景', camera: '近景' }
+    const wide = { size: '全景', camera: '全景', establishing: true }
+    assert.ok(rules([ok({ ...close, action: '松手退半步' })]).includes('framing'))
+    assert.ok(rules([ok({ ...close, action: '视线扫过桌面' })]).includes('framing'))
+    assert.ok(rules([ok({ ...close, visual: '餐厅与楼梯口相连' })]).includes('framing'))
+    assert.ok(rules([ok({ ...close, action: '他猛地站起' })]).includes('framing'), 'a close shot whose only action is standing up')
+    assert.ok(!rules([ok({ ...close, action: '他松手' })]).includes('framing'), '松手 stays inside a close shot')
+    assert.ok(!rules([ok({ ...close, action: '视线落在手上' })]).includes('framing'), 'a glance that lands is in frame')
+    assert.ok(!rules([ok({ size: '中景', camera: '中景', action: '松手退半步' })]).includes('framing'), 'a half-step is still a medium shot')
+    assert.ok(rules([ok({ size: '中景', camera: '中景', visual: '餐厅与楼梯口相连' })]).includes('framing'), 'two places need a wide shot')
+    assert.ok(!rules([ok({ ...wide, visual: '餐厅与楼梯口相连', action: '他走过去' })]).includes('framing'))
+    assert.ok(rules([ok({ ...close, establishing: true })]).includes('framing'), 'an establishing shot is wide')
+    assert.ok(rules([ok({ size: '近景', camera: '远景' })]).includes('framing'), 'size and camera scale disagree')
+    assert.ok(!rules([ok({ size: '近景', camera: '特写', action: '他眨眼' })]).includes('framing'), '近景 and 特写 are the same scale')
+    const user = storyboardUser({ ...({} as Project), characters: [], settingFacts: [], locations: LOCS, secondsPerEp: 75, style: '真人都市', genre: '都市' } as Project, { episode: 1, title: '', hook: '', summary: '', cliffhanger: '' }, '')
+    assert.ok(user.includes('只写进这一镜'))
+    assert.ok(!user.includes('并覆盖设定中的空间关系'))
+    assert.ok(complianceBlock({ secondsPerEp: 75, characters: [] }).includes('景别与画面一致'))
+  })
   await t('episode cap check', () => assert.deepEqual(episodeCapCheck([{ episode: 1, durationSec: 50 }, { episode: 1, durationSec: 45 }, { episode: 2, durationSec: 90 }]), [{ episode: 1, seconds: 95 }]))
   await t('repack: episode over the 90s cap → exit 8 (opt-out --allow-episode-overrun)', () => {
     let code = 0

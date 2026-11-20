@@ -44,11 +44,20 @@ export function scanPack(e: VideoPipelineExport): { id: string; kind: string; de
     const headCount = /空镜/.test(head) ? 0 : /单人/.test(head) ? 1 : /双人/.test(head) ? 2 : /多人/.test(head) ? 3 : -1
     if (headCount >= 0 && Math.min(headCount, 3) !== Math.min(n, 3)) add(s.id, 'framing', `header says ${headCount} people, ${n} on screen`)
     const sizes = cam.match(SIZE) || []
+    const geometric = s.framing === 'closeup' || s.framing === 'extreme_closeup'
     if (s.framing === 'closeup_dialogue' && !cam.startsWith(CLOSEUP_CAMERA)) add(s.id, 'camera', `closeup without close-up camera wording: ${cam}`)
+    if (s.framing === 'closeup' && sizes.some((x) => x !== '近景')) add(s.id, 'camera', `closeup with ${sizes.join('/')}: ${cam}`)
+    if (s.framing === 'extreme_closeup' && sizes.some((x) => !/特写/.test(x))) add(s.id, 'camera', `extreme close-up with ${sizes.join('/')}: ${cam}`)
+    if (s.framing === 'medium_closeup' && sizes.some((x) => x !== '中近景')) add(s.id, 'camera', `medium-close with ${sizes.join('/')}: ${cam}`)
     if (s.framing === 'medium' && sizes.some((x) => !/^(?:中景|中近景)$/.test(x))) add(s.id, 'camera', `medium with ${sizes.join('/')}: ${cam}`)
     if (s.framing === 'medium' && n >= 2 && !/双人中景|多人中景/.test(cam)) add(s.id, 'camera', `medium two-shot not read as two-shot: ${cam}`)
     if (s.framing === 'full' && sizes.some((x) => !/全景|远景/.test(x))) add(s.id, 'camera', `full with ${sizes.join('/')}: ${cam}`)
-    if (s.framing !== 'closeup_dialogue' && cam.includes(CLOSEUP_CAMERA)) add(s.id, 'camera', `close-up wording on ${s.framing}`)
+    if (s.framing !== 'closeup_dialogue' && !geometric && cam.includes(CLOSEUP_CAMERA)) add(s.id, 'camera', `close-up wording on ${s.framing}`)
+    if (geometric) {
+      const jb = s.prompt.match(/景别：([^。\n]*)/)?.[1] || ''
+      const want = s.framing === 'extreme_closeup' ? /^特写/ : /^近景/
+      if (jb && !want.test(jb)) add(s.id, 'camera', `景别与 ${s.framing} 不一致：${jb}`)
+    }
     // ---- people vs 无人物
     const body = lines.slice(1).filter((l) => !/^(?:风格|限制|景别|光线)/.test(l)).join('\n')
     if (n > 0 && /无人物|空镜|没有人物/.test(body)) add(s.id, 'contradiction', '无人物 / 空镜 with people on screen')

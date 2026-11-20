@@ -8,6 +8,7 @@ import { isVisibleAction } from './actionDensity'
 import { locationNamer, normalizeLocation } from './locationNorm'
 import { normRealm, realmOfText } from './realm'
 import { normCameraSide, normFacing, normHands, normPose, normSide, normVoiceMode } from './blocking'
+import { scaleConflicts } from './shotScale'
 
 export const EPISODE_CAP_SEC = 90
 export const MAX_ACTIONS_PER_SEGMENT = 2
@@ -36,6 +37,7 @@ export function complianceBlock(p: { secondsPerEp: number; locations?: string[] 
 - 长相相似的不同人物（角色的 lookalikeOf）出现时，visual 必须写出两人的区分特征（年龄感/发型/服装），绝不只写「他」；同一人的造型变体（梦中/现实等）按剧情写对应变体全名。
 - 场景分组：同一地点的镜头连续排完再换地点，本集最多换 ${MAX_LOCATION_CHANGES} 次地点，禁止 A→B→A 来回切（交叉剪辑只在剧情必须时用，且每段至少 3 镜）。
 - 换地点或换时间（白天/夜）后的第一镜：establishing=true，景别用远景/全景交代环境，carryFromPrev=false；同地点同时间的后续镜头 carryFromPrev=true。
+- 景别与画面一致：size 和 camera 落在同一档（近景/特写、中景、远景/全景）。establishing 镜的 size 只能是远景或全景，两处空间（相连、通向）只写在这一镜。近景/特写的 visual、action、seedancePrompt 不写退步、迈步、起身、走动，不写视线扫过桌面或房间（松手和视线落点可以）。
 - 起止状态：每个有人物的镜头必须给 startState/endState（画面内每个角色的 pos/facing/pose/gaze/hands）；carryFromPrev=true 时本镜 startState 与上一镜 endState 完全一致，姿势/手持物的变化必须在时间轴里有对应动作；被下一镜承接的镜头最后约 1 秒只保持姿态。
 - 站位与机位：每场第一镜给 blocking（左右站位、朝向、门窗在哪侧、谁拿什么），本场人物不换边；每镜给 cameraSide（master/A/B）与 eyeline，A 与 B 之间必须隔一个 master 镜（否则越轴）。
 - 一场一套光：每场第一镜给 lighting（key 主光方向、soft 软硬、temp 冷暖），同场每镜光线一致。
@@ -57,6 +59,8 @@ export interface RawShotLike {
   screenPos?: Record<string, string>
   startState?: Record<string, Record<string, unknown>>
   endState?: Record<string, Record<string, unknown>>
+  size?: string
+  camera?: string
   cameraSide?: string
   eyeline?: Record<string, unknown>
   voiceMode?: string
@@ -67,7 +71,7 @@ export interface RawShotLike {
 
 export interface StoryboardIssue {
   shot: number | null
-  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode' | 'realm'
+  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode' | 'realm' | 'framing'
   detail: string
 }
 
@@ -115,6 +119,7 @@ export function validateStoryboard(
       if (!loc || (!ctx.locations!.includes(loc) && !canon.has(normalizeLocation(loc, namer)))) out.push({ shot: n, rule: 'location', detail: `location「${loc}」不在场景表` })
     }
     if (!(s.timeOfDay || '').trim()) out.push({ shot: n, rule: 'timeOfDay', detail: '缺 timeOfDay' })
+    for (const detail of scaleConflicts(s)) out.push({ shot: n, rule: 'framing', detail })
   })
   if (total > cap + 1e-6) out.push({ shot: null, rule: 'episodeSeconds', detail: `本集合计 ${total}s > ${cap}s` })
   // P0-1/2/3: start / end states, carry continuity, axis, scene lighting, voice mode
