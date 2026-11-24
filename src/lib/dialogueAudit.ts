@@ -462,6 +462,8 @@ function previousMatchedOccurrences(
 ): Set<string> {
   const parsedA = parseScriptDialogue(typeof script === 'string' ? { fullText: script, episode } : script)
   const result = auditEpisodeDialogue(script, previousShots, characters, [], { episode })
+  // 上一版没有可核对的分镜（空、无剧本、不可解析）时，没有任何台词「修复前已匹配」，缺词仍是 dialogue_missing。
+  if (result.status !== 'checked') return new Set<string>()
   const missing = new Set(
     result.findings
       .filter((f) => f.code === 'dialogue_missing' || f.code === 'dialogue_dropped_silent')

@@ -14,6 +14,14 @@ import {
   overwriteLockedScriptMessage,
 } from '../src/lib/consistency/factLocks'
 import { computeStoryboardStale, refreshStale, staleFindings, staleMessage } from '../src/lib/consistency/stale'
+import {
+  applyOneClickScript,
+  applyOneClickStoryboard,
+  applyScriptTemplate,
+  collectLockedKeeps,
+  decideScriptGeneration,
+  isScriptOverwriteBlocked,
+} from '../src/lib/consistency/scriptLockGuards'
 import { applyDialogueAuditToProject, collectFindings } from '../src/lib/consistency/collect'
 import { factsHash, scriptHash, buildFingerprints } from '../src/lib/consistency/fingerprint'
 import { constraintBlock, storyboardUser } from '../src/lib/prompts'
@@ -147,33 +155,111 @@ t('无指纹的旧项目不显示过时，审计后写入基线', () => {
   assert.ok(!next.stale?.storyboards?.[1])
 })
 
-t('覆盖已锁定剧本需显式确认；取消则剧本分镜不变', () => {
+t('覆盖已锁定剧本需显式确认；取消则剧本分镜不变（ScriptPanel 决策 + useProject 更新函数）', () => {
   const p: Project = { ...base(), locks: { scripts: { 1: true } } }
   assert.equal(isScriptLocked(p, 1), true)
   assert.equal(overwriteLockedScriptMessage(1), '将覆盖已锁定的第 1 集剧本，下游分镜将标为失效')
   const before = deep(p)
-  const cancelled = isScriptLocked(p, 1) && !false // simulate cancel: do not apply
-  assert.equal(cancelled, true)
+
+  // 用户取消 confirm：决策为不继续，调用方不再调用生成
+  const asked: string[] = []
+  const d = decideScriptGeneration(p, 1, (m) => (asked.push(m), false))
+  assert.deepEqual(d, { proceed: false })
+  assert.deepEqual(asked, [overwriteLockedScriptMessage(1)])
+  assert.deepEqual(p, before)
+
+  // 即便直接调用生成而不带确认，更新函数也保持原项目
+  assert.equal(isScriptOverwriteBlocked(p, 1, undefined), true)
+  const blocked = applyScriptTemplate(p)
+  assert.equal(blocked.status, 'locked')
+  assert.equal(blocked.project, p)
+  assert.deepEqual(blocked.project.scripts, before.scripts)
+  assert.deepEqual(blocked.project.storyboards, before.storyboards)
+
+  // 用户确认：带 confirmOverwrite 才覆盖剧本，分镜台词不被改写
+  const d2 = decideScriptGeneration(p, 1, () => true)
+  assert.deepEqual(d2, { proceed: true, opts: { confirmOverwrite: true } })
+  const ok = applyScriptTemplate(p, d2.proceed ? d2.opts : undefined)
+  assert.equal(ok.status, 'ok')
+  assert.notEqual(ok.project.scripts[1].fullText, before.scripts[1].fullText)
+  assert.deepEqual(ok.project.storyboards, before.storyboards)
   assert.deepEqual(p, before)
 })
 
-t('一键替换时已锁定剧本原稿保留', () => {
+t('未锁定剧本不弹确认，直接生成', () => {
+  const p = base()
+  let asked = 0
+  const d = decideScriptGeneration(p, 1, () => (asked++, false))
+  assert.deepEqual(d, { proceed: true })
+  assert.equal(asked, 0)
+  assert.equal(applyScriptTemplate(p).status, 'ok')
+})
+
+t('一键替换时已锁定剧本原稿保留，未锁定集可替换（IdeaPanel 生产函数）', () => {
+  const lockedShots = [shot({ id: 's1-1', dialogue: '小李：锁定的原稿。' })]
+  const prev: Project = {
+    ...base(),
+    episodeCount: 2,
+    locks: { scripts: { 1: true } },
+    scripts: {
+      1: { episode: 1, title: '原', beats: [], fullText: '小李：锁定的原稿。' },
+      2: { episode: 2, title: '二原', beats: [], fullText: '小李：旧的第二集。' },
+    },
+    storyboards: { 1: lockedShots, 2: [shot({ id: 's2-1', dialogue: '小李：旧的第二集。' })] },
+  }
+  const prevSnap = deep(prev)
+  const kept = collectLockedKeeps(prev)
+  assert.deepEqual(kept.episodes, [1])
+  assert.deepEqual(Object.keys(kept.scripts), ['1'])
+  assert.deepEqual(Object.keys(kept.storyboards), ['1'])
+
+  // 与 IdeaPanel 一致：新项目只带入锁定集，然后逐集走生产步骤函数
+  let proj: Project = { ...base(), episodeCount: 2, scripts: kept.scripts, storyboards: kept.storyboards, locks: prev.locks }
+  let madeScripts = 0
+  const newScript = (ep: number, text: string) => () => (madeScripts++, { episode: ep, title: '新', beats: [], fullText: text })
+
+  const s1 = applyOneClickScript(prev, proj, 1, newScript(1, '小李：新生成的。'))
+  assert.equal(s1.kept, true)
+  proj = s1.project
+  assert.equal(madeScripts, 0, '锁定集不应生成新剧本')
+  assert.equal(proj.scripts[1].fullText, '小李：锁定的原稿。')
+
+  const s2 = applyOneClickScript(prev, proj, 2, newScript(2, '小李：新的第二集。'))
+  assert.equal(s2.kept, false)
+  proj = s2.project
+  assert.equal(madeScripts, 1)
+  assert.equal(proj.scripts[2].fullText, '小李：新的第二集。')
+  assert.equal(proj.scripts[1].fullText, '小李：锁定的原稿。')
+
+  // 分镜：锁定集保留已有分镜并审计，未锁定集写入新分镜
+  let madeBoards = 0
+  const newShots = (ep: number) => () => (madeBoards++, [shot({ id: `s${ep}-n`, dialogue: '小李：新的第二集。' })])
+  const b1 = applyOneClickStoryboard(prev, proj, 1, newShots(1))
+  assert.equal(b1.kept, true)
+  assert.equal(madeBoards, 0)
+  assert.deepEqual(b1.project.storyboards[1], lockedShots)
+  assert.equal(b1.project.dialogueAudit?.[1]?.status, 'checked')
+  const b2 = applyOneClickStoryboard(prev, b1.project, 2, newShots(2))
+  assert.equal(b2.kept, false)
+  assert.equal(madeBoards, 1)
+  assert.equal(b2.project.storyboards[2][0].id, 's2-n')
+  assert.deepEqual(b2.project.storyboards[1], lockedShots)
+  assert.equal(b2.project.scripts[1].fullText, '小李：锁定的原稿。')
+  assert.equal(b2.project.dialogueAudit?.[2]?.status, 'checked')
+  assert.deepEqual(prev, prevSnap)
+})
+
+t('一键：锁定集无已有分镜时仍生成分镜（不跳过）', () => {
   const prev: Project = {
     ...base(),
     locks: { scripts: { 1: true } },
-    scripts: { 1: { episode: 1, title: '原', beats: [], fullText: '小李：锁定的原稿。' } },
+    storyboards: {},
   }
-  const incoming: Project['scripts'] = {
-    1: { episode: 1, title: '新', beats: [], fullText: '小李：新生成的。' },
-    2: { episode: 2, title: '二', beats: [], fullText: '小李：第二集。' },
-  }
-  const scripts: Project['scripts'] = { ...incoming }
-  for (const [k, s] of Object.entries(prev.scripts)) {
-    const ep = Number(k)
-    if (isScriptLocked(prev, ep) && s) scripts[ep] = s
-  }
-  assert.equal(scripts[1].fullText, '小李：锁定的原稿。')
-  assert.equal(scripts[2].fullText, '小李：第二集。')
+  const proj: Project = { ...prev, scripts: collectLockedKeeps(prev).scripts }
+  const r = applyOneClickStoryboard(prev, proj, 1, () => [shot({ id: 's1-new' })])
+  assert.equal(r.kept, false)
+  assert.equal(r.project.storyboards[1][0].id, 's1-new')
+  assert.equal(r.project.scripts[1].fullText, prev.scripts[1].fullText)
 })
 
 t('未锁定未确认时 settingFacts 投影与行为保持数组语义', () => {

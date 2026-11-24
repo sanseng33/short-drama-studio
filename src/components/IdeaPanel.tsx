@@ -15,8 +15,8 @@ import {
   type IdeaResult,
 } from '../lib/idea'
 import { generateStoryboardChecked, llmOf } from '../lib/generator'
-import { applyDialogueAuditToProject } from '../lib/consistency/collect'
 import { isScriptLocked, projectFactsFromItems } from '../lib/consistency/factLocks'
+import { applyOneClickScript, applyOneClickStoryboard, collectLockedKeeps } from '../lib/consistency/scriptLockGuards'
 import { withCharacterIdentity } from '../lib/voice'
 import { chatCompletion, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
 import { scriptUser, storyboardUser } from '../lib/prompts'
@@ -113,17 +113,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
       const characters = withCharacterIdentity(mergeLockedCharacters(prevProject.characters, toCharacters(result.characters)), result.title)
       const outline = toOutline(result.episodes)
       const factItems = mergeLockedFacts(prevProject.settingFactItems, result.settingFacts)
-      const keptScripts: Record<number, EpisodeScript> = {}
-      const keptBoards: Record<number, Shot[]> = {}
-      const keptEpisodes: number[] = []
-      for (const [k, script] of Object.entries(prevProject.scripts || {})) {
-        const ep = Number(k)
-        if (!Number.isFinite(ep) || !isScriptLocked(prevProject, ep) || !script) continue
-        keptScripts[ep] = script
-        keptEpisodes.push(ep)
-        if (prevProject.storyboards?.[ep]?.length) keptBoards[ep] = prevProject.storyboards[ep]
-      }
-      keptEpisodes.sort((a, b) => a - b)
+      const { scripts: keptScripts, storyboards: keptBoards, episodes: keptEpisodes } = collectLockedKeeps(prevProject)
       let proj: Project = {
         id: `p_${Date.now()}`,
         title: result.title,
@@ -163,7 +153,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
           checkAbort()
           const o = targets[i]
           let script: EpisodeScript | null = null
-          if (useLlm) {
+          if (useLlm && !(isScriptLocked(prevProject, o.episode) && proj.scripts[o.episode])) {
             try {
               const user = scriptUser(proj, o)
               const text = await chatCompletion(llm, SCRIPT_SYSTEM, user, { signal: ac.signal })
@@ -173,12 +163,18 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
               warnings++
             }
           }
-          if (isScriptLocked(prevProject, o.episode) && proj.scripts[o.episode]) {
+          const llmScript = script
+          const scriptStep = applyOneClickScript(
+            prevProject,
+            proj,
+            o.episode,
+            () => llmScript || generateScript(genre, o.episode, o, proj.characters, proj.secondsPerEp),
+          )
+          proj = scriptStep.project
+          if (scriptStep.kept) {
             patchStep('script', { note: `${i + 1} / ${targets.length}（保留锁定剧本）` })
             continue
           }
-          if (!script) script = generateScript(genre, o.episode, o, proj.characters, proj.secondsPerEp)
-          proj = { ...proj, scripts: { ...proj.scripts, [o.episode]: script } }
           const snap = proj
           setProject((p) => ({ ...p, scripts: { ...p.scripts, [o.episode]: snap.scripts[o.episode] } }))
           patchStep('script', { note: `${i + 1} / ${targets.length}` })
@@ -193,7 +189,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
           const o = targets[i]
           const script = proj.scripts[o.episode]
           let shots: Shot[] | null = null
-          if (useLlm) {
+          if (useLlm && !(isScriptLocked(prevProject, o.episode) && proj.storyboards[o.episode]?.length)) {
             try {
               // self-check / repair loop (generatorRules): re-prompts until the storyboard passes or retries run out
               const r = await generateStoryboardChecked(llmOf(llm, ac.signal), proj, o, script?.fullText || '')
@@ -204,13 +200,14 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
               warnings++
             }
           }
-          if (isScriptLocked(prevProject, o.episode) && proj.storyboards[o.episode]?.length) {
-            proj = applyDialogueAuditToProject(proj, o.episode)
-            patchStep('board', { note: `${i + 1} / ${targets.length}（保留已有分镜）` })
-            continue
-          }
-          if (!shots) shots = generateStoryboard(genre, o.episode, o, script, proj.characters, style, proj.secondsPerEp)
-          proj = applyDialogueAuditToProject({ ...proj, storyboards: { ...proj.storyboards, [o.episode]: shots } }, o.episode)
+          const llmShots = shots
+          const boardStep = applyOneClickStoryboard(
+            prevProject,
+            proj,
+            o.episode,
+            () => llmShots || generateStoryboard(genre, o.episode, o, script, proj.characters, style, proj.secondsPerEp),
+          )
+          proj = boardStep.project
           const audited = proj
           setProject((p) => ({
             ...p,
@@ -218,7 +215,9 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
             dialogueAudit: { ...p.dialogueAudit, ...audited.dialogueAudit },
             fingerprints: audited.fingerprints,
           }))
-          patchStep('board', { note: `${i + 1} / ${targets.length}` })
+          patchStep('board', {
+            note: `${i + 1} / ${targets.length}${boardStep.kept ? '（保留已有分镜）' : ''}`,
+          })
         }
         patchStep('board', { state: 'done' })
       }

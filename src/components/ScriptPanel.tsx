@@ -1,7 +1,8 @@
 import type { ProjectApi } from '../hooks/useProject'
 import { CopyButton } from './CopyButton'
 import { FindingsBanner } from './FindingsBanner'
-import { isScriptLocked, overwriteLockedScriptMessage } from '../lib/consistency/factLocks'
+import { isScriptLocked } from '../lib/consistency/factLocks'
+import { decideScriptGeneration } from '../lib/consistency/scriptLockGuards'
 import { staleMessage } from '../lib/consistency/stale'
 
 export function ScriptPanel({ api }: { api: ProjectApi }) {
@@ -21,8 +22,9 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
   const outline = project.outline.find((o) => o.episode === ep)
   const scriptLocked = isScriptLocked(project, ep)
   const runScriptGen = (fn: (opts?: { confirmOverwrite?: boolean }) => void) => {
-    if (scriptLocked && !window.confirm(overwriteLockedScriptMessage(ep))) return
-    fn(scriptLocked ? { confirmOverwrite: true } : undefined)
+    const d = decideScriptGeneration(project, ep, (m) => window.confirm(m))
+    if (!d.proceed) return
+    fn(d.opts)
   }
   const staleReason = project.stale?.storyboards?.[ep]
 

@@ -20,11 +20,11 @@ import { auditAssets } from '../lib/assetAudit'
 import { refreshStale } from '../lib/consistency/stale'
 import {
   isOutlineLocked,
-  isScriptLocked,
   overwriteLockedOutlineMessage,
   overwriteLockedScriptMessage,
   syncFactsProjection,
 } from '../lib/consistency/factLocks'
+import { applyLlmScript, applyScriptTemplate, isScriptOverwriteBlocked } from '../lib/consistency/scriptLockGuards'
 import { mergeLockedCharacters } from '../lib/idea'
 import { outlineUser, scriptUser, storyboardUser } from '../lib/prompts'
 import { chatCompletion, OUTLINE_SYSTEM, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
@@ -138,22 +138,11 @@ export function useProject() {
   }, [flash, llm, project])
 
   const genScriptTemplate = useCallback((opts?: { confirmOverwrite?: boolean }) => {
-    setProject((p) => {
-      if (!p.characters.length) {
-        flash('请至少保留 1 个角色再生成')
-        return p
-      }
-      const ep = p.selectedEpisode
-      const outline = p.outline.find((o) => o.episode === ep)
-      if (!outline) {
-        flash('请先生成大纲')
-        return p
-      }
-      if (isScriptLocked(p, ep) && !opts?.confirmOverwrite) return p
-      const script = generateScript(p.genre, ep, outline, p.characters, p.secondsPerEp)
-      return refreshStale({ ...p, scripts: { ...p.scripts, [ep]: script } })
-    })
-    if (isScriptLocked(project, project.selectedEpisode) && !opts?.confirmOverwrite) return
+    const r = applyScriptTemplate(project, opts)
+    if (r.status === 'no_cast') return flash('请至少保留 1 个角色再生成')
+    if (r.status === 'no_outline') return flash('请先生成大纲')
+    if (r.status === 'locked') return flash(overwriteLockedScriptMessage(project.selectedEpisode))
+    setProject((p) => applyScriptTemplate(p, opts).project)
     flash(`第${project.selectedEpisode}集剧本已模板生成`)
   }, [flash, project])
 
@@ -164,26 +153,13 @@ export function useProject() {
       const p = project
       const outline = p.outline.find((o) => o.episode === p.selectedEpisode)
       if (!outline) throw new Error('请先生成大纲')
-      if (isScriptLocked(p, p.selectedEpisode) && !opts?.confirmOverwrite) {
+      if (isScriptOverwriteBlocked(p, p.selectedEpisode, opts)) {
         flash(overwriteLockedScriptMessage(p.selectedEpisode))
         return
       }
       const user = scriptUser(p, outline)
       const text = await chatCompletion(llm, SCRIPT_SYSTEM, user)
-      setProject((prev) =>
-        refreshStale({
-          ...prev,
-          scripts: {
-            ...prev.scripts,
-            [p.selectedEpisode]: {
-              episode: p.selectedEpisode,
-              title: outline.title,
-              beats: [{ label: '全文', content: text }],
-              fullText: text,
-            },
-          },
-        }),
-      )
+      setProject((prev) => applyLlmScript(prev, p.selectedEpisode, outline.title, text))
       flash('剧本已用 LLM 生成')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
