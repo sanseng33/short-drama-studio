@@ -13,7 +13,8 @@ import {
   generateStoryboard,
 } from '../lib/templates'
 import { loadLlm, loadProject, saveLlm, saveProject } from '../lib/storage'
-import { normalizeLlmShots } from '../lib/shotCast'
+import { generateStoryboardChecked, llmOf } from '../lib/generator'
+import { applyDialogueAuditToProject } from '../lib/consistency/collect'
 import { mergeLockedCharacters } from '../lib/idea'
 import { outlineUser, scriptUser, storyboardUser } from '../lib/prompts'
 import { chatCompletion, OUTLINE_SYSTEM, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
@@ -184,11 +185,12 @@ export function useProject() {
         p.style,
         p.secondsPerEp,
       )
-      return {
+      const next = {
         ...p,
         scripts: { ...p.scripts, [ep]: script },
         storyboards: { ...p.storyboards, [ep]: shots },
       }
+      return applyDialogueAuditToProject(next, ep, { previousShots: p.storyboards[ep] })
     })
     flash(`第${project.selectedEpisode}集分镜已模板生成`)
   }, [flash, project.selectedEpisode])
@@ -201,14 +203,15 @@ export function useProject() {
       const outline = p.outline.find((o) => o.episode === p.selectedEpisode)
       const script = p.scripts[p.selectedEpisode]
       if (!outline) throw new Error('请先生成大纲')
-      const user = storyboardUser(p, outline, script?.fullText || '')
-      const text = await chatCompletion(llm, STORYBOARD_SYSTEM, user)
-      const raw = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim()) as Shot[]
-      const shots = normalizeLlmShots(raw, p.selectedEpisode, p.characters)
-      setProject((prev) => ({
-        ...prev,
-        storyboards: { ...prev.storyboards, [p.selectedEpisode]: shots },
-      }))
+      // 建议实现项：分步 LLM 与一键路径共用 generateStoryboardChecked（可单独回退）
+      const r = await generateStoryboardChecked(llmOf(llm), p, outline, script?.fullText || '')
+      setProject((prev) =>
+        applyDialogueAuditToProject(
+          { ...prev, storyboards: { ...prev.storyboards, [p.selectedEpisode]: r.shots } },
+          p.selectedEpisode,
+          { previousShots: prev.storyboards[p.selectedEpisode] },
+        ),
+      )
       flash('分镜已用 LLM 生成')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -216,6 +219,12 @@ export function useProject() {
       setBusy(false)
     }
   }, [flash, llm, project])
+
+  const recheckDialogue = useCallback((episode?: number) => {
+    const ep = episode ?? project.selectedEpisode
+    setProject((p) => applyDialogueAuditToProject(p, ep))
+    flash(`第${episode ?? project.selectedEpisode}集台词完整性已重新检查`)
+  }, [flash, project.selectedEpisode])
 
   return {
     project,
@@ -239,6 +248,7 @@ export function useProject() {
     genScriptLlm,
     genStoryboardTemplate,
     genStoryboardLlm,
+    recheckDialogue,
   }
 }
 

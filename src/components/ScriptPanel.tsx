@@ -1,5 +1,6 @@
 import type { ProjectApi } from '../hooks/useProject'
 import { CopyButton } from './CopyButton'
+import { FindingsBanner } from './FindingsBanner'
 
 export function ScriptPanel({ api }: { api: ProjectApi }) {
   const {
@@ -9,6 +10,7 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
     genScriptLlm,
     busy,
     llm,
+    recheckDialogue,
   } = api
   const hasKey = Boolean(llm.apiKey.trim())
   const ep = project.selectedEpisode
@@ -50,6 +52,12 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
           </button>
         </div>
       </header>
+
+      <FindingsBanner
+        title="台词完整性"
+        snapshot={project.dialogueAudit?.[ep]}
+        onRecheck={() => recheckDialogue(ep)}
+      />
 
       {!outline && (
         <div className="panel p-4 text-sm text-amber-300/90">请先在「大纲」步骤生成分集大纲。</div>

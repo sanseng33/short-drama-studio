@@ -4,6 +4,7 @@ import { CopyButton } from './CopyButton'
 import { shotCharacterIds } from '../lib/shotCast'
 import { buildVideoPipelineExport, videoPipelineFilename } from '../lib/videoExport'
 import { downloadText } from '../lib/storage'
+import { FindingsBanner } from './FindingsBanner'
 
 export function Storyboard({ api }: { api: ProjectApi }) {
   const {
@@ -14,6 +15,7 @@ export function Storyboard({ api }: { api: ProjectApi }) {
     busy,
     llm,
     flash,
+    recheckDialogue,
   } = api
   const hasKey = Boolean(llm.apiKey.trim())
   const ep = project.selectedEpisode
@@ -83,6 +85,12 @@ export function Storyboard({ api }: { api: ProjectApi }) {
           </button>
         </div>
       </header>
+
+      <FindingsBanner
+        title="台词完整性"
+        snapshot={project.dialogueAudit?.[ep]}
+        onRecheck={() => recheckDialogue(ep)}
+      />
 
       {!shots.length && (
         <div className="panel p-6 text-center text-sm text-ink-muted">

@@ -14,6 +14,7 @@ import {
   type IdeaResult,
 } from '../lib/idea'
 import { generateStoryboardChecked, llmOf } from '../lib/generator'
+import { applyDialogueAuditToProject } from '../lib/consistency/collect'
 import { withCharacterIdentity } from '../lib/voice'
 import { chatCompletion, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
 import { scriptUser, storyboardUser } from '../lib/prompts'
@@ -183,9 +184,14 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
             }
           }
           if (!shots) shots = generateStoryboard(genre, o.episode, o, script, proj.characters, style, proj.secondsPerEp)
-          proj = { ...proj, storyboards: { ...proj.storyboards, [o.episode]: shots } }
-          const sb = shots
-          setProject((p) => ({ ...p, storyboards: { ...p.storyboards, [o.episode]: sb } }))
+          proj = applyDialogueAuditToProject({ ...proj, storyboards: { ...proj.storyboards, [o.episode]: shots } }, o.episode)
+          const audited = proj
+          setProject((p) => ({
+            ...p,
+            storyboards: { ...p.storyboards, [o.episode]: audited.storyboards[o.episode] },
+            dialogueAudit: { ...p.dialogueAudit, ...audited.dialogueAudit },
+            fingerprints: audited.fingerprints,
+          }))
           patchStep('board', { note: `${i + 1} / ${targets.length}` })
         }
         patchStep('board', { state: 'done' })

@@ -100,6 +100,7 @@ export function storyboardUser(p: Project, o: EpisodeOutline, scriptText: string
 - visual 必须含本场地点的家境陈设锚点，并覆盖设定中的空间关系（如对窗邻居须拍到窗对窗）。
 - overlayText 只放界面原文，不放约束或描述；emotion 必须在 action/seedancePrompt 落地为可见表演。
 - 服装/道具描写不要写 logo、校徽、胸标、刺绣标、字样。
+- 剧本中的人物台词默认全部进入分镜；删除或改写须保持可核对，不得无说明丢词。
 ${complianceBlock(p)}`,
   )
 }
