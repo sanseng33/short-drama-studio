@@ -1,0 +1,73 @@
+{
+  "id": "F05",
+  "script": {
+    "episode": 1,
+    "fullText": "小李：我等了你三年，你却一个字也没留下。"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "空镜过场",
+      "action": "转场",
+      "dialogue": "",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    },
+    {
+      "id": "s1-2",
+      "shotNo": 2,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李：我等了你三年，",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    },
+    {
+      "id": "s1-3",
+      "shotNo": 3,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李：你却一个字也没留下。",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "checked",
+    "definiteMissingCount": 0,
+    "findings": [
+      {
+        "code": "dialogue_split",
+        "lineText": "我等了你三年，你却一个字也没留下。",
+        "occurrence": 1,
+        "confidence": "definite",
+        "episode": 1,
+        "severity": "info",
+        "shotIds": [
+          "s1-2",
+          "s1-3"
+        ]
+      }
+    ]
+  }
+}

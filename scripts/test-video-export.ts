@@ -1,6 +1,6 @@
 /** npx tsx scripts/test-video-export.ts — fixtures for video-pipeline@1 export */
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { buildVideoPipelineExport, dialogueSec, indirectUiCue, INDIRECT_UI_CUE, extractOverlay, type VideoPipelineExport, type VideoPipelineShot } from '../src/lib/videoExport'
 import { addConstraint, dialogueLeaks, ensureSinglePrefixedClause, fixTimeWords, hasNightConflict, lockPromptStyle, mergeEpisodeShots, NO_BADGE_CONSTRAINT, NO_GLYPH_CONSTRAINT, OFFSCREEN_VOICE_CONSTRAINT, postProcessExport, stripDialogueFromPrompt, stripLogoText } from '../src/lib/segmentPost'
 import {
@@ -643,20 +643,24 @@ t('P2 carry wardrobe: append constraint; leave character.costume untouched', () 
   const c1 = exp.characters.find((c) => c.id === 'c1')
   assert.ok(c1?.costume.includes('连帽卫衣'), 'character.costume must remain in cast list')
 })
-t('P2 小黄鸭 p1b pack: scene continuity via postProcess', () => {
-  const packPath = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p1b.json'
-  const pack = JSON.parse(readFileSync(packPath, 'utf8')) as VideoPipelineExport
-  const out = postProcessExport(pack, { mergeToSegments: false })
-  const ep1 = out.shots.filter((s) => s.episode === 1)
-  assert.ok(ep1.length >= 8)
-  assert.ok(ep1.every((s) => s.sceneId && typeof s.carryFromPrev === 'boolean'))
-  const ids = [...new Set(ep1.map((s) => s.sceneId!))]
-  assert.ok(ids.includes('villa_bedroom_night') || ids.some((x) => x.startsWith('villa_')), ids.join(','))
-  assert.ok(ids.some((x) => x.includes('alley') || x.includes('villa')), ids.join(','))
-  assert.equal(ep1[0].carryFromPrev, false)
-  const carryN = ep1.filter((s) => s.carryFromPrev).length
-  assert.ok(carryN >= 1, `expected some carryFromPrev in ep1, got ${carryN}`)
-})
+const p1bPackPath = '/workspace/fixed/小黄鸭砸出个帅系统-video-pipeline-p1b.json'
+if (existsSync(p1bPackPath)) {
+  t('P2 小黄鸭 p1b pack: scene continuity via postProcess', () => {
+    const pack = JSON.parse(readFileSync(p1bPackPath, 'utf8')) as VideoPipelineExport
+    const out = postProcessExport(pack, { mergeToSegments: false })
+    const ep1 = out.shots.filter((s) => s.episode === 1)
+    assert.ok(ep1.length >= 8)
+    assert.ok(ep1.every((s) => s.sceneId && typeof s.carryFromPrev === 'boolean'))
+    const ids = [...new Set(ep1.map((s) => s.sceneId!))]
+    assert.ok(ids.includes('villa_bedroom_night') || ids.some((x) => x.startsWith('villa_')), ids.join(','))
+    assert.ok(ids.some((x) => x.includes('alley') || x.includes('villa')), ids.join(','))
+    assert.equal(ep1[0].carryFromPrev, false)
+    const carryN = ep1.filter((s) => s.carryFromPrev).length
+    assert.ok(carryN >= 1, `expected some carryFromPrev in ep1, got ${carryN}`)
+  })
+} else {
+  console.log(`SKIP P2 小黄鸭 p1b pack: scene continuity via postProcess — 夹具缺失（${p1bPackPath}），该条覆盖未运行，未计入通过数`)
+}
 t('P2 storyboard prompts mention optional location', () => {
   assert.ok(STORYBOARD_SYSTEM.includes('location'))
   assert.ok(storyboardUser(project, { episode: 1, title: 't', hook: '', summary: '', cliffhanger: '' }, '').includes('location'))

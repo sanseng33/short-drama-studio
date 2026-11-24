@@ -1,12 +1,22 @@
 import type { ProjectApi } from '../hooks/useProject'
-import type { ArtStyle, Genre, Platform } from '../types'
+import type { ArtStyle, Genre, Platform, SettingFactItem } from '../types'
+import { itemsFromFacts } from '../lib/consistency/factLocks'
+import { canonicalizeLocations } from '../lib/assetAudit'
+import { collectFindings } from '../lib/consistency/collect'
+import { locationNamer } from '../lib/locationNorm'
+import { ConsistencyFindings } from './ConsistencyFindings'
 
 const GENRES: Genre[] = ['男频玄幻', '都市逆袭', '都市重生', '古风女频重生', '大女主']
 const PLATFORMS: Platform[] = ['红果', '抖音试水', '海外ReelShort']
 const STYLES: ArtStyle[] = ['2D国风', '2D日漫', '真人都市']
 
 export function ProjectSetup({ api }: { api: ProjectApi }) {
-  const { project, update, applyGenreDefaults } = api
+  const { project, update, applyGenreDefaults, confirmFacts, ignoreFinding } = api
+  const factItems: SettingFactItem[] =
+    project.settingFactItems && project.settingFactItems.length
+      ? project.settingFactItems
+      : itemsFromFacts(project.settingFacts)
+  const setFactItems = (settingFactItems: SettingFactItem[]) => update({ settingFactItems })
   return (
     <div className="space-y-5">
       <header>
@@ -120,16 +130,89 @@ export function ProjectSetup({ api }: { api: ProjectApi }) {
             onChange={(e) => update({ worldSetting: e.target.value })}
           />
         </div>
-        <div className="sm:col-span-2">
+        <div className="sm:col-span-2 space-y-2">
           <label className="label">设定事实（每行一条；作为硬约束注入大纲/剧本/分镜提示词）</label>
-          <textarea
-            className="field min-h-[72px]"
-            value={(project.settingFacts || []).join('\n')}
-            onChange={(e) => update({ settingFacts: e.target.value.split('\n') })}
-            placeholder={'如：主角是富三代，家住高档小区\n系统每天早上7点出现'}
-          />
+          {factItems.map((item, idx) => (
+            <div key={item.id || idx} className="flex flex-wrap items-center gap-2">
+              <input
+                className="field min-w-0 flex-1 basis-full sm:basis-0"
+                value={item.text}
+                onChange={(e) => {
+                  const settingFactItems = factItems.map((it, i) =>
+                    i === idx ? { ...it, text: e.target.value } : it,
+                  )
+                  setFactItems(settingFactItems)
+                }}
+                placeholder="如：主角是富三代，家住高档小区"
+              />
+              <label className="flex items-center gap-1 text-xs text-ink-muted whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={!!item.locked}
+                  onChange={(e) => {
+                    const settingFactItems = factItems.map((it, i) =>
+                      i === idx ? { ...it, locked: e.target.checked } : it,
+                    )
+                    setFactItems(settingFactItems)
+                  }}
+                />
+                锁定
+              </label>
+              <button
+                type="button"
+                className="btn-ghost !py-1 text-xs"
+                onClick={() => setFactItems(factItems.filter((_, i) => i !== idx))}
+              >
+                删除
+              </button>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() =>
+                setFactItems([
+                  ...factItems,
+                  { id: `sf-${factItems.length + 1}-${Date.now()}`, text: '', locked: false, source: 'manual' },
+                ])
+              }
+            >
+              增加一行
+            </button>
+            <button type="button" className="btn-outline text-xs" onClick={() => confirmFacts()}>
+              确认事实
+            </button>
+            {project.factsConfirmedAt ? (
+              <span className="text-xs text-ink-muted">已确认</span>
+            ) : null}
+          </div>
         </div>
       </div>
+
+      <div>
+        <label className="label">场景表（每行一个规范地名；编辑不会改写已有镜头）</label>
+        <textarea
+          className="field min-h-[72px]"
+          value={(project.locations || []).join('\n')}
+          onChange={(e) => update({ locations: e.target.value.split('\n') })}
+          onBlur={() =>
+            update({
+              locations: canonicalizeLocations(project.locations || [], locationNamer(project.characters)),
+            })
+          }
+          placeholder={'如：别墅客厅\n老楼窗边'}
+        />
+      </div>
+
+      <ConsistencyFindings
+        title="资产一致性"
+        findings={collectFindings(project).filter(
+          (f) => f.code === 'location_not_in_table' || f.code === 'character_look_not_in_shot' || f.code === 'stale_storyboard',
+        )}
+        emptyText="暂无资产检查提醒。"
+        onIgnore={ignoreFinding}
+      />
 
       <button type="button" className="btn-primary" onClick={applyGenreDefaults}>
         应用题材预设（可再改）

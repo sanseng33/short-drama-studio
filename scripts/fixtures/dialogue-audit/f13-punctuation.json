@@ -1,0 +1,37 @@
+{
+  "id": "F13",
+  "script": {
+    "episode": 1,
+    "fullText": "小李：「你　　来了吗？」"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李: 你来了吗?",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "checked",
+    "definiteMissingCount": 0,
+    "findings": []
+  },
+  "notes": "剧本为全角空格、成对引号、全角冒号；分镜为半角。N1/N2 后视为同一句。"
+}

@@ -1,0 +1,123 @@
+{
+  "id": "F02",
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "cases": [
+    {
+      "id": "F02a",
+      "script": {
+        "episode": 1,
+        "fullText": "小李：你来了。\n小李：你来了。\n小李：请进。"
+      },
+      "shots": [
+        {
+          "id": "s1-1",
+          "shotNo": 1,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李：你来了。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        },
+        {
+          "id": "s1-2",
+          "shotNo": 2,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李：请进。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        }
+      ],
+      "expect": {
+        "status": "checked",
+        "definiteMissingCount": 1,
+        "findings": [
+          {
+            "code": "dialogue_missing",
+            "lineText": "你来了。",
+            "occurrence": 2,
+            "confidence": "definite",
+            "episode": 1,
+            "severity": "error",
+            "evidence": "M1 并列取舍，缺靠后的那次出现"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F02b",
+      "script": {
+        "episode": 1,
+        "fullText": "小李：你来了。\n小李：你来了。\n小李：你来了。\n小李：请进。"
+      },
+      "shots": [
+        {
+          "id": "s1-1",
+          "shotNo": 1,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李：你来了。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        },
+        {
+          "id": "s1-2",
+          "shotNo": 2,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李：你来了。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        },
+        {
+          "id": "s1-3",
+          "shotNo": 3,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李：请进。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        }
+      ],
+      "expect": {
+        "status": "checked",
+        "definiteMissingCount": 1,
+        "findings": [
+          {
+            "code": "dialogue_missing",
+            "lineText": "你来了。",
+            "occurrence": 3,
+            "confidence": "definite",
+            "episode": 1,
+            "severity": "error",
+            "evidence": "M1 并列取舍，缺靠后的那次出现"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -6,15 +6,23 @@ export function Sidebar({
   title,
   onNew,
   onSample,
+  open = false,
 }: {
   step: StepId
   onStep: (s: StepId) => void
   title: string
   onNew: () => void
   onSample: () => void
+  /** 小屏（< md）抽屉是否展开；md 及以上侧栏常驻，忽略该值。 */
+  open?: boolean
 }) {
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-surface-700 bg-surface-900/90">
+    <aside
+      id="app-sidebar"
+      className={`fixed inset-y-0 left-0 z-40 flex w-56 max-w-[85vw] shrink-0 flex-col overflow-y-auto border-r border-surface-700 bg-surface-900 transition-transform duration-200 md:static md:z-auto md:max-w-none md:translate-x-0 md:bg-surface-900/90 ${
+        open ? 'translate-x-0' : '-translate-x-full'
+      }`}
+    >
       <div className="border-b border-surface-700 px-4 py-4">
         <div className="text-xs font-semibold tracking-widest text-accent-soft">AI 漫剧工作室</div>
         <div className="mt-1 truncate text-sm text-ink-muted" title={title}>

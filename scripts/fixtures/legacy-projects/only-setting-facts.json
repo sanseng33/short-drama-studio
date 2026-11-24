@@ -1,0 +1,19 @@
+{
+  "id": "legacy-facts-only",
+  "title": "只有 settingFacts",
+  "genre": "都市逆袭",
+  "platform": "红果",
+  "episodeCount": 1,
+  "secondsPerEp": 60,
+  "style": "真人都市",
+  "logline": "简介",
+  "characters": [],
+  "outline": [],
+  "scripts": {},
+  "storyboards": {},
+  "selectedEpisode": 1,
+  "updatedAt": "2026-01-01T00:00:00.000Z",
+  "settingFacts": [
+    "甲住高档小区"
+  ]
+}

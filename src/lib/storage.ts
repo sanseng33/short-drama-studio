@@ -1,21 +1,54 @@
 import type { LlmSettings, Project } from '../types'
 import { DEFAULT_LLM } from '../types'
+import { KNOWN_SCHEMA_VERSION, PROJECT_BACKUP_KEY } from './consistency/types'
+import { migrateProject, shouldWritePreV2Backup } from './consistency/migrate'
 
 const PROJECT_KEY = 'ai-short-drama-studio:project'
 const LLM_KEY = 'ai-short-drama-studio:llm'
 
-export function loadProject(): Project | null {
+/** 仅在备份键不存在时写入；失败不得抛出。 */
+function writeBackupIfAbsent(raw: string): void {
   try {
-    const raw = localStorage.getItem(PROJECT_KEY)
-    if (!raw) return null
-    return JSON.parse(raw) as Project
+    if (localStorage.getItem(PROJECT_BACKUP_KEY) != null) return
+    localStorage.setItem(PROJECT_BACKUP_KEY, raw)
   } catch {
+    // 备份失败不得阻止打开项目
+  }
+}
+
+export function loadProject(): Project | null {
+  let raw: string | null = null
+  try {
+    raw = localStorage.getItem(PROJECT_KEY)
+    if (!raw) return null
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      writeBackupIfAbsent(raw)
+      return null
+    }
+    const result = migrateProject(parsed)
+    if (!result.ok) {
+      writeBackupIfAbsent(raw)
+      return null
+    }
+    if (shouldWritePreV2Backup(parsed, localStorage.getItem(PROJECT_BACKUP_KEY) != null)) {
+      writeBackupIfAbsent(raw)
+    }
+    return result.project
+  } catch {
+    if (raw) writeBackupIfAbsent(raw)
     return null
   }
 }
 
 export function saveProject(project: Project): void {
-  const next = { ...project, updatedAt: new Date().toISOString() }
+  const next: Project = {
+    ...project,
+    updatedAt: new Date().toISOString(),
+    schemaVersion: KNOWN_SCHEMA_VERSION,
+  }
   localStorage.setItem(PROJECT_KEY, JSON.stringify(next))
 }
 

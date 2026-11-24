@@ -2,8 +2,9 @@ import type { Shot } from '../types'
 import type { ProjectApi } from '../hooks/useProject'
 import { CopyButton } from './CopyButton'
 import { shotCharacterIds } from '../lib/shotCast'
-import { buildVideoPipelineExport, videoPipelineFilename } from '../lib/videoExport'
-import { downloadText } from '../lib/storage'
+import { usePipelineExportGate } from './PipelineExportGate'
+import { FindingsBanner } from './FindingsBanner'
+import { staleMessage } from '../lib/consistency/stale'
 
 export function Storyboard({ api }: { api: ProjectApi }) {
   const {
@@ -13,9 +14,10 @@ export function Storyboard({ api }: { api: ProjectApi }) {
     genStoryboardLlm,
     busy,
     llm,
-    flash,
+    recheckDialogue,
   } = api
   const hasKey = Boolean(llm.apiKey.trim())
+  const staleReason = project.stale?.storyboards?.[project.selectedEpisode]
   const ep = project.selectedEpisode
   const shots = project.storyboards[ep] || []
   const chars = project.characters
@@ -36,15 +38,7 @@ export function Storyboard({ api }: { api: ProjectApi }) {
   }
   const listOf = (v: string) => v.split(/[，,、]/).map((x) => x.trim()).filter(Boolean)
 
-  const exportPipeline = () => {
-    const data = buildVideoPipelineExport(project)
-    if (!data.shots.length) {
-      flash('尚无分镜可导出')
-      return
-    }
-    downloadText(videoPipelineFilename(project), JSON.stringify(data, null, 2), 'application/json')
-    flash(`已导出视频流水线 JSON（${data.shots.length} 镜）`)
-  }
+  const { requestExport, gatePanel } = usePipelineExportGate(api)
 
   return (
     <div className="space-y-5">
@@ -57,7 +51,7 @@ export function Storyboard({ api }: { api: ProjectApi }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select
-            className="field !w-auto"
+            className="field !w-auto min-w-0 max-w-full"
             value={ep}
             onChange={(e) => update({ selectedEpisode: Number(e.target.value) })}
           >
@@ -78,11 +72,28 @@ export function Storyboard({ api }: { api: ProjectApi }) {
           >
             用 LLM 生成
           </button>
-          <button type="button" className="btn-ghost" onClick={exportPipeline}>
+          <button type="button" className="btn-ghost" onClick={requestExport}>
             导出给视频流水线
           </button>
         </div>
       </header>
+
+      {gatePanel}
+
+      {staleReason ? (
+        <div className="panel flex flex-wrap items-center gap-2 border border-amber-500/40 p-3 text-sm text-amber-200">
+          <span className="min-w-0 break-words">{staleMessage(staleReason)}</span>
+          <button type="button" className="btn-ghost !py-1 text-xs" onClick={() => recheckDialogue(ep)}>
+            重新检查
+          </button>
+        </div>
+      ) : null}
+
+      <FindingsBanner
+        title="台词完整性"
+        snapshot={project.dialogueAudit?.[ep]}
+        onRecheck={() => recheckDialogue(ep)}
+      />
 
       {!shots.length && (
         <div className="panel p-6 text-center text-sm text-ink-muted">

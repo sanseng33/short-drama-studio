@@ -1,0 +1,98 @@
+{
+  "id": "F01",
+  "episode": 1,
+  "script": {
+    "episode": 1,
+    "fullText": "小李：你来了。\n小李：我等了很久。\n小王：抱歉迟到了。\n小李：把门关上。\n小王：那就快说。\n小李：我们谈谈正事。"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    },
+    {
+      "id": "c-wang",
+      "name": "小王",
+      "role": "配角",
+      "visualLock": "长发",
+      "costume": "夹克",
+      "signatureProp": "背包"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李：你来了。",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    },
+    {
+      "id": "s1-2",
+      "shotNo": 2,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小王：抱歉迟到了。",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    },
+    {
+      "id": "s1-3",
+      "shotNo": 3,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李：把门关上。",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    },
+    {
+      "id": "s1-4",
+      "shotNo": 4,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小王：那就快说。",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "checked",
+    "definiteMissingCount": 2,
+    "findings": [
+      {
+        "code": "dialogue_missing",
+        "lineText": "我等了很久。",
+        "occurrence": 1,
+        "confidence": "definite",
+        "episode": 1,
+        "severity": "error"
+      },
+      {
+        "code": "dialogue_missing",
+        "lineText": "我们谈谈正事。",
+        "occurrence": 1,
+        "confidence": "definite",
+        "episode": 1,
+        "severity": "error"
+      }
+    ]
+  }
+}

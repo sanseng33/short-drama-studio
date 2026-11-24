@@ -1,7 +1,13 @@
 import type { ProjectApi } from '../hooks/useProject'
+import { isOutlineLocked, overwriteLockedOutlineMessage } from '../lib/consistency/factLocks'
 
 export function Outline({ api }: { api: ProjectApi }) {
-  const { project, setProject, genOutlineTemplate, genOutlineLlm, busy, llm } = api
+  const { project, setProject, genOutlineTemplate, genOutlineLlm, busy, llm, toggleOutlineLock } = api
+  const outlineLocked = isOutlineLocked(project)
+  const runOutlineGen = (fn: (opts?: { confirmOverwrite?: boolean }) => void) => {
+    if (outlineLocked && !window.confirm(overwriteLockedOutlineMessage())) return
+    fn(outlineLocked ? { confirmOverwrite: true } : undefined)
+  }
   const hasKey = Boolean(llm.apiKey.trim())
 
   return (
@@ -14,13 +20,17 @@ export function Outline({ api }: { api: ProjectApi }) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="btn-primary" onClick={genOutlineTemplate} disabled={busy}>
+          <label className="flex items-center gap-1 text-xs text-ink-muted">
+            <input type="checkbox" checked={outlineLocked} onChange={() => toggleOutlineLock()} />
+            锁定大纲
+          </label>
+          <button type="button" className="btn-primary" onClick={() => runOutlineGen(genOutlineTemplate)} disabled={busy}>
             模板生成
           </button>
           <button
             type="button"
             className="btn-outline"
-            onClick={genOutlineLlm}
+            onClick={() => runOutlineGen(genOutlineLlm)}
             disabled={busy || !hasKey}
             title={!hasKey ? '请先在设置中填写 API Key' : ''}
           >

@@ -1,0 +1,97 @@
+{
+  "id": "F08",
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    },
+    {
+      "id": "c-wang",
+      "name": "小王",
+      "role": "配角",
+      "visualLock": "长发",
+      "costume": "夹克",
+      "signatureProp": "背包"
+    }
+  ],
+  "cases": [
+    {
+      "id": "F08a",
+      "script": {
+        "episode": 1,
+        "fullText": "小李、小王：好的，我们走。"
+      },
+      "shots": [
+        {
+          "id": "s1-1",
+          "shotNo": 1,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李：好的，我们走。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        },
+        {
+          "id": "s1-2",
+          "shotNo": 2,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小王：好的，我们走。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        }
+      ],
+      "expect": {
+        "status": "checked",
+        "definiteMissingCount": 0,
+        "findings": []
+      }
+    },
+    {
+      "id": "F08b",
+      "script": {
+        "episode": 1,
+        "fullText": "小李、小王：好的，我们走。"
+      },
+      "shots": [
+        {
+          "id": "s1-1",
+          "shotNo": 1,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李：好的，我们走。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景"
+        }
+      ],
+      "expect": {
+        "status": "checked",
+        "definiteMissingCount": 1,
+        "findings": [
+          {
+            "code": "dialogue_missing",
+            "lineText": "好的，我们走。",
+            "occurrence": 1,
+            "confidence": "definite",
+            "episode": 1,
+            "severity": "error",
+            "evidence": "P7 拆出的小王那份未出现"
+          }
+        ]
+      }
+    }
+  ]
+}

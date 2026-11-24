@@ -1,5 +1,9 @@
 import type { ProjectApi } from '../hooks/useProject'
 import { CopyButton } from './CopyButton'
+import { FindingsBanner } from './FindingsBanner'
+import { isScriptLocked } from '../lib/consistency/factLocks'
+import { decideScriptGeneration } from '../lib/consistency/scriptLockGuards'
+import { staleMessage } from '../lib/consistency/stale'
 
 export function ScriptPanel({ api }: { api: ProjectApi }) {
   const {
@@ -9,11 +13,20 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
     genScriptLlm,
     busy,
     llm,
+    recheckDialogue,
+    toggleScriptLock,
   } = api
   const hasKey = Boolean(llm.apiKey.trim())
   const ep = project.selectedEpisode
   const script = project.scripts[ep]
   const outline = project.outline.find((o) => o.episode === ep)
+  const scriptLocked = isScriptLocked(project, ep)
+  const runScriptGen = (fn: (opts?: { confirmOverwrite?: boolean }) => void) => {
+    const d = decideScriptGeneration(project, ep, (m) => window.confirm(m))
+    if (!d.proceed) return
+    fn(d.opts)
+  }
+  const staleReason = project.stale?.storyboards?.[ep]
 
   return (
     <div className="space-y-5">
@@ -27,7 +40,7 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-ink-muted">当前集</label>
           <select
-            className="field !w-auto"
+            className="field !w-auto min-w-0 max-w-full"
             value={ep}
             onChange={(e) => update({ selectedEpisode: Number(e.target.value) })}
           >
@@ -37,19 +50,38 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
               </option>
             ))}
           </select>
-          <button type="button" className="btn-primary" onClick={genScriptTemplate} disabled={busy}>
+          <label className="flex items-center gap-1 text-xs text-ink-muted">
+            <input type="checkbox" checked={scriptLocked} onChange={() => toggleScriptLock(ep)} />
+            锁定本集剧本
+          </label>
+          <button type="button" className="btn-primary" onClick={() => runScriptGen(genScriptTemplate)} disabled={busy}>
             模板生成
           </button>
           <button
             type="button"
             className="btn-outline"
-            onClick={genScriptLlm}
+            onClick={() => runScriptGen(genScriptLlm)}
             disabled={busy || !hasKey}
           >
             用 LLM 生成
           </button>
         </div>
       </header>
+
+      {staleReason ? (
+        <div className="panel flex flex-wrap items-center gap-2 border border-amber-500/40 p-3 text-sm text-amber-200">
+          <span className="min-w-0 break-words">{staleMessage(staleReason)}</span>
+          <button type="button" className="btn-ghost !py-1 text-xs" onClick={() => recheckDialogue(ep)}>
+            重新检查
+          </button>
+        </div>
+      ) : null}
+
+      <FindingsBanner
+        title="台词完整性"
+        snapshot={project.dialogueAudit?.[ep]}
+        onRecheck={() => recheckDialogue(ep)}
+      />
 
       {!outline && (
         <div className="panel p-4 text-sm text-amber-300/90">请先在「大纲」步骤生成分集大纲。</div>

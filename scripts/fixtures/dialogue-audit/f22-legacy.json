@@ -1,0 +1,42 @@
+{
+  "id": "F22",
+  "legacyFiles": [
+    {
+      "path": "../legacy-projects/no-schema-version.json",
+      "expectOpen": true,
+      "expectAuditStatus": "no_script"
+    },
+    {
+      "path": "../legacy-projects/no-fingerprints.json",
+      "expectOpen": true,
+      "expectAuditStatus": "no_script"
+    },
+    {
+      "path": "../legacy-projects/no-script.json",
+      "expectOpen": true,
+      "expectAuditStatus": "no_script"
+    },
+    {
+      "path": "../legacy-projects/only-setting-facts.json",
+      "expectOpen": true,
+      "expectAuditStatus": "no_script",
+      "note": "只有 settingFacts 数组"
+    },
+    {
+      "path": "../legacy-projects/script-no-storyboard.json",
+      "expectOpen": true,
+      "expectAuditStatus": "no_storyboard"
+    }
+  ],
+  "expect": {
+    "allOpenWithoutThrowing": true,
+    "statuses": [
+      "no_script",
+      "no_script",
+      "no_script",
+      "no_script",
+      "no_storyboard"
+    ],
+    "definiteMissingCount": 0
+  }
+}

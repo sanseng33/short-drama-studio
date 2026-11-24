@@ -1,0 +1,46 @@
+{
+  "id": "F18",
+  "script": {
+    "episode": 1,
+    "fullText": "时间：夜晚\n这一场他走进房间，说：「你好」"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "房间",
+      "action": "说话",
+      "dialogue": "",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "unparseable",
+    "definiteMissingCount": 0,
+    "findings": [
+      {
+        "code": "dialogue_unparseable",
+        "lineText": "这一场他走进房间，说：「你好」",
+        "occurrence": 1,
+        "confidence": "unknown",
+        "episode": 1,
+        "severity": "warning",
+        "evidence": "P6 说话人过长或含标点；时间： 行为保留标签忽略"
+      }
+    ]
+  }
+}
