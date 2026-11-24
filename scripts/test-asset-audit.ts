@@ -5,7 +5,7 @@ import { auditAssets, canonicalizeLocations, lookCandidates } from '../src/lib/a
 import { applyDialogueAuditToProject, collectFindings } from '../src/lib/consistency/collect'
 import { refreshStale } from '../src/lib/consistency/stale'
 import { buildVideoPipelineExport } from '../src/lib/videoExport'
-import { acceptRisksForFindings } from '../src/lib/consistency/exportWarnings'
+import { acceptRisksForFindings, isPipelineJsonBlocked } from '../src/lib/consistency/exportWarnings'
 
 const shot = (partial: Partial<Shot> = {}): Shot => ({
   id: partial.id || 's1-1',
@@ -153,12 +153,16 @@ t('场景表去空并按 normalizeLocation 去重等价项', () => {
   assert.equal(list.filter((x) => x === '别墅客厅').length, 1)
 })
 
-t('collectFindings 含资产检查；一键/侧栏无阻断源码约定仍成立', () => {
+t('collectFindings 含资产检查 location_not_in_table；该提醒不改项目、不触发流水线 JSON 闸门', () => {
   const p = base()
   p.locations = ['客厅']
-  p.storyboards[1] = [shot({ location: '教室', visual: '窗边', characterIds: ['c1'] })]
+  p.storyboards[1] = [shot({ location: '教室', visual: '窗边', dialogue: '小李：你好。', characterIds: ['c1'] })]
+  const before = JSON.stringify(p)
   const all = collectFindings(p)
   assert.ok(all.some((f) => f.code === 'location_not_in_table'))
+  assert.equal(JSON.stringify(p), before)
+  // 资产提醒不是确定缺词，pipeline 导出闸门不拦截
+  assert.equal(isPipelineJsonBlocked(p), false)
 })
 
 console.log(`\n${pass} tests passed`)
