@@ -1,6 +1,6 @@
 /** PK-07：根据指纹判断分镜是否过时。无指纹则为未知，不显示过时。不清空分镜。 */
 import type { CheckFinding, Project, StaleReason } from '../../types'
-import { factsHash, scriptHash } from './fingerprint'
+import { charactersLookHash, factsHash, locationsHash, scriptHash } from './fingerprint'
 
 export function computeStoryboardStale(project: Project): Record<number, StaleReason> {
   const fp = project.fingerprints
@@ -12,6 +12,8 @@ export function computeStoryboardStale(project: Project): Record<number, StaleRe
     if (Number.isFinite(n) && project.storyboards[n]?.length) episodes.add(n)
   }
   const factsChanged = typeof fp.factsHash === 'string' && fp.factsHash !== factsHash(project.settingFacts)
+  const locChanged = typeof fp.locationsHash === 'string' && fp.locationsHash !== locationsHash(project.locations)
+  const lookChanged = typeof fp.charactersLookHash === 'string' && fp.charactersLookHash !== charactersLookHash(project.characters)
   for (const ep of [...episodes].sort((a, b) => a - b)) {
     const baseline = fp.scriptHashByEpisode?.[ep]
     if (typeof baseline === 'string') {
@@ -21,7 +23,15 @@ export function computeStoryboardStale(project: Project): Record<number, StaleRe
         continue
       }
     }
-    if (factsChanged) out[ep] = 'facts'
+    if (factsChanged) {
+      out[ep] = 'facts'
+      continue
+    }
+    if (locChanged) {
+      out[ep] = 'locations'
+      continue
+    }
+    if (lookChanged) out[ep] = 'characters'
   }
   return out
 }

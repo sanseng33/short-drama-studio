@@ -1,13 +1,17 @@
 import type { ProjectApi } from '../hooks/useProject'
 import type { ArtStyle, Genre, Platform, SettingFactItem } from '../types'
 import { itemsFromFacts } from '../lib/consistency/factLocks'
+import { canonicalizeLocations } from '../lib/assetAudit'
+import { collectFindings } from '../lib/consistency/collect'
+import { locationNamer } from '../lib/locationNorm'
+import { ConsistencyFindings } from './ConsistencyFindings'
 
 const GENRES: Genre[] = ['男频玄幻', '都市逆袭', '都市重生', '古风女频重生', '大女主']
 const PLATFORMS: Platform[] = ['红果', '抖音试水', '海外ReelShort']
 const STYLES: ArtStyle[] = ['2D国风', '2D日漫', '真人都市']
 
 export function ProjectSetup({ api }: { api: ProjectApi }) {
-  const { project, update, applyGenreDefaults, confirmFacts } = api
+  const { project, update, applyGenreDefaults, confirmFacts, ignoreFinding } = api
   const factItems: SettingFactItem[] =
     project.settingFactItems && project.settingFactItems.length
       ? project.settingFactItems
@@ -185,6 +189,30 @@ export function ProjectSetup({ api }: { api: ProjectApi }) {
           </div>
         </div>
       </div>
+
+      <div>
+        <label className="label">场景表（每行一个规范地名；编辑不会改写已有镜头）</label>
+        <textarea
+          className="field min-h-[72px]"
+          value={(project.locations || []).join('\n')}
+          onChange={(e) => update({ locations: e.target.value.split('\n') })}
+          onBlur={() =>
+            update({
+              locations: canonicalizeLocations(project.locations || [], locationNamer(project.characters)),
+            })
+          }
+          placeholder={'如：别墅客厅\n老楼窗边'}
+        />
+      </div>
+
+      <ConsistencyFindings
+        title="资产一致性"
+        findings={collectFindings(project).filter(
+          (f) => f.code === 'location_not_in_table' || f.code === 'character_look_not_in_shot' || f.code === 'stale_storyboard',
+        )}
+        emptyText="暂无资产检查提醒。"
+        onIgnore={ignoreFinding}
+      />
 
       <button type="button" className="btn-primary" onClick={applyGenreDefaults}>
         应用题材预设（可再改）

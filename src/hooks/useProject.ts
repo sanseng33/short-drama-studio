@@ -15,6 +15,8 @@ import {
 import { loadLlm, loadProject, saveLlm, saveProject } from '../lib/storage'
 import { generateStoryboardChecked, llmOf } from '../lib/generator'
 import { applyDialogueAuditToProject } from '../lib/consistency/collect'
+import type { CheckFinding } from '../lib/consistency/types'
+import { auditAssets } from '../lib/assetAudit'
 import { refreshStale } from '../lib/consistency/stale'
 import {
   isOutlineLocked,
@@ -248,7 +250,11 @@ export function useProject() {
 
   const recheckDialogue = useCallback((episode?: number) => {
     const ep = episode ?? project.selectedEpisode
-    setProject((p) => applyDialogueAuditToProject(p, ep))
+    setProject((p) => {
+      const next = applyDialogueAuditToProject(p, ep)
+      void auditAssets(next)
+      return next
+    })
     flash(`第${episode ?? project.selectedEpisode}集台词完整性已重新检查`)
   }, [flash, project.selectedEpisode])
 
@@ -271,6 +277,23 @@ export function useProject() {
     setProject((p) => ({ ...p, factsConfirmedAt: new Date().toISOString() }))
     flash('已确认设定事实')
   }, [flash])
+
+  const ignoreFinding = useCallback((finding: CheckFinding) => {
+    if (!finding.targetKey) return
+    setProject((p) => ({
+      ...p,
+      acceptedRisks: [
+        ...(p.acceptedRisks || []),
+        {
+          code: finding.code,
+          episode: finding.episode,
+          targetKey: finding.targetKey,
+          note: '用户忽略资产检查',
+          at: new Date().toISOString(),
+        },
+      ],
+    }))
+  }, [])
 
   return {
     project,
@@ -298,6 +321,7 @@ export function useProject() {
     toggleScriptLock,
     toggleOutlineLock,
     confirmFacts,
+    ignoreFinding,
   }
 }
 

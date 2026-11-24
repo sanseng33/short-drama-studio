@@ -1,6 +1,9 @@
 import { useRef, useState } from 'react'
 import type { ProjectApi } from '../hooks/useProject'
 import type { Character } from '../types'
+import { refreshStale } from '../lib/consistency/stale'
+import { auditAssets } from '../lib/assetAudit'
+import { ConsistencyFindings } from './ConsistencyFindings'
 import {
   CAST_PRESETS,
   CAST_SOFT_MAX,
@@ -26,15 +29,18 @@ type ImportState = {
 }
 
 export function Characters({ api }: { api: ProjectApi }) {
-  const { project, setProject, applyGenreDefaults, flash } = api
+  const { project, setProject, applyGenreDefaults, flash, ignoreFinding } = api
   const fileRef = useRef<HTMLInputElement>(null)
+  const lookFindings = auditAssets(project).filter((f) => f.code === 'character_look_not_in_shot')
   const [importState, setImportState] = useState<ImportState | null>(null)
 
   const updateChar = (id: string, patch: Partial<Character>) => {
-    setProject((p) => ({
-      ...p,
-      characters: p.characters.map((c) => (c.id === id ? { ...c, ...patch } : c)),
-    }))
+    setProject((p) =>
+      refreshStale({
+        ...p,
+        characters: p.characters.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+      }),
+    )
   }
 
   const addChar = () => {
@@ -160,6 +166,13 @@ export function Characters({ api }: { api: ProjectApi }) {
           </button>
         </div>
       </header>
+      <ConsistencyFindings
+        title="外观要点软检查"
+        findings={auditAssets(project).filter((f) => f.code === 'character_look_not_in_shot')}
+        emptyText="暂无外观要点提醒。"
+        onIgnore={ignoreFinding}
+      />
+
 
       {importState && (
         <div className="panel border-accent/40 p-4 space-y-3">

@@ -4,6 +4,7 @@ import { refreshStale, staleFindings } from './stale'
 import { scriptHash, shotsHash, buildFingerprints } from './fingerprint'
 import { auditEpisodeDialogue, buildDialogueAuditSnapshot } from '../dialogueAudit'
 import type { Project, Shot } from '../../types'
+import { auditAssets } from '../assetAudit'
 
 export function collectFindings(project: Project): CheckFinding[] {
   const out: CheckFinding[] = []
@@ -11,6 +12,7 @@ export function collectFindings(project: Project): CheckFinding[] {
     if (snap?.findings) out.push(...snap.findings)
   }
   out.push(...staleFindings(project))
+  out.push(...auditAssets(project))
   return out
 }
 

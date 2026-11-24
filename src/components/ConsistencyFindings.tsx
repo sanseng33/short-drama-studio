@@ -12,11 +12,13 @@ export function ConsistencyFindings({
   findings,
   emptyText,
   badge,
+  onIgnore,
 }: {
   title: string
   findings: CheckFinding[]
   emptyText?: string
   badge?: string | null
+  onIgnore?: (finding: CheckFinding) => void
 }) {
   const empty = emptyText ?? EXPORT_WARNINGS_EMPTY
   return (
@@ -39,6 +41,11 @@ export function ConsistencyFindings({
                 {ext.occurrence && ext.occurrence > 1 ? `（第 ${ext.occurrence} 次出现）` : ''}
                 {f.evidence ? ` — ${f.evidence}` : ''}
                 {f.episode ? ` · 第${f.episode}集` : ''}
+                {onIgnore && f.targetKey ? (
+                  <button type="button" className="btn-ghost ml-2 !py-0.5 text-[10px]" onClick={() => onIgnore(f)}>
+                    忽略
+                  </button>
+                ) : null}
               </li>
             )
           })}
