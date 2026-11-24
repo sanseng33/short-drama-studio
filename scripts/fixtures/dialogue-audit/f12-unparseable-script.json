@@ -1,0 +1,46 @@
+{
+  "id": "F12",
+  "script": {
+    "episode": 1,
+    "fullText": "场1 老旧小区 · 夜\n△ 小李站在窗前，看着对楼的灯光。"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "窗前",
+      "action": "说话",
+      "dialogue": "",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "unparseable",
+    "definiteMissingCount": 0,
+    "findings": [
+      {
+        "code": "dialogue_unparseable",
+        "lineText": "",
+        "occurrence": 1,
+        "confidence": "unknown",
+        "episode": 1,
+        "severity": "warning",
+        "evidence": "只有场次标题与动作，没有任何可解析台词行"
+      }
+    ]
+  }
+}

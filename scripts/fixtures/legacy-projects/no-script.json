@@ -1,0 +1,25 @@
+{
+  "id": "legacy-no-script",
+  "title": "无剧本",
+  "genre": "都市逆袭",
+  "platform": "红果",
+  "episodeCount": 1,
+  "secondsPerEp": 60,
+  "style": "真人都市",
+  "logline": "简介",
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "outline": [],
+  "scripts": {},
+  "storyboards": {},
+  "selectedEpisode": 1,
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}

@@ -1,0 +1,48 @@
+{
+  "id": "F06",
+  "script": {
+    "episode": 1,
+    "fullText": "小李：把门关上。\n小李：我们谈谈正事。"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李：把门关上。我们谈谈正事。",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "checked",
+    "definiteMissingCount": 0,
+    "findings": [
+      {
+        "code": "dialogue_merged",
+        "lineText": "把门关上。我们谈谈正事。",
+        "occurrence": 1,
+        "confidence": "definite",
+        "episode": 1,
+        "severity": "warning",
+        "shotIds": [
+          "s1-1"
+        ]
+      }
+    ]
+  }
+}

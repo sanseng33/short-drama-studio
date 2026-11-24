@@ -1,0 +1,54 @@
+{
+  "id": "F11",
+  "script": {
+    "episode": 1,
+    "fullText": "场1 老旧小区 · 夜\n小李：今晚会对上吗？"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "场1 老旧小区 · 夜",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "checked",
+    "definiteMissingCount": 1,
+    "findings": [
+      {
+        "code": "dialogue_missing",
+        "lineText": "今晚会对上吗？",
+        "occurrence": 1,
+        "confidence": "definite",
+        "episode": 1,
+        "severity": "error"
+      },
+      {
+        "code": "dialogue_extra",
+        "lineText": "场1 老旧小区 · 夜",
+        "occurrence": 1,
+        "confidence": "definite",
+        "episode": 1,
+        "severity": "info",
+        "evidence": "场次标题冒充对白，不能抵消缺失"
+      }
+    ]
+  }
+}

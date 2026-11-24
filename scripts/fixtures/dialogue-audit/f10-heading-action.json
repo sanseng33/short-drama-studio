@@ -1,0 +1,46 @@
+{
+  "id": "F10",
+  "script": {
+    "episode": 1,
+    "fullText": "场1 老旧小区 · 夜\n△ 小李站在窗前，看着对楼的灯光。\n小李：今晚会对上吗？"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "小李：今晚会对上吗？ 小李站在窗前，看着对楼的灯光。",
+      "action": "站在窗前",
+      "dialogue": "",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "checked",
+    "definiteMissingCount": 1,
+    "findings": [
+      {
+        "code": "dialogue_missing",
+        "lineText": "今晚会对上吗？",
+        "occurrence": 1,
+        "confidence": "definite",
+        "episode": 1,
+        "severity": "error",
+        "evidence": "画面/visual 不得使检查通过"
+      }
+    ]
+  }
+}

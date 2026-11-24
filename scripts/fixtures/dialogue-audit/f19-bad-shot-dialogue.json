@@ -1,0 +1,61 @@
+{
+  "id": "F19",
+  "script": {
+    "episode": 1,
+    "fullText": "小李：你来了。\n小李：把门关上。"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李：你来了。",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    },
+    {
+      "id": "s1-2",
+      "shotNo": 2,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": {
+        "oops": true
+      },
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "unparseable",
+    "definiteMissingCount": 0,
+    "findings": [
+      {
+        "code": "dialogue_unparseable",
+        "lineText": "",
+        "occurrence": 1,
+        "confidence": "unknown",
+        "episode": 1,
+        "severity": "warning",
+        "shotId": "s1-2",
+        "evidence": "分镜台词为非字符串，解析失败不计 definite"
+      }
+    ]
+  }
+}

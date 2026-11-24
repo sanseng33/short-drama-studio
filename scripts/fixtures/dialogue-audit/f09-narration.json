@@ -1,0 +1,89 @@
+{
+  "id": "F09",
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "cases": [
+    {
+      "id": "F09a",
+      "script": {
+        "episode": 1,
+        "fullText": "旁白：夜色很静。\n小李（OS）：你还在吗？\n内心：他不会回来了。"
+      },
+      "shots": [
+        {
+          "id": "s1-1",
+          "shotNo": 1,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "旁白：夜色很静。",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景",
+          "voiceOnly": [
+            "旁白"
+          ],
+          "voiceMode": "offscreen"
+        }
+      ],
+      "expect": {
+        "status": "checked",
+        "definiteMissingCount": 2,
+        "findings": [
+          {
+            "code": "dialogue_missing",
+            "lineText": "你还在吗？",
+            "occurrence": 1,
+            "confidence": "definite",
+            "episode": 1,
+            "severity": "error"
+          },
+          {
+            "code": "dialogue_missing",
+            "lineText": "他不会回来了。",
+            "occurrence": 1,
+            "confidence": "definite",
+            "episode": 1,
+            "severity": "error"
+          }
+        ]
+      }
+    },
+    {
+      "id": "F09b",
+      "script": {
+        "episode": 1,
+        "fullText": "小李（OS）：你还在吗？"
+      },
+      "shots": [
+        {
+          "id": "s1-1",
+          "shotNo": 1,
+          "size": "近景",
+          "durationSec": 3,
+          "visual": "室内",
+          "action": "说话",
+          "dialogue": "小李（内心）：你还在吗？",
+          "camera": "固定",
+          "emotion": "平静",
+          "seedancePrompt": "室内近景",
+          "voiceMode": "inner"
+        }
+      ],
+      "expect": {
+        "status": "checked",
+        "definiteMissingCount": 0,
+        "findings": []
+      }
+    }
+  ]
+}

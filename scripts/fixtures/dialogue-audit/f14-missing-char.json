@@ -1,0 +1,46 @@
+{
+  "id": "F14",
+  "script": {
+    "episode": 1,
+    "fullText": "小李：「你　　来了吗？」"
+  },
+  "characters": [
+    {
+      "id": "c-li",
+      "name": "小李",
+      "role": "主角",
+      "visualLock": "短发",
+      "costume": "白衬衫",
+      "signatureProp": "手表"
+    }
+  ],
+  "shots": [
+    {
+      "id": "s1-1",
+      "shotNo": 1,
+      "size": "近景",
+      "durationSec": 3,
+      "visual": "室内",
+      "action": "说话",
+      "dialogue": "小李: 你来吗?",
+      "camera": "固定",
+      "emotion": "平静",
+      "seedancePrompt": "室内近景"
+    }
+  ],
+  "expect": {
+    "status": "checked",
+    "definiteMissingCount": 0,
+    "findings": [
+      {
+        "code": "dialogue_needs_review",
+        "lineText": "你来了吗？",
+        "occurrence": 1,
+        "confidence": "fuzzy",
+        "episode": 1,
+        "severity": "warning",
+        "evidence": "少一个字，key 不同；Dice 约 0.40，落入 C2 待复核，不判通过、不计 definite 缺失"
+      }
+    ]
+  }
+}
