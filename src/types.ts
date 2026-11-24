@@ -1,3 +1,18 @@
+import type {
+  AcceptedRisk,
+  DialogueAuditSnapshot,
+  SourceFingerprint,
+} from './lib/consistency/types'
+
+export type {
+  AcceptedRisk,
+  CheckFinding,
+  CheckSeverity,
+  DialogueAuditSnapshot,
+  SourceFingerprint,
+} from './lib/consistency/types'
+export { KNOWN_SCHEMA_VERSION, PROJECT_BACKUP_KEY } from './lib/consistency/types'
+
 export type Genre =
   | '男频玄幻'
   | '都市逆袭'
@@ -223,6 +238,11 @@ export interface Project {
   storyboards: Record<number, Shot[]>
   selectedEpisode: number
   updatedAt: string
+  /** 写入 2；读取缺省按 1。旧项目缺省此字段。 */
+  schemaVersion?: number
+  fingerprints?: SourceFingerprint
+  acceptedRisks?: AcceptedRisk[]
+  dialogueAudit?: Record<number, DialogueAuditSnapshot>
 }
 
 export interface LlmSettings {
