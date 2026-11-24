@@ -33,11 +33,19 @@ function normalizeFingerprints(v: unknown): SourceFingerprint | undefined {
   const scriptHashByEpisode = isPlainObject(v.scriptHashByEpisode)
     ? (v.scriptHashByEpisode as Record<number, string>)
     : undefined
+  const record = (x: unknown): Record<number, string> | undefined =>
+    isPlainObject(x) ? (x as Record<number, string>) : undefined
+  const factsHashByEpisode = record(v.factsHashByEpisode)
+  const locationsHashByEpisode = record(v.locationsHashByEpisode)
+  const charactersLookHashByEpisode = record(v.charactersLookHashByEpisode)
   return {
     ...(scriptHashByEpisode ? { scriptHashByEpisode } : {}),
     ...(typeof v.factsHash === 'string' ? { factsHash: v.factsHash } : {}),
     ...(typeof v.locationsHash === 'string' ? { locationsHash: v.locationsHash } : {}),
     ...(typeof v.charactersLookHash === 'string' ? { charactersLookHash: v.charactersLookHash } : {}),
+    ...(factsHashByEpisode ? { factsHashByEpisode } : {}),
+    ...(locationsHashByEpisode ? { locationsHashByEpisode } : {}),
+    ...(charactersLookHashByEpisode ? { charactersLookHashByEpisode } : {}),
   }
 }
 

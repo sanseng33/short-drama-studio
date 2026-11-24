@@ -46,8 +46,8 @@ export function FindingsBanner({
           {findings.map((f) => {
             const ext = f as CheckFinding & { lineText?: string; accepted?: boolean }
             return (
-              <li key={f.id || `${f.code}-${f.message}`}>
-                <span className="font-mono">{f.code}</span>
+              <li key={f.id || `${f.code}-${f.message}`} className="break-words">
+                <span className="break-all font-mono">{f.code}</span>
                 {ext.accepted ? '（已接受）' : ''}
                 {ext.lineText || f.message ? ` · ${ext.lineText || f.message}` : ''}
                 {f.evidence ? ` — ${f.evidence}` : ''}

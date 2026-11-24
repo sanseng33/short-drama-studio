@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { ProjectApi } from '../hooks/useProject'
 import type { Character } from '../types'
-import { refreshStale } from '../lib/consistency/stale'
+import { ensureFingerprints, refreshStale } from '../lib/consistency/stale'
 import { auditAssets } from '../lib/assetAudit'
 import { ConsistencyFindings } from './ConsistencyFindings'
 import {
@@ -37,7 +37,7 @@ export function Characters({ api }: { api: ProjectApi }) {
   const updateChar = (id: string, patch: Partial<Character>) => {
     setProject((p) =>
       refreshStale({
-        ...p,
+        ...ensureFingerprints(p),
         characters: p.characters.map((c) => (c.id === id ? { ...c, ...patch } : c)),
       }),
     )
@@ -220,7 +220,7 @@ export function Characters({ api }: { api: ProjectApi }) {
                   </div>
                   <span className="text-xs text-ink-faint">→</span>
                   <select
-                    className="field !w-auto min-w-[12rem] !py-1 text-xs"
+                    className="field !w-auto min-w-[12rem] max-w-full !py-1 text-xs"
                     value={actionSelectValue(a)}
                     onChange={(e) => {
                       const v = e.target.value

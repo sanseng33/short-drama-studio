@@ -64,7 +64,7 @@ export const IDEA_SYSTEM = `你是资深AI短剧/漫剧策划。用户会给出�
  "episodes": [{"title":"","summary":"本集剧情2-3句","hook":"开场3秒钩子或结尾悬念"}],
  "locations": ["全剧场景表：每个物理场所一个规范名（2-8字，如「病房」「公司会议室」「天台」），不带人名/梦中现实/时间/括号；全剧所有分集只能使用表中名字；4-12个"]
 }
-规则：角色 1-8 个（变体单独计数），每个角色必须填写 costume 与 signatureProp，不能留空。若某角色在故事中有明显不同的外观（如变帅前/变帅后、伪装、变身、易容、长大），拆成多个角色条目，name 写成「甲（之前）」「甲（之后）」（括号里写变化前后的造型），baseName 都写「甲」，各自 appearance/costume 明显不同。只写想法中明确出现或强烈暗示的角色，不要强行补齐男主/女主/反派。想法中写明的身份、家境、住处、时间点、年龄必须原样保留，不得套用题材套路（如「逆袭/底层/落魄」）改写。若设定含每集随机副作用/惩罚/技能，各集必须不同且不得重复，只用滑稽无害的效果，禁止性取向、性别认同、歧视、残障、疾病、宗教、色情相关内容。集数按想法体量合理决定（通常 3-12 集，想法很短时 3-5 集）。全部中文。`
+规则：角色 1-8 个（变体单独计数），每个角色必须填写 costume 与 signatureProp，不能留空。若某角色在故事中有明显不同的外观（如变帅前/变帅后、伪装、变身、易容、长大），拆成多个角色条目，name 写成「甲（之前）」「甲（之后）」（括号里写变化前后的造型），baseName 都写「甲」，各自 appearance/costume 明显不同。只写想法中明确出现或强烈暗示的角色，不要强行补齐男主/女主/反派。想法中写明的身份、家境、住处、时间点、年龄必须原样保留，不得套用题材套路（如「逆袭/底层/落魄」）改写。若设定含每集随机副作用/惩罚/技能，各集必须不同且不得重复，只用滑稽无害的效果，禁止性取向、性别认同、歧视、残障、疾病、宗教、色情相关内容。集数按想法体量合理决定（通常 3-12 集，想法很短时 3-5 集）；想法中明确写出集数（如“拍1集”“共6集”）时，episodes 数组必须正好等于该集数。全部中文。`
 
 /** Strip code fences / leading prose and parse the first JSON object. */
 export function parseIdeaJson(text: string): IdeaResult {
@@ -124,10 +124,11 @@ export function normalizeIdea(raw: Partial<IdeaResult>): IdeaResult {
 }
 
 export async function extractIdeaLlm(llm: LlmSettings, idea: string, signal?: AbortSignal): Promise<IdeaResult> {
-  const user = `想法如下：\n${idea}`
+  const declared = parseEpisodeCount(idea)
+  const user = `想法如下：\n${idea}${declared ? `\n\n集数固定为 ${declared} 集，episodes 数组必须正好 ${declared} 项。` : ''}`
   const first = await chatCompletion(llm, IDEA_SYSTEM, user, { signal, temperature: 0.6 })
   try {
-    return parseIdeaJson(first)
+    return applyDeclaredEpisodeCount(parseIdeaJson(first), declared)
   } catch {
     // retry once, explicitly demanding strict JSON
     const second = await chatCompletion(
@@ -136,7 +137,7 @@ export async function extractIdeaLlm(llm: LlmSettings, idea: string, signal?: Ab
       `${user}\n\n上一次输出无法解析为 JSON。请只输出一个合法 JSON 对象，不要任何其他文字。`,
       { signal, temperature: 0.3 },
     )
-    return parseIdeaJson(second)
+    return applyDeclaredEpisodeCount(parseIdeaJson(second), declared)
   }
 }
 
@@ -199,6 +200,68 @@ export function toOutline(eps: IdeaEpisode[]): EpisodeOutline[] {
     summary: e.summary,
     cliffhanger: i < eps.length - 1 ? e.hook || `下一集：${eps[i + 1].title}` : e.hook || '全剧终',
   }))
+}
+
+/** 一键生成支持的最大集数（与 normalizeIdea 的上限一致）。 */
+export const MAX_IDEA_EPISODES = 30
+
+function fallbackEpisodeSummary(index: number, total: number): string {
+  return index === total - 1 ? '矛盾总爆发，主角完成反转。' : '冲突升级，主角陷入更大困境。'
+}
+
+const CN_DIGIT: Record<string, number> = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+
+/** 解析 1-99 的阿拉伯数字或中文数字（一…十、十一…九十九）；无法解析返回 undefined。 */
+function parseCountNumber(s: string): number | undefined {
+  if (/^\d+$/.test(s)) return Number(s)
+  if (s.includes('十')) {
+    const [head, tail, ...rest] = s.split('十')
+    if (rest.length) return undefined
+    const tens = head ? CN_DIGIT[head] : 1
+    const ones = tail ? CN_DIGIT[tail] : 0
+    if (tens === undefined || ones === undefined || tens < 1) return undefined
+    return tens * 10 + ones
+  }
+  return s.length === 1 ? CN_DIGIT[s] : undefined
+}
+
+const COUNT_NUM = '(\\d{1,3}|[零〇一二两三四五六七八九十]{1,3})'
+// 「1集」「一集」「拍1集」「想拍 6 集」「共十二集」。排除「第N集」（剧情里的集号）、「每/前/后N集」与「一集团」等词。
+const COUNT_PLAIN = new RegExp(`(?<![第每隔前后\\d.零〇一二两三四五六七八九十])${COUNT_NUM}\\s*集(?![团合中体市结成资])`, 'g')
+const COUNT_ORDINAL = new RegExp(`第\\s*${COUNT_NUM}\\s*集`, 'g')
+
+function clampCount(n: number | undefined): number | undefined {
+  if (n === undefined || !Number.isFinite(n) || n < 1) return undefined
+  return Math.min(n, MAX_IDEA_EPISODES)
+}
+
+/**
+ * 从想法文本解析用户写明的集数；没写明返回 undefined。结果限制在 1-30。
+ * 优先取「N集」写法（取第一处）；没有时再看「第N集」，多处提到时取最大集号。
+ */
+export function parseEpisodeCount(text: string): number | undefined {
+  if (!text) return undefined
+  for (const m of text.matchAll(COUNT_PLAIN)) {
+    const n = clampCount(parseCountNumber(m[1]))
+    if (n !== undefined) return n
+  }
+  let max: number | undefined
+  for (const m of text.matchAll(COUNT_ORDINAL)) {
+    const n = clampCount(parseCountNumber(m[1]))
+    if (n !== undefined && (max === undefined || n > max)) max = n
+  }
+  return max
+}
+
+/** 想法写明集数时，把 LLM 返回的 episodes 修正为该集数（多则截断，少则补占位）；未写明则原样返回。 */
+export function applyDeclaredEpisodeCount(result: IdeaResult, count: number | undefined): IdeaResult {
+  const n = clampCount(count)
+  if (n === undefined || result.episodes.length === n) return result
+  const episodes = result.episodes.slice(0, n)
+  for (let i = episodes.length; i < n; i++) {
+    episodes.push({ title: `第${i + 1}集`, summary: fallbackEpisodeSummary(i, n), hook: '悬念待补充' })
+  }
+  return { ...result, episodes }
 }
 
 // ---------- 启发式兜底（无 API Key） ----------
@@ -269,14 +332,16 @@ export function heuristicIdea(idea: string): IdeaResult {
   })
 
   const sentences = text.split(/(?<=[。！？!?\n])/).map((s) => s.trim()).filter(Boolean)
-  const epCount = Math.min(8, Math.max(3, Math.ceil(sentences.length / 2)))
+  // 想法里写明集数时以它为准；未写明时沿用原规则（3-8 集）。
+  const declared = parseEpisodeCount(text)
+  const epCount = declared ?? Math.min(8, Math.max(3, Math.ceil(sentences.length / 2)))
   const per = Math.max(1, Math.ceil(sentences.length / epCount))
   const episodes: IdeaEpisode[] = []
   for (let i = 0; i < epCount; i++) {
     const chunk = sentences.slice(i * per, (i + 1) * per).join('')
     episodes.push({
       title: `第${i + 1}集`,
-      summary: chunk || (i === epCount - 1 ? '矛盾总爆发，主角完成反转。' : '冲突升级，主角陷入更大困境。'),
+      summary: chunk || fallbackEpisodeSummary(i, epCount),
       hook: chunk ? chunk.slice(0, 24) : '悬念待补充',
     })
   }

@@ -13,7 +13,7 @@ import {
   isScriptLocked,
   overwriteLockedScriptMessage,
 } from '../src/lib/consistency/factLocks'
-import { computeStoryboardStale, refreshStale, staleFindings, staleMessage } from '../src/lib/consistency/stale'
+import { computeStoryboardStale, ensureFingerprints, refreshStale, staleFindings, staleMessage } from '../src/lib/consistency/stale'
 import {
   applyOneClickScript,
   applyOneClickStoryboard,
@@ -155,6 +155,63 @@ t('无指纹的旧项目不显示过时，审计后写入基线', () => {
   assert.ok(!next.stale?.storyboards?.[1])
 })
 
+t('ensureFingerprints：无基线时补基线，不产生过时；已有基线时原样返回', () => {
+  const p = base()
+  const seeded = ensureFingerprints(p)
+  assert.ok(seeded.fingerprints?.factsHash)
+  assert.equal(seeded.fingerprints?.locationsHash, buildFingerprints(p).locationsHash)
+  assert.deepEqual(computeStoryboardStale(seeded), {})
+  assert.equal(refreshStale(seeded).stale, undefined)
+  assert.equal(ensureFingerprints(seeded), seeded)
+  assert.equal(p.fingerprints, undefined)
+})
+
+t('从未审计的项目：先补基线再改设定事实，当前集出现 facts 过时，重新检查后清除', () => {
+  const before = base()
+  assert.equal(before.fingerprints, undefined)
+  // 与 useProject.update 相同的顺序：先 ensureFingerprints，再合并 patch，再 refreshStale
+  let p = refreshStale({ ...ensureFingerprints(before), settingFacts: ['甲家境贫寒，住老楼'] })
+  assert.equal(p.stale?.storyboards?.[1], 'facts')
+  assert.equal(staleMessage('facts'), '设定事实已改，分镜可能过时')
+  const shots = deep(p.storyboards)
+  p = applyDialogueAuditToProject(p, 1)
+  assert.equal(p.stale?.storyboards?.[1], undefined)
+  assert.deepEqual(p.storyboards, shots)
+  assert.ok(p.dialogueAudit?.[1])
+})
+
+t('从未审计的项目：改场景表出现 locations 过时，重新检查后清除', () => {
+  let p = refreshStale({ ...ensureFingerprints(base()), locations: ['老楼窗边'] })
+  assert.equal(p.stale?.storyboards?.[1], 'locations')
+  assert.equal(staleMessage('locations'), '场景表已改，分镜可能过时')
+  p = applyDialogueAuditToProject(p, 1)
+  assert.equal(p.stale?.storyboards?.[1], undefined)
+})
+
+t('从未审计的项目：改角色外观出现 characters 过时；剧本改动优先报 script', () => {
+  const b = ensureFingerprints(base())
+  const looks = refreshStale({ ...b, characters: [{ ...b.characters[0], costume: '黑色西装' }] })
+  assert.equal(looks.stale?.storyboards?.[1], 'characters')
+  assert.equal(staleMessage('characters'), '角色外观已改，分镜可能过时')
+  const script = refreshStale({
+    ...b,
+    settingFacts: ['改过'],
+    scripts: { ...b.scripts, 1: { ...b.scripts[1], fullText: '小李：改过剧本。' } },
+  })
+  assert.equal(script.stale?.storyboards?.[1], 'script')
+})
+
+t('未发生上游变更：补基线后不出现过时，也不写 stale 字段', () => {
+  const p = refreshStale(ensureFingerprints(base()))
+  assert.equal(p.stale, undefined)
+  assert.deepEqual(staleFindings(p), [])
+})
+
+t('无分镜的集不显示过时', () => {
+  const p = refreshStale({ ...ensureFingerprints({ ...base(), storyboards: {} }), settingFacts: ['改过'] })
+  assert.equal(p.stale, undefined)
+})
+
 t('覆盖已锁定剧本需显式确认；取消则剧本分镜不变（ScriptPanel 决策 + useProject 更新函数）', () => {
   const p: Project = { ...base(), locks: { scripts: { 1: true } } }
   assert.equal(isScriptLocked(p, 1), true)
@@ -282,6 +339,127 @@ t('事实变化可标记 facts stale；导出 schema 仍为 @1 且 shots 不变'
   assert.equal(a.schema, 'short-drama-studio/video-pipeline@1')
   assert.deepEqual(JSON.parse(exportBefore).shots, JSON.parse(exportAfter).shots)
   assert.equal(JSON.parse(exportAfter).schema, 'short-drama-studio/video-pipeline@1')
+})
+
+// ---- 多集：只重新检查一集，不得清掉其他集尚未复核的上游变更 ----
+const twoEps = (): Project => ({
+  ...base(),
+  episodeCount: 2,
+  locations: ['别墅客厅'],
+  outline: [
+    { episode: 1, title: '第一集', hook: 'h', summary: 's', cliffhanger: 'c' },
+    { episode: 2, title: '第二集', hook: 'h', summary: 's', cliffhanger: 'c' },
+  ],
+  scripts: {
+    1: { episode: 1, title: '第一集', beats: [], fullText: '小李：谁？' },
+    2: { episode: 2, title: '第二集', beats: [], fullText: '小李：你来了。' },
+  },
+  storyboards: {
+    1: [shot({ id: 's1-1', dialogue: '小李：谁？' })],
+    2: [shot({ id: 's2-1', dialogue: '小李：你来了。' })],
+  },
+})
+
+t('多集：改设定事实后两集都过时；只检查第 1 集仅清第 1 集，检查第 2 集后全部清除', () => {
+  // 与 useProject.update 相同顺序：ensureFingerprints → 合并 patch → refreshStale
+  let p = refreshStale({ ...ensureFingerprints(twoEps()), settingFacts: ['甲家境贫寒，住老楼'] })
+  assert.deepEqual(p.stale?.storyboards, { 1: 'facts', 2: 'facts' })
+  const shots = deep(p.storyboards)
+  const factsBaseline = p.fingerprints?.factsHash
+
+  p = applyDialogueAuditToProject(p, 1)
+  assert.equal(p.stale?.storyboards?.[1], undefined)
+  assert.equal(p.stale?.storyboards?.[2], 'facts')
+  assert.equal(staleMessage(p.stale!.storyboards![2]), '设定事实已改，分镜可能过时')
+  assert.ok(collectFindings(p).some((f) => f.code === 'stale_storyboard' && f.episode === 2))
+  assert.ok(!collectFindings(p).some((f) => f.code === 'stale_storyboard' && f.episode === 1))
+  assert.equal(p.fingerprints?.factsHash, factsBaseline, '项目级基线不被单集检查刷新')
+  assert.ok(p.dialogueAudit?.[1])
+  assert.equal(p.dialogueAudit?.[2], undefined)
+  assert.deepEqual(p.storyboards, shots)
+
+  // 重复检查第 1 集也不影响第 2 集
+  p = applyDialogueAuditToProject(p, 1)
+  assert.equal(p.stale?.storyboards?.[2], 'facts')
+
+  p = applyDialogueAuditToProject(p, 2)
+  assert.equal(p.stale, undefined)
+  assert.ok(p.dialogueAudit?.[2])
+  assert.deepEqual(p.storyboards, shots)
+})
+
+t('多集：改场景表与角色外观同样按集保留过时', () => {
+  const locs = refreshStale({ ...ensureFingerprints(twoEps()), locations: ['老楼窗边'] })
+  assert.deepEqual(locs.stale?.storyboards, { 1: 'locations', 2: 'locations' })
+  const l1 = applyDialogueAuditToProject(locs, 1)
+  assert.equal(l1.stale?.storyboards?.[1], undefined)
+  assert.equal(l1.stale?.storyboards?.[2], 'locations')
+  assert.equal(staleMessage(l1.stale!.storyboards![2]), '场景表已改，分镜可能过时')
+  assert.equal(applyDialogueAuditToProject(l1, 2).stale, undefined)
+
+  const b = ensureFingerprints(twoEps())
+  const looks = refreshStale({ ...b, characters: [{ ...b.characters[0], costume: '黑色西装' }] })
+  assert.deepEqual(looks.stale?.storyboards, { 1: 'characters', 2: 'characters' })
+  const k1 = applyDialogueAuditToProject(looks, 1)
+  assert.equal(k1.stale?.storyboards?.[1], undefined)
+  assert.equal(k1.stale?.storyboards?.[2], 'characters')
+  assert.equal(applyDialogueAuditToProject(k1, 2).stale, undefined)
+})
+
+t('多集：检查第 1 集之后又改设定，第 1 集再次过时，第 2 集仍是过时', () => {
+  let p = refreshStale({ ...ensureFingerprints(twoEps()), settingFacts: ['乙'] })
+  p = applyDialogueAuditToProject(p, 1)
+  p = refreshStale({ ...p, settingFacts: ['丙'] })
+  assert.deepEqual(p.stale?.storyboards, { 1: 'facts', 2: 'facts' })
+  p = applyDialogueAuditToProject(p, 1)
+  p = applyDialogueAuditToProject(p, 2)
+  assert.equal(p.stale, undefined)
+})
+
+t('多集：只改第 2 集剧本，检查第 1 集不清第 2 集的 script 过时；改第 2 集剧本不影响第 1 集', () => {
+  let p = applyDialogueAuditToProject(applyDialogueAuditToProject(ensureFingerprints(twoEps()), 1), 2)
+  assert.equal(p.stale, undefined)
+  p = refreshStale({
+    ...p,
+    scripts: { ...p.scripts, 2: { ...p.scripts[2], fullText: '小李：第二集改过了。' } },
+  })
+  assert.deepEqual(p.stale?.storyboards, { 2: 'script' })
+  p = applyDialogueAuditToProject(p, 1)
+  assert.deepEqual(p.stale?.storyboards, { 2: 'script' })
+  assert.equal(staleMessage(p.stale!.storyboards![2]), '剧本已改，分镜可能过时')
+  p = applyDialogueAuditToProject(p, 2)
+  assert.equal(p.stale, undefined)
+  assert.equal(p.fingerprints?.scriptHashByEpisode?.[2], scriptHash('小李：第二集改过了。'))
+})
+
+t('多集：第 2 集既改剧本又有设定变更，只检查第 1 集后第 2 集仍报 script', () => {
+  let p = refreshStale({
+    ...ensureFingerprints(twoEps()),
+    settingFacts: ['丁'],
+  })
+  p = refreshStale({ ...p, scripts: { ...p.scripts, 2: { ...p.scripts[2], fullText: '小李：改。' } } })
+  assert.equal(p.stale?.storyboards?.[2], 'script')
+  p = applyDialogueAuditToProject(p, 1)
+  assert.equal(p.stale?.storyboards?.[1], undefined)
+  assert.equal(p.stale?.storyboards?.[2], 'script')
+})
+
+t('多集：无上游变更时，检查任一集都不产生过时', () => {
+  const p = applyDialogueAuditToProject(ensureFingerprints(twoEps()), 1)
+  assert.equal(p.stale, undefined)
+  assert.deepEqual(computeStoryboardStale(p), {})
+})
+
+t('迁移保留按集基线字段', () => {
+  let p = refreshStale({ ...ensureFingerprints(twoEps()), settingFacts: ['戊'] })
+  p = applyDialogueAuditToProject(p, 1)
+  const raw = JSON.parse(JSON.stringify(p)) as Record<string, unknown>
+  const r = migrateProject(raw)
+  assert.equal(r.ok, true)
+  if (!r.ok) return
+  assert.deepEqual(r.project.fingerprints?.factsHashByEpisode, p.fingerprints?.factsHashByEpisode)
+  assert.equal(refreshStale(r.project).stale?.storyboards?.[2], 'facts')
+  assert.equal(refreshStale(r.project).stale?.storyboards?.[1], undefined)
 })
 
 t('Sidebar 未增加完成门禁（源码检查）', () => {

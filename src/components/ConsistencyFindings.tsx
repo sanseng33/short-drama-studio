@@ -34,8 +34,8 @@ export function ConsistencyFindings({
           {findings.map((f) => {
             const ext = f as CheckFinding & { lineText?: string; accepted?: boolean; occurrence?: number }
             return (
-              <li key={f.id || `${f.code}-${f.episode}-${f.message}`} className={TONE[f.severity] || TONE.info}>
-                <span className="font-mono">{f.code}</span>
+              <li key={f.id || `${f.code}-${f.episode}-${f.message}`} className={`break-words ${TONE[f.severity] || TONE.info}`}>
+                <span className="break-all font-mono">{f.code}</span>
                 {ext.accepted ? '（已接受）' : ''}
                 {ext.lineText || f.message ? ` · ${ext.lineText || f.message}` : ''}
                 {ext.occurrence && ext.occurrence > 1 ? `（第 ${ext.occurrence} 次出现）` : ''}

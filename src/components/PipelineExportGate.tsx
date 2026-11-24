@@ -43,7 +43,7 @@ export function usePipelineExportGate(api: Pick<ProjectApi, 'project' | 'setProj
   }
 
   const gatePanel = gateOpen ? (
-    <div className="panel space-y-3 border border-amber-500/40 p-4 text-sm">
+    <div className="panel max-h-[70vh] space-y-3 overflow-y-auto break-words border border-amber-500/40 p-4 text-sm">
       <h3 className="font-medium">下载视频流水线 JSON 前需接受确定缺词风险</h3>
       <p className="text-xs text-ink-muted">
         下列台词在分镜中确定缺失。请逐条勾选确认后才能下载。此操作不会改写剧本或分镜对白。
@@ -56,16 +56,17 @@ export function usePipelineExportGate(api: Pick<ProjectApi, 'project' | 'setProj
               <label className="flex items-start gap-2">
                 <input
                   type="checkbox"
+                  className="mt-0.5 shrink-0"
                   checked={!!checked[key]}
                   onChange={(e) => setChecked((c) => ({ ...c, [key]: e.target.checked }))}
                 />
-                <span>{formatMissingLine(f)}</span>
+                <span className="min-w-0 break-words">{formatMissingLine(f)}</span>
               </label>
             </li>
           )
         })}
       </ul>
-      <div className="flex flex-wrap gap-2">
+      <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-wrap gap-2 rounded-b-xl border-t border-surface-700 bg-surface-900 px-4 py-3">
         <button type="button" className="btn-primary" disabled={!allChecked} onClick={confirm}>
           确认接受并下载
         </button>

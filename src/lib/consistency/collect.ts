@@ -1,7 +1,14 @@
 /** PK-05：把各集台词审计汇总进项目（不写回对白，不阻断生成）。 */
 import type { AcceptedRisk, CheckFinding, DialogueAuditSnapshot } from './types'
 import { refreshStale, staleFindings } from './stale'
-import { scriptHash, shotsHash, buildFingerprints } from './fingerprint'
+import {
+  buildFingerprints,
+  charactersLookHash,
+  factsHash,
+  locationsHash,
+  scriptHash,
+  shotsHash,
+} from './fingerprint'
 import { auditEpisodeDialogue, buildDialogueAuditSnapshot } from '../dialogueAudit'
 import type { Project, Shot } from '../../types'
 import { auditAssets } from '../assetAudit'
@@ -29,12 +36,20 @@ export function applyDialogueAuditToProject(
   })
   const snapshot: DialogueAuditSnapshot = buildDialogueAuditSnapshot(result, script?.fullText || '', shots)
   const dialogueAudit = { ...(project.dialogueAudit || {}), [episode]: snapshot }
+  // 只记录本集复核时的基线；项目级 factsHash / locationsHash / charactersLookHash 保持不动，
+  // 否则其他尚未复核的集会因同一批上游变更而被悄悄清掉过时标记。无指纹时按当前设定补项目级基线。
+  const prev = project.fingerprints || buildFingerprints(project)
   const fingerprints = {
-    ...(project.fingerprints || {}),
-    ...buildFingerprints(project),
+    ...prev,
     scriptHashByEpisode: {
-      ...(project.fingerprints?.scriptHashByEpisode || {}),
+      ...(prev.scriptHashByEpisode || {}),
       [episode]: scriptHash(script?.fullText || ''),
+    },
+    factsHashByEpisode: { ...(prev.factsHashByEpisode || {}), [episode]: factsHash(project.settingFacts) },
+    locationsHashByEpisode: { ...(prev.locationsHashByEpisode || {}), [episode]: locationsHash(project.locations) },
+    charactersLookHashByEpisode: {
+      ...(prev.charactersLookHashByEpisode || {}),
+      [episode]: charactersLookHash(project.characters),
     },
   }
   void shotsHash

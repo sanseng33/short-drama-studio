@@ -40,7 +40,7 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
         <div className="flex flex-wrap items-center gap-2">
           <label className="text-xs text-ink-muted">当前集</label>
           <select
-            className="field !w-auto"
+            className="field !w-auto min-w-0 max-w-full"
             value={ep}
             onChange={(e) => update({ selectedEpisode: Number(e.target.value) })}
           >
@@ -69,9 +69,9 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
       </header>
 
       {staleReason ? (
-        <div className="panel border border-amber-500/40 p-3 text-sm text-amber-200">
-          {staleMessage(staleReason)}
-          <button type="button" className="btn-ghost ml-2 !py-1 text-xs" onClick={() => recheckDialogue(ep)}>
+        <div className="panel flex flex-wrap items-center gap-2 border border-amber-500/40 p-3 text-sm text-amber-200">
+          <span className="min-w-0 break-words">{staleMessage(staleReason)}</span>
+          <button type="button" className="btn-ghost !py-1 text-xs" onClick={() => recheckDialogue(ep)}>
             重新检查
           </button>
         </div>

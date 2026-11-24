@@ -135,7 +135,7 @@ export function ProjectSetup({ api }: { api: ProjectApi }) {
           {factItems.map((item, idx) => (
             <div key={item.id || idx} className="flex flex-wrap items-center gap-2">
               <input
-                className="field flex-1"
+                className="field min-w-0 flex-1 basis-full sm:basis-0"
                 value={item.text}
                 onChange={(e) => {
                   const settingFactItems = factItems.map((it, i) =>

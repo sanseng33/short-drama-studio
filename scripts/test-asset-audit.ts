@@ -165,4 +165,77 @@ t('collectFindings 含资产检查 location_not_in_table；该提醒不改项目
   assert.equal(isPipelineJsonBlocked(p), false)
 })
 
+// 第 1 镜带上与 base() 剧本一致的对白，确保没有确定缺词，闸门断言只受地点提醒影响
+const locShots = (): Shot[] => [
+  shot({ id: 'a', shotNo: 1, location: '教室', visual: '教室', dialogue: '小李：你好。', characterIds: ['c1'] }),
+  shot({ id: 'b', shotNo: 2, location: '教室', visual: '教室', characterIds: ['c1'] }),
+  shot({ id: 'c', shotNo: 3, location: '教室', visual: '教室', characterIds: ['c1'] }),
+  shot({ id: 'd', shotNo: 4, location: '教室', visual: '教室', characterIds: ['c1'] }),
+]
+
+t('同一地点出现在多个镜头：只产生一条 location_not_in_table', () => {
+  const p = base()
+  p.locations = ['别墅客厅']
+  p.storyboards[1] = locShots()
+  const found = auditAssets(p).filter((f) => f.code === 'location_not_in_table')
+  assert.equal(found.length, 1)
+  assert.equal(found[0].evidence, '教室')
+  assert.equal(found[0].shotId, 'a')
+  assert.ok(found[0].targetKey)
+})
+
+t('合并后的文案含镜头数与镜号', () => {
+  const p = base()
+  p.locations = ['别墅客厅']
+  p.storyboards[1] = locShots()
+  const [f] = auditAssets(p).filter((x) => x.code === 'location_not_in_table')
+  assert.equal(f.message, '分镜地点「教室」不在场景表（4 个镜头：#1 #2 #3 #4）')
+})
+
+t('不同地点仍是两条，且各自带自己的镜号', () => {
+  const p = base()
+  p.locations = ['别墅客厅']
+  p.storyboards[1] = [
+    ...locShots().slice(0, 2),
+    shot({ id: 'e', shotNo: 3, location: '操场', visual: '操场', characterIds: ['c1'] }),
+  ]
+  const found = auditAssets(p).filter((f) => f.code === 'location_not_in_table')
+  assert.equal(found.length, 2)
+  assert.notEqual(found[0].targetKey, found[1].targetKey)
+  const classroom = found.find((f) => f.evidence === '教室')
+  const field = found.find((f) => f.evidence === '操场')
+  assert.ok(classroom?.message.includes('2 个镜头：#1 #2'))
+  assert.ok(field?.message.includes('1 个镜头：#3'))
+})
+
+t('忽略合并后的一条，该地点的提醒整体消失，其他地点保留', () => {
+  const p = base()
+  p.locations = ['别墅客厅']
+  p.storyboards[1] = [
+    ...locShots(),
+    shot({ id: 'e', shotNo: 5, location: '操场', visual: '操场', characterIds: ['c1'] }),
+  ]
+  const found = auditAssets(p).filter((f) => f.code === 'location_not_in_table')
+  assert.equal(found.length, 2)
+  const classroom = found.find((f) => f.evidence === '教室')!
+  const next = acceptRisksForFindings(p, [classroom], '忽略', '2026-11-24T04:00:00.000Z')
+  const after = auditAssets(next).filter((f) => f.code === 'location_not_in_table')
+  assert.equal(after.length, 1)
+  assert.equal(after[0].evidence, '操场')
+  assert.equal(isPipelineJsonBlocked(next), false)
+})
+
+t('character_look_not_in_shot 对同一角色多镜头只出一条，不同角色各一条', () => {
+  const p = base()
+  p.characters.push({ id: 'c2', name: '小王', role: '配角', visualLock: '长发', costume: '蓝色西装', signatureProp: '公文包' })
+  p.storyboards[1] = [
+    shot({ id: 'a', shotNo: 1, visual: '窗边', characterIds: ['c1', 'c2'] }),
+    shot({ id: 'b', shotNo: 2, visual: '走廊', characterIds: ['c1', 'c2'] }),
+    shot({ id: 'c', shotNo: 3, visual: '门口', characterIds: ['c1'] }),
+  ]
+  const found = auditAssets(p).filter((f) => f.code === 'character_look_not_in_shot')
+  assert.equal(found.length, 2)
+  assert.deepEqual(found.map((f) => f.characterId).sort(), ['c1', 'c2'])
+})
+
 console.log(`\n${pass} tests passed`)

@@ -17,7 +17,7 @@ import { generateStoryboardChecked, llmOf } from '../lib/generator'
 import { applyDialogueAuditToProject } from '../lib/consistency/collect'
 import type { CheckFinding } from '../lib/consistency/types'
 import { auditAssets } from '../lib/assetAudit'
-import { refreshStale } from '../lib/consistency/stale'
+import { ensureFingerprints, refreshStale } from '../lib/consistency/stale'
 import {
   isOutlineLocked,
   overwriteLockedOutlineMessage,
@@ -64,7 +64,7 @@ export function useProject() {
 
   const update = useCallback((patch: Partial<Project>) => {
     setProject((p) => {
-      let next: Project = { ...p, ...patch }
+      let next: Project = { ...ensureFingerprints(p), ...patch }
       if (patch.settingFactItems) next = syncFactsProjection(next)
       return refreshStale(next)
     })

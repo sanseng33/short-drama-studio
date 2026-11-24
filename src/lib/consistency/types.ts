@@ -23,9 +23,14 @@ export interface CheckFinding {
 
 export interface SourceFingerprint {
   scriptHashByEpisode?: Record<number, string> // sha1Hex(fullText)
+  // 项目级基线：首次补基线时的设定快照，单集重新检查不改写。未单独复核的集与它比较。
   factsHash?: string // sha1Hex(JSON settingFacts)
   locationsHash?: string
   charactersLookHash?: string
+  // 按集基线：该集上次被重新检查时的设定快照。存在时优先于项目级基线。
+  factsHashByEpisode?: Record<number, string>
+  locationsHashByEpisode?: Record<number, string>
+  charactersLookHashByEpisode?: Record<number, string>
 }
 
 export interface AcceptedRisk {

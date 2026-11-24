@@ -65,20 +65,28 @@ export function auditAssets(project: Project): CheckFinding[] {
     const ordered = [...shots].sort((a, b) => (a.shotNo || 0) - (b.shotNo || 0))
 
     if (table.length) {
+      // 同一集内同一地点只出一条，附上涉及的镜头；targetKey 仍按（集, 地点）计算，忽略一次覆盖整条。
+      const byLocation = new Map<string, { loc: string; shots: Shot[] }>()
       for (const s of ordered) {
         const loc = (s.location || '').trim()
         if (!loc) continue
         const key = normalizeLocation(loc, namer) || loc
         if (tableKeys.has(key)) continue
+        const group = byLocation.get(key)
+        if (group) group.shots.push(s)
+        else byLocation.set(key, { loc, shots: [s] })
+      }
+      for (const [key, { loc, shots: locShots }] of byLocation) {
         const targetKey = assetTargetKey('location_not_in_table', episode, key)
         if (isAccepted(risks, targetKey, 'location_not_in_table', episode)) continue
+        const nos = locShots.map((s, i) => s.shotNo || i + 1)
         findings.push({
           id: targetKey,
           code: 'location_not_in_table',
           severity: 'warning',
           episode,
-          shotId: s.id,
-          message: `分镜地点「${loc}」不在场景表`,
+          shotId: locShots[0].id,
+          message: `分镜地点「${loc}」不在场景表（${locShots.length} 个镜头：${nos.map((n) => `#${n}`).join(' ')}）`,
           evidence: loc,
           confidence: 'definite',
           targetKey,
