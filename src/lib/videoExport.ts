@@ -4,6 +4,7 @@ import { mapNamesToIds, shotCharacterIds } from './shotCast'
 import { cleanField, cleanPrompt } from './placeholder'
 import { postProcessExport, type DialogueLineOut } from './segmentPost'
 import { missingVoices, type AutoVoice, type VoiceSpec } from './voice'
+import { buildAssetContract, type AssetContract } from './assetFeed'
 import { factsForShotPrompts, tierSettingFactsForPrompt, type SettingFactsByTier } from './settingFacts'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
@@ -177,7 +178,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing' | 'cast_consistency'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing' | 'cast_consistency' | 'asset_refset_missing' | 'asset_plate_missing' | 'asset_ref_file_missing' | 'asset_scene_id_missing' | 'asset_character_id_duplicate' | 'asset_reference_conflict' | 'asset_hash_unverified' | 'asset_binding_unused' | 'asset_costume_placeholder' | 'asset_costume_divergence'
   message: string
 }
 
@@ -196,6 +197,8 @@ export interface VideoPipelineOptions {
   splitCrossCut?: boolean
   /** with splitCrossCut: explicit { shotId: sceneId } place corrections */
   sceneOverrides?: Record<string, string>
+  /** opt-in (default false): throw AssetContractError when an on-screen binding is incomplete (no refSet / missing ref file / no sceneId / missing plate / duplicate characterId); it does not prove files are readable or hashes verified (see assetFeed.ts) */
+  assetContractStrict?: boolean
 }
 
 export interface VideoPipelineExport {
@@ -261,6 +264,8 @@ export interface VideoPipelineExport {
   sceneLighting?: Record<string, import('./blocking').SceneLighting>
   /** auto-designed voices of off-list speakers ({ description, id }, autoVoice: true) — review before TTS */
   autoVoices?: Record<string, AutoVoice>
+  /** immutable asset feed manifest `h3-feed@1` (assetFeed.ts); additive, old consumers ignore it */
+  assetContract?: AssetContract
 }
 
 // ---------------- text helpers (exported for tests / reuse) ----------------
@@ -1083,6 +1088,10 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     const id = m.slice(0, m.indexOf(':'))
     out.warnings.push({ episode: ep.get(id) ?? 0, shotId: id, code: 'voice_missing', message: `台词没有可用的音色：${m.slice(id.length + 2)}` })
   }
+  // additive asset feed manifest; throws only in strict mode (or on a fabricated-hash binding)
+  const feed = buildAssetContract(project, out, opts.assetContractStrict === true)
+  out.warnings.push(...feed.warnings)
+  out.assetContract = feed.contract
   return out
 }
 

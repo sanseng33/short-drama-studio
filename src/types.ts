@@ -86,7 +86,7 @@ export interface Character {
   /** keyword cues in shot visual/action text that switch the wardrobe state from that shot on */
   wardrobeCues?: { state: string; keywords: string[] }[]
     /** wardrobe state → character-pack reference set (lora_materials/datasets/<refSet>), null = none yet */
-    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string }>
+    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string; costume?: string; look?: string }>
   /**
    * LoRA / Omni multi-ref training materials from 定妆包.
    * Training-only: never inject into visual prompts, characterBrief, or inject_character_meta.
@@ -256,6 +256,29 @@ export interface Project {
   locks?: ProjectLocks
   stale?: ProjectStale
   sourceMode?: string
+  /** H3 feed contract inputs (assetFeed.ts): file bindings per character × wardrobe state and per sceneId. Separate from trainingAssets. */
+  assetBindings?: ProjectAssetBindings
+}
+
+/**
+ * One asset file binding supplied by the user / an import step.
+ * - `bytes`: only a caller that really holds the file bytes may pass them (never persisted); the builder computes SHA-256 from them.
+ * - `sha256` without `bytes` is accepted only with `origin: 'imported_manifest'` (hash copied from a user manifest, format-checked).
+ * - `path`: relative logical name, or an external reference (`/mnt/...`, `C:\...`, `http(s)://...`) that is never hashed.
+ */
+export interface AssetBindingInput {
+  path?: string
+  bytes?: Uint8Array
+  sha256?: string
+  origin?: 'local_computed' | 'imported_manifest' | 'external_unverified' | 'missing'
+  note?: string
+}
+
+export interface ProjectAssetBindings {
+  /** key: `${characterId}:${wardrobeState}` */
+  characters?: Record<string, AssetBindingInput>
+  /** key: sceneId (the export's `sceneId`, never `sceneIdExport`) */
+  scenes?: Record<string, AssetBindingInput>
 }
 
 

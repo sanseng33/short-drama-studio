@@ -666,6 +666,16 @@ t('P2 storyboard prompts mention optional location', () => {
   assert.ok(storyboardUser(project, { episode: 1, title: 't', hook: '', summary: '', cliffhanger: '' }, '').includes('location'))
 })
 
+t('assetContract: additive h3-feed@1 manifest; schema and shot/character fields unchanged', () => {
+  assert.equal(out.schema, 'short-drama-studio/video-pipeline@1')
+  assert.equal(out.assetContract?.version, 'h3-feed@1')
+  assert.equal(out.assetContract?.verification, 'static_only')
+  assert.equal(out.characters.length, chars.length)
+  assert.equal(out.assetContract!.characters.every((r) => r.file.sha256 === null), true)
+  assert.ok(out.assetContract!.gaps.every((g) => out.warnings.some((w) => w.code === g.code && w.shotId === g.shotId)))
+  assert.ok(!('trainingAssets' in out.characters[0]))
+})
+
 console.log('real2 stats', JSON.stringify({ segments: r2.shots.length, cueCount: cueIds.length, cueIds, overlayCount: r2.shots.flatMap((s) => s.overlayText).length,
   s1_12: { dialogue: r2s('s1-12').dialogue, speaker: r2s('s1-12').speaker }, s1_33: { dialogue: r2s('s1-33').dialogue, speaker: r2s('s1-33').speaker, overlay: r2s('s1-33').overlayText },
   timeConflicts: r2.warnings.filter((w) => w.code === 'time_conflict').map((w) => w.shotId) }))

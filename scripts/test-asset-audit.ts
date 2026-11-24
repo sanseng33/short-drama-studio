@@ -146,6 +146,18 @@ t('asset 检查不改变 pipeline 导出字节，schema 仍为 @1', () => {
   assert.equal(JSON.parse(a).schema, 'short-drama-studio/video-pipeline@1')
 })
 
+t('asset 检查不读写 assetContract：清单字节不变，且不引入 hash', () => {
+  const p = base()
+  p.storyboards[1] = [shot({ visual: '窗边', dialogue: '小李：你好。', characterIds: ['c1'] })]
+  const before = JSON.stringify(buildVideoPipelineExport(p).assetContract)
+  auditAssets(p)
+  collectFindings(p)
+  const after = JSON.stringify(buildVideoPipelineExport(p).assetContract)
+  assert.equal(before, after)
+  assert.equal(JSON.parse(after).version, 'h3-feed@1')
+  assert.ok(!/"sha256":"[0-9a-f]{64}"/.test(after))
+})
+
 t('场景表去空并按 normalizeLocation 去重等价项', () => {
   const list = canonicalizeLocations(['  别墅客厅  ', '', '别墅客厅', '客厅'])
   // 「客厅」与「别墅客厅」经 normalize 可能不同；至少去空与完全相同项
