@@ -1,5 +1,6 @@
 /** PK-05：把各集台词审计汇总进项目（不写回对白，不阻断生成）。 */
 import type { AcceptedRisk, CheckFinding, DialogueAuditSnapshot } from './types'
+import { refreshStale, staleFindings } from './stale'
 import { scriptHash, shotsHash, buildFingerprints } from './fingerprint'
 import { auditEpisodeDialogue, buildDialogueAuditSnapshot } from '../dialogueAudit'
 import type { Project, Shot } from '../../types'
@@ -9,6 +10,7 @@ export function collectFindings(project: Project): CheckFinding[] {
   for (const snap of Object.values(project.dialogueAudit || {})) {
     if (snap?.findings) out.push(...snap.findings)
   }
+  out.push(...staleFindings(project))
   return out
 }
 
@@ -34,7 +36,7 @@ export function applyDialogueAuditToProject(
     },
   }
   void shotsHash
-  return { ...project, dialogueAudit, fingerprints }
+  return refreshStale({ ...project, dialogueAudit, fingerprints })
 }
 
 export function applyDialogueAuditAll(project: Project): Project {

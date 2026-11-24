@@ -5,6 +5,7 @@ import { shotCharacterIds } from '../lib/shotCast'
 import { buildVideoPipelineExport, videoPipelineFilename } from '../lib/videoExport'
 import { downloadText } from '../lib/storage'
 import { FindingsBanner } from './FindingsBanner'
+import { staleMessage } from '../lib/consistency/stale'
 
 export function Storyboard({ api }: { api: ProjectApi }) {
   const {
@@ -18,6 +19,7 @@ export function Storyboard({ api }: { api: ProjectApi }) {
     recheckDialogue,
   } = api
   const hasKey = Boolean(llm.apiKey.trim())
+  const staleReason = project.stale?.storyboards?.[project.selectedEpisode]
   const ep = project.selectedEpisode
   const shots = project.storyboards[ep] || []
   const chars = project.characters
@@ -85,6 +87,15 @@ export function Storyboard({ api }: { api: ProjectApi }) {
           </button>
         </div>
       </header>
+
+      {staleReason ? (
+        <div className="panel border border-amber-500/40 p-3 text-sm text-amber-200">
+          {staleMessage(staleReason)}
+          <button type="button" className="btn-ghost ml-2 !py-1 text-xs" onClick={() => recheckDialogue(ep)}>
+            重新检查
+          </button>
+        </div>
+      ) : null}
 
       <FindingsBanner
         title="台词完整性"

@@ -1,6 +1,8 @@
 import type { ProjectApi } from '../hooks/useProject'
 import { CopyButton } from './CopyButton'
 import { FindingsBanner } from './FindingsBanner'
+import { isScriptLocked, overwriteLockedScriptMessage } from '../lib/consistency/factLocks'
+import { staleMessage } from '../lib/consistency/stale'
 
 export function ScriptPanel({ api }: { api: ProjectApi }) {
   const {
@@ -11,11 +13,18 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
     busy,
     llm,
     recheckDialogue,
+    toggleScriptLock,
   } = api
   const hasKey = Boolean(llm.apiKey.trim())
   const ep = project.selectedEpisode
   const script = project.scripts[ep]
   const outline = project.outline.find((o) => o.episode === ep)
+  const scriptLocked = isScriptLocked(project, ep)
+  const runScriptGen = (fn: (opts?: { confirmOverwrite?: boolean }) => void) => {
+    if (scriptLocked && !window.confirm(overwriteLockedScriptMessage(ep))) return
+    fn(scriptLocked ? { confirmOverwrite: true } : undefined)
+  }
+  const staleReason = project.stale?.storyboards?.[ep]
 
   return (
     <div className="space-y-5">
@@ -39,19 +48,32 @@ export function ScriptPanel({ api }: { api: ProjectApi }) {
               </option>
             ))}
           </select>
-          <button type="button" className="btn-primary" onClick={genScriptTemplate} disabled={busy}>
+          <label className="flex items-center gap-1 text-xs text-ink-muted">
+            <input type="checkbox" checked={scriptLocked} onChange={() => toggleScriptLock(ep)} />
+            锁定本集剧本
+          </label>
+          <button type="button" className="btn-primary" onClick={() => runScriptGen(genScriptTemplate)} disabled={busy}>
             模板生成
           </button>
           <button
             type="button"
             className="btn-outline"
-            onClick={genScriptLlm}
+            onClick={() => runScriptGen(genScriptLlm)}
             disabled={busy || !hasKey}
           >
             用 LLM 生成
           </button>
         </div>
       </header>
+
+      {staleReason ? (
+        <div className="panel border border-amber-500/40 p-3 text-sm text-amber-200">
+          {staleMessage(staleReason)}
+          <button type="button" className="btn-ghost ml-2 !py-1 text-xs" onClick={() => recheckDialogue(ep)}>
+            重新检查
+          </button>
+        </div>
+      ) : null}
 
       <FindingsBanner
         title="台词完整性"

@@ -145,14 +145,17 @@ t('无 fingerprints、scripts 缺失：规范为空对象，不崩溃', () => {
   assert.deepEqual(result.project.scripts, {})
 })
 
-t('只有 settingFacts 数组、无新字段：原样保留，不生成 items', () => {
+t('只有 settingFacts 数组、无新字段：生成未锁定 items，settingFacts 不变，不创建 locks/stale', () => {
   const raw = baseProject()
   delete raw.locations
   const result = migrateProject(raw)
   assert.equal(result.ok, true)
   if (!result.ok) return
   assert.deepEqual(result.project.settingFacts, ['甲家境富裕，住高档小区'])
-  assert.equal('settingFactItems' in (result.project as unknown as Record<string, unknown>), false)
+  const items = result.project.settingFactItems
+  assert.ok(Array.isArray(items) && items.length === 1)
+  assert.equal(items![0].text, '甲家境富裕，住高档小区')
+  assert.equal(items![0].locked, false)
   assert.equal('locks' in (result.project as unknown as Record<string, unknown>), false)
   assert.equal('stale' in (result.project as unknown as Record<string, unknown>), false)
 })
@@ -212,7 +215,7 @@ t('字段类型异常：内存按空数组处理，不写回原值', () => {
   assert.equal(memory.getItem(PROJECT_KEY), text)
 })
 
-t('往返：加载再保存后，除 schemaVersion 与 updatedAt 外既有字段深度相等', () => {
+t('往返：加载再保存后，除 schemaVersion、updatedAt 与追加的 items 外既有字段深度相等', () => {
   const raw = baseProject()
   const text = JSON.stringify(raw)
   memory.setItem(PROJECT_KEY, text)
@@ -222,9 +225,14 @@ t('往返：加载再保存后，除 schemaVersion 与 updatedAt 外既有字段
   saveProject(loaded!)
   const saved = JSON.parse(memory.getItem(PROJECT_KEY)!)
   assert.equal(saved.schemaVersion, KNOWN_SCHEMA_VERSION)
-  const { schemaVersion: _sv, updatedAt: _ua, ...restSaved } = saved
+  const { schemaVersion: _sv, updatedAt: _ua, settingFactItems, ...restSaved } = saved
   const { updatedAt: _ub, ...restRaw } = raw
   assert.deepEqual(restSaved, restRaw)
+  assert.ok(Array.isArray(settingFactItems))
+  assert.deepEqual(
+    settingFactItems.map((i: { text: string }) => i.text),
+    raw.settingFacts,
+  )
 })
 
 t('新建项目保存后写入 schemaVersion 2', () => {

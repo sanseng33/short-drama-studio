@@ -43,3 +43,21 @@ export interface DialogueAuditSnapshot {
   findings: CheckFinding[]
   checkedAt: string // ISO
 }
+
+export interface SettingFactItem {
+  id: string
+  text: string
+  locked?: boolean
+  source?: string
+}
+
+export type StaleReason = 'script' | 'facts' | 'locations' | 'characters'
+
+export interface ProjectLocks {
+  outline?: boolean
+  scripts?: Record<number, boolean>
+}
+
+export interface ProjectStale {
+  storyboards?: Record<number, StaleReason>
+}

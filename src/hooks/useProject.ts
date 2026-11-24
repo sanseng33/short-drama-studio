@@ -15,6 +15,14 @@ import {
 import { loadLlm, loadProject, saveLlm, saveProject } from '../lib/storage'
 import { generateStoryboardChecked, llmOf } from '../lib/generator'
 import { applyDialogueAuditToProject } from '../lib/consistency/collect'
+import { refreshStale } from '../lib/consistency/stale'
+import {
+  isOutlineLocked,
+  isScriptLocked,
+  overwriteLockedOutlineMessage,
+  overwriteLockedScriptMessage,
+  syncFactsProjection,
+} from '../lib/consistency/factLocks'
 import { mergeLockedCharacters } from '../lib/idea'
 import { outlineUser, scriptUser, storyboardUser } from '../lib/prompts'
 import { chatCompletion, OUTLINE_SYSTEM, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
@@ -53,7 +61,11 @@ export function useProject() {
   )
 
   const update = useCallback((patch: Partial<Project>) => {
-    setProject((p) => ({ ...p, ...patch }))
+    setProject((p) => {
+      let next: Project = { ...p, ...patch }
+      if (patch.settingFactItems) next = syncFactsProjection(next)
+      return refreshStale(next)
+    })
   }, [])
 
   const newProject = useCallback(() => {
@@ -86,26 +98,32 @@ export function useProject() {
     flash('已应用题材预设（画风 / logline / 推荐阵容，可再改）')
   }, [flash])
 
-  const genOutlineTemplate = useCallback(() => {
+  const genOutlineTemplate = useCallback((opts?: { confirmOverwrite?: boolean }) => {
     setProject((p) => {
       if (!p.characters.length) {
         flash('请至少保留 1 个角色再生成')
         return p
       }
+      if (isOutlineLocked(p) && !opts?.confirmOverwrite) return p
       return {
         ...p,
         outline: generateOutline(p.genre, p.episodeCount, p.title),
       }
     })
+    if (isOutlineLocked(project) && !opts?.confirmOverwrite) return
     flash('大纲已用模板生成')
-  }, [flash])
+  }, [flash, project])
 
-  const genOutlineLlm = useCallback(async () => {
+  const genOutlineLlm = useCallback(async (opts?: { confirmOverwrite?: boolean }) => {
     setBusy(true)
     setError('')
     try {
       const p = project
       const user = outlineUser(p)
+      if (isOutlineLocked(p) && !opts?.confirmOverwrite) {
+        flash(overwriteLockedOutlineMessage())
+        return
+      }
       const text = await chatCompletion(llm, OUTLINE_SYSTEM, user)
       const json = JSON.parse(text.replace(/^```json\s*|\s*```$/g, '').trim()) as EpisodeOutline[]
       setProject((prev) => ({ ...prev, outline: json }))
@@ -117,7 +135,7 @@ export function useProject() {
     }
   }, [flash, llm, project])
 
-  const genScriptTemplate = useCallback(() => {
+  const genScriptTemplate = useCallback((opts?: { confirmOverwrite?: boolean }) => {
     setProject((p) => {
       if (!p.characters.length) {
         flash('请至少保留 1 个角色再生成')
@@ -129,33 +147,41 @@ export function useProject() {
         flash('请先生成大纲')
         return p
       }
+      if (isScriptLocked(p, ep) && !opts?.confirmOverwrite) return p
       const script = generateScript(p.genre, ep, outline, p.characters, p.secondsPerEp)
-      return { ...p, scripts: { ...p.scripts, [ep]: script } }
+      return refreshStale({ ...p, scripts: { ...p.scripts, [ep]: script } })
     })
+    if (isScriptLocked(project, project.selectedEpisode) && !opts?.confirmOverwrite) return
     flash(`第${project.selectedEpisode}集剧本已模板生成`)
-  }, [flash, project.selectedEpisode])
+  }, [flash, project])
 
-  const genScriptLlm = useCallback(async () => {
+  const genScriptLlm = useCallback(async (opts?: { confirmOverwrite?: boolean }) => {
     setBusy(true)
     setError('')
     try {
       const p = project
       const outline = p.outline.find((o) => o.episode === p.selectedEpisode)
       if (!outline) throw new Error('请先生成大纲')
+      if (isScriptLocked(p, p.selectedEpisode) && !opts?.confirmOverwrite) {
+        flash(overwriteLockedScriptMessage(p.selectedEpisode))
+        return
+      }
       const user = scriptUser(p, outline)
       const text = await chatCompletion(llm, SCRIPT_SYSTEM, user)
-      setProject((prev) => ({
-        ...prev,
-        scripts: {
-          ...prev.scripts,
-          [p.selectedEpisode]: {
-            episode: p.selectedEpisode,
-            title: outline.title,
-            beats: [{ label: '全文', content: text }],
-            fullText: text,
+      setProject((prev) =>
+        refreshStale({
+          ...prev,
+          scripts: {
+            ...prev.scripts,
+            [p.selectedEpisode]: {
+              episode: p.selectedEpisode,
+              title: outline.title,
+              beats: [{ label: '全文', content: text }],
+              fullText: text,
+            },
           },
-        },
-      }))
+        }),
+      )
       flash('剧本已用 LLM 生成')
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -226,6 +252,26 @@ export function useProject() {
     flash(`第${episode ?? project.selectedEpisode}集台词完整性已重新检查`)
   }, [flash, project.selectedEpisode])
 
+  const toggleScriptLock = useCallback((episode?: number) => {
+    const ep = episode ?? project.selectedEpisode
+    setProject((p) => ({
+      ...p,
+      locks: {
+        ...p.locks,
+        scripts: { ...p.locks?.scripts, [ep]: !p.locks?.scripts?.[ep] },
+      },
+    }))
+  }, [project.selectedEpisode])
+
+  const toggleOutlineLock = useCallback(() => {
+    setProject((p) => ({ ...p, locks: { ...p.locks, outline: !p.locks?.outline } }))
+  }, [])
+
+  const confirmFacts = useCallback(() => {
+    setProject((p) => ({ ...p, factsConfirmedAt: new Date().toISOString() }))
+    flash('已确认设定事实')
+  }, [flash])
+
   return {
     project,
     setProject,
@@ -249,6 +295,9 @@ export function useProject() {
     genStoryboardTemplate,
     genStoryboardLlm,
     recheckDialogue,
+    toggleScriptLock,
+    toggleOutlineLock,
+    confirmFacts,
   }
 }
 

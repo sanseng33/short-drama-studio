@@ -334,3 +334,5 @@ export function mergeLockedCharacters(prev: Character[], next: Character[]): Cha
   for (const p of locked) if (!out.some((x) => x.name === p.name)) out.push({ ...p, id: `c${out.length + 1}` })
   return out
 }
+
+export { mergeLockedFacts } from './consistency/factLocks'

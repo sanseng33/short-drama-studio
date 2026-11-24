@@ -11,10 +11,12 @@ import {
   toCharacters,
   toOutline,
   mergeLockedCharacters,
+  mergeLockedFacts,
   type IdeaResult,
 } from '../lib/idea'
 import { generateStoryboardChecked, llmOf } from '../lib/generator'
 import { applyDialogueAuditToProject } from '../lib/consistency/collect'
+import { isScriptLocked, projectFactsFromItems } from '../lib/consistency/factLocks'
 import { withCharacterIdentity } from '../lib/voice'
 import { chatCompletion, SCRIPT_SYSTEM, STORYBOARD_SYSTEM } from '../lib/llm'
 import { scriptUser, storyboardUser } from '../lib/prompts'
@@ -44,6 +46,7 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
   const [steps, setSteps] = useState<PipeStep[]>([])
   const [running, setRunning] = useState(false)
   const [summary, setSummary] = useState('')
+  const [factsHint, setFactsHint] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
   const len = countChars(idea)
@@ -109,6 +112,18 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
       // identity rule: characterKey / refImage prefix / gender / auto voice (gender + age) for every character
       const characters = withCharacterIdentity(mergeLockedCharacters(prevProject.characters, toCharacters(result.characters)), result.title)
       const outline = toOutline(result.episodes)
+      const factItems = mergeLockedFacts(prevProject.settingFactItems, result.settingFacts)
+      const keptScripts: Record<number, EpisodeScript> = {}
+      const keptBoards: Record<number, Shot[]> = {}
+      const keptEpisodes: number[] = []
+      for (const [k, script] of Object.entries(prevProject.scripts || {})) {
+        const ep = Number(k)
+        if (!Number.isFinite(ep) || !isScriptLocked(prevProject, ep) || !script) continue
+        keptScripts[ep] = script
+        keptEpisodes.push(ep)
+        if (prevProject.storyboards?.[ep]?.length) keptBoards[ep] = prevProject.storyboards[ep]
+      }
+      keptEpisodes.sort((a, b) => a - b)
       let proj: Project = {
         id: `p_${Date.now()}`,
         title: result.title,
@@ -120,15 +135,17 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
         style,
         logline: result.logline,
         worldSetting: result.world,
-        settingFacts: result.settingFacts,
+        settingFactItems: factItems,
+        settingFacts: projectFactsFromItems(factItems),
         ...(result.locations?.length ? { locations: result.locations } : {}),
         source: 'idea',
         characters,
         outline,
-        scripts: {},
-        storyboards: {},
+        scripts: keptScripts,
+        storyboards: keptBoards,
         selectedEpisode: 1,
         updatedAt: new Date().toISOString(),
+        locks: prevProject.locks,
       }
       setProject(proj)
       patchStep('fill', { state: 'done', note: `题材 ${genre}${custom ? `（自定义：${custom}）` : ''} · 画风 ${style}` })
@@ -155,6 +172,10 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
               if (ac.signal.aborted) throw e
               warnings++
             }
+          }
+          if (isScriptLocked(prevProject, o.episode) && proj.scripts[o.episode]) {
+            patchStep('script', { note: `${i + 1} / ${targets.length}（保留锁定剧本）` })
+            continue
           }
           if (!script) script = generateScript(genre, o.episode, o, proj.characters, proj.secondsPerEp)
           proj = { ...proj, scripts: { ...proj.scripts, [o.episode]: script } }
@@ -183,6 +204,11 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
               warnings++
             }
           }
+          if (isScriptLocked(prevProject, o.episode) && proj.storyboards[o.episode]?.length) {
+            proj = applyDialogueAuditToProject(proj, o.episode)
+            patchStep('board', { note: `${i + 1} / ${targets.length}（保留已有分镜）` })
+            continue
+          }
           if (!shots) shots = generateStoryboard(genre, o.episode, o, script, proj.characters, style, proj.secondsPerEp)
           proj = applyDialogueAuditToProject({ ...proj, storyboards: { ...proj.storyboards, [o.episode]: shots } }, o.episode)
           const audited = proj
@@ -196,9 +222,13 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
         }
         patchStep('board', { state: 'done' })
       }
+      const keptNote = keptEpisodes.length
+        ? `已保留锁定剧本：第 ${keptEpisodes.join('、')} 集。`
+        : ''
       setSummary(
-        `完成！《${proj.title}》已生成。${warnings ? `其中 ${warnings} 次 LLM 调用失败，已用模板兜底。` : ''}各步骤结果均可在左侧「角色卡 / 大纲 / 分集剧本 / 分镜表」继续编辑。`,
+        `完成！《${proj.title}》已生成。${warnings ? `其中 ${warnings} 次 LLM 调用失败，已用模板兜底。` : ''}${keptNote}各步骤结果均可在左侧「角色卡 / 大纲 / 分集剧本 / 分镜表」继续编辑。`,
       )
+      setFactsHint(true)
       flash('一键生成完成')
     } catch (e) {
       const aborted = ac.signal.aborted || (e instanceof DOMException && e.name === 'AbortError')
@@ -225,6 +255,14 @@ export function IdeaPanel({ api }: { api: ProjectApi }) {
     <div className="space-y-5">
       <header>
         <h2 className="text-lg font-semibold">从想法一键生成</h2>
+        {factsHint ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-500/30 bg-amber-950/20 p-2 text-sm text-amber-200">
+            <span>请过目设定事实</span>
+            <button type="button" className="btn-ghost !py-1 text-xs" onClick={() => setFactsHint(false)}>
+              忽略
+            </button>
+          </div>
+        ) : null}
         <p className="mt-1 text-sm text-ink-muted">
           粘贴任意格式的剧本想法（人物、设定、桥段都行），一键得到：标题/题材/画风/logline/世界观 → 角色卡 → 分集大纲 →
           逐集剧本 → 分镜表与 Seedance 提示词。生成后每一步都可在左侧继续手改；手动流程不受影响。

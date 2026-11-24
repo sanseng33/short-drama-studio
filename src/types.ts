@@ -1,6 +1,9 @@
 import type {
   AcceptedRisk,
   DialogueAuditSnapshot,
+  ProjectLocks,
+  ProjectStale,
+  SettingFactItem,
   SourceFingerprint,
 } from './lib/consistency/types'
 
@@ -9,7 +12,11 @@ export type {
   CheckFinding,
   CheckSeverity,
   DialogueAuditSnapshot,
+  ProjectLocks,
+  ProjectStale,
+  SettingFactItem,
   SourceFingerprint,
+  StaleReason,
 } from './lib/consistency/types'
 export { KNOWN_SCHEMA_VERSION, PROJECT_BACKUP_KEY } from './lib/consistency/types'
 
@@ -243,7 +250,14 @@ export interface Project {
   fingerprints?: SourceFingerprint
   acceptedRisks?: AcceptedRisk[]
   dialogueAudit?: Record<number, DialogueAuditSnapshot>
+  /** 设定事实确认/锁定元数据；settingFacts 仍是提示词与导出的兼容投影。 */
+  settingFactItems?: SettingFactItem[]
+  factsConfirmedAt?: string
+  locks?: ProjectLocks
+  stale?: ProjectStale
+  sourceMode?: string
 }
+
 
 export interface LlmSettings {
   baseURL: string

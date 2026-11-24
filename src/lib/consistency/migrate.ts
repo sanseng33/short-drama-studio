@@ -1,5 +1,5 @@
 import type { EpisodeOutline, EpisodeScript, Project, Shot } from '../../types'
-import { KNOWN_SCHEMA_VERSION, type AcceptedRisk, type DialogueAuditSnapshot, type SourceFingerprint } from './types'
+import { KNOWN_SCHEMA_VERSION, type AcceptedRisk, type DialogueAuditSnapshot, type SettingFactItem, type SourceFingerprint } from './types'
 
 export type MigrateFailureReason = 'not_object' | 'accepted_risks_type'
 
@@ -63,7 +63,7 @@ function normalizeDialogueAudit(v: unknown): Record<number, DialogueAuditSnapsho
 
 /**
  * 纯函数：把未知 JSON 迁成可打开的 Project。
- * 只追加可选字段，不删除、不改名现有字段，不生成 settingFactItems / locks / stale。
+ * 只追加可选字段，不删除、不改名现有字段。有 settingFacts 而无 items 时，在内存生成未锁定 items；不改写 settingFacts，不凭空创建 locks / stale。
  * 缺 schemaVersion 视为 1，不在返回对象上写入 schemaVersion（保存路径才写 2）。
  * schemaVersion > 已知版本时不降级、不改写版本号，并保留未知字段。
  * acceptedRisks 存在且不是数组时失败（由 loadProject 备份原串并视为无项目）。
@@ -120,7 +120,15 @@ export function migrateProject(raw: unknown): MigrateResult {
     delete next.schemaVersion
   }
 
-  // 本包不创建 settingFactItems / locks / stale
+  if (next.settingFactItems === undefined && Array.isArray(next.settingFacts)) {
+    next.settingFactItems = (next.settingFacts as unknown[]).map((text, i) => ({
+      id: `sf-${i + 1}`,
+      text: typeof text === 'string' ? text : String(text ?? ''),
+      locked: false,
+      source: 'legacy',
+    })) satisfies SettingFactItem[]
+  }
+
   return { ok: true, project: next as unknown as Project, fromVersion }
 }
 
