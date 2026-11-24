@@ -2,8 +2,7 @@ import type { Shot } from '../types'
 import type { ProjectApi } from '../hooks/useProject'
 import { CopyButton } from './CopyButton'
 import { shotCharacterIds } from '../lib/shotCast'
-import { buildVideoPipelineExport, videoPipelineFilename } from '../lib/videoExport'
-import { downloadText } from '../lib/storage'
+import { usePipelineExportGate } from './PipelineExportGate'
 import { FindingsBanner } from './FindingsBanner'
 import { staleMessage } from '../lib/consistency/stale'
 
@@ -15,7 +14,6 @@ export function Storyboard({ api }: { api: ProjectApi }) {
     genStoryboardLlm,
     busy,
     llm,
-    flash,
     recheckDialogue,
   } = api
   const hasKey = Boolean(llm.apiKey.trim())
@@ -40,15 +38,7 @@ export function Storyboard({ api }: { api: ProjectApi }) {
   }
   const listOf = (v: string) => v.split(/[，,、]/).map((x) => x.trim()).filter(Boolean)
 
-  const exportPipeline = () => {
-    const data = buildVideoPipelineExport(project)
-    if (!data.shots.length) {
-      flash('尚无分镜可导出')
-      return
-    }
-    downloadText(videoPipelineFilename(project), JSON.stringify(data, null, 2), 'application/json')
-    flash(`已导出视频流水线 JSON（${data.shots.length} 镜）`)
-  }
+  const { requestExport, gatePanel } = usePipelineExportGate(api)
 
   return (
     <div className="space-y-5">
@@ -82,11 +72,13 @@ export function Storyboard({ api }: { api: ProjectApi }) {
           >
             用 LLM 生成
           </button>
-          <button type="button" className="btn-ghost" onClick={exportPipeline}>
+          <button type="button" className="btn-ghost" onClick={requestExport}>
             导出给视频流水线
           </button>
         </div>
       </header>
+
+      {gatePanel}
 
       {staleReason ? (
         <div className="panel border border-amber-500/40 p-3 text-sm text-amber-200">

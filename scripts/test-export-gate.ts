@@ -5,6 +5,16 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Project } from '../src/types'
 import { buildVideoPipelineExport } from '../src/lib/videoExport'
+import { projectToMarkdown, seedancePack } from '../src/lib/export'
+import {
+  PIPELINE_ACCEPT_NOTE,
+  PIPELINE_EMPTY_MESSAGE,
+  allPendingChecked,
+  attemptPipelineExport,
+  confirmAcceptAndExport,
+  pendingKey,
+  type PipelineExportDeps,
+} from '../src/lib/consistency/pipelineExportGate'
 import {
   EXPORT_WARNINGS_EMPTY,
   PIPELINE_GATE_TARGET,
@@ -56,6 +66,11 @@ function toProject(fx: Record<string, unknown>, c?: Record<string, unknown>): Pr
 
 function deep(v: unknown) {
   return JSON.parse(JSON.stringify(v))
+}
+
+/** 保留值为 undefined 的字段，用于整项目前后严格相等（JSON 克隆会丢掉它们）。 */
+function snapshot<T>(v: T): T {
+  return structuredClone(v)
 }
 
 let pass = 0
@@ -137,15 +152,15 @@ t('闸门只作用于流水线 JSON 标识，Markdown/Seedance 路径不调用�
   const mdStart = panel.indexOf('已下载 Markdown')
   const seedStart = panel.indexOf('已下载本集 Seedance 包')
   const allStart = panel.indexOf('已下载全部已生成分镜的 Seedance 包')
-  const pipeFn = panel.indexOf('onExportPipeline')
-  assert.ok(mdStart > 0 && seedStart > 0 && allStart > 0 && pipeFn > 0)
+  assert.ok(mdStart > 0 && seedStart > 0 && allStart > 0)
   const mdBlock = panel.slice(panel.lastIndexOf('onClick', mdStart), mdStart)
   const seedBlock = panel.slice(panel.lastIndexOf('onClick', seedStart), seedStart)
   const allBlock = panel.slice(panel.lastIndexOf('onClick', allStart), allStart)
   assert.ok(!mdBlock.includes('isPipelineJsonBlocked'))
   assert.ok(!seedBlock.includes('isPipelineJsonBlocked'))
   assert.ok(!allBlock.includes('isPipelineJsonBlocked'))
-  assert.ok(panel.includes('isPipelineJsonBlocked(project)'))
+  // 流水线按钮走共用闸门（行为由下方「闸门：」用例调用生产函数验证）
+  assert.ok(panel.includes('onClick={requestExport}'))
 })
 
 t('F02 重复台词缺 1 次：对话框只列第 2 次出现', () => {
@@ -200,6 +215,151 @@ t('台词检查 findings 来自现场重算且不改写 shots', () => {
   const findings = liveDialogueFindings(p)
   assert.ok(findings.some((f) => f.code === 'dialogue_missing'))
   assert.deepEqual(p.storyboards, shots)
+})
+
+// ---- 共用生产闸门（ExportPanel 与 Storyboard 都经 usePipelineExportGate → 这些函数）----
+
+interface Rec {
+  downloads: { filename: string; content: string; mime?: string }[]
+  toasts: string[]
+  saved: Project[]
+}
+function makeDeps(): { deps: PipelineExportDeps; rec: Rec } {
+  const rec: Rec = { downloads: [], toasts: [], saved: [] }
+  const deps: PipelineExportDeps = {
+    download: (filename, content, mime) => rec.downloads.push({ filename, content, mime }),
+    flash: (m) => rec.toasts.push(m),
+    setProject: (n) => rec.saved.push(n),
+  }
+  return { deps, rec }
+}
+
+t('闸门：无分镜提示「尚无分镜可导出」，不下载、不拦截弹窗', () => {
+  const p = toProject(load('f01-baseline.json'))
+  const empty: Project = { ...p, storyboards: {} }
+  const { deps, rec } = makeDeps()
+  const r = attemptPipelineExport(empty, deps)
+  assert.equal(r.status, 'empty')
+  assert.deepEqual(rec.toasts, [PIPELINE_EMPTY_MESSAGE])
+  assert.equal(PIPELINE_EMPTY_MESSAGE, '尚无分镜可导出')
+  assert.equal(rec.downloads.length, 0)
+  assert.equal(rec.saved.length, 0)
+})
+
+t('闸门：确定缺词拦截下载并列出原文；未勾选全部不可确认', () => {
+  const p = toProject(load('f01-baseline.json'))
+  const { deps, rec } = makeDeps()
+  const r = attemptPipelineExport(p, deps)
+  assert.equal(r.status, 'blocked')
+  if (r.status !== 'blocked') return
+  assert.equal(r.pending.length, 2)
+  const lines = r.pending.map(formatMissingLine).join('\n')
+  assert.ok(lines.includes('我等了很久') && lines.includes('我们谈谈正事'))
+  assert.equal(rec.downloads.length, 0)
+  assert.equal(rec.saved.length, 0)
+  // 无勾选 / 部分勾选：不落盘不下载
+  assert.equal(allPendingChecked(r.pending, {}), false)
+  const partial = { [pendingKey(r.pending[0])]: true }
+  assert.equal(allPendingChecked(r.pending, partial), false)
+  assert.equal(confirmAcceptAndExport(p, r.pending, partial, deps).status, 'not_confirmed')
+  assert.equal(rec.downloads.length, 0)
+  assert.equal(rec.saved.length, 0)
+})
+
+t('闸门：取消（不调用确认）不写 acceptedRisks，剧本与分镜台词不变，仍拦截', () => {
+  const p = toProject(load('f01-baseline.json'))
+  const before = snapshot(p)
+  const scriptsBefore = deep(p.scripts)
+  const shotsBefore = deep(p.storyboards)
+  const riskCountBefore = p.acceptedRisks?.length ?? 0
+  const { deps, rec } = makeDeps()
+  const r = attemptPipelineExport(p, deps)
+  assert.equal(r.status, 'blocked')
+  if (r.status !== 'blocked') return
+  assert.equal(r.pending.length, 2)
+  // 取消 = UI 只关闭面板，不调用 confirmAcceptAndExport
+  assert.equal(p.acceptedRisks?.length ?? 0, riskCountBefore)
+  assert.equal(p.acceptedRisks, undefined)
+  assert.deepEqual(deep(p.scripts), scriptsBefore)
+  assert.deepEqual(deep(p.storyboards), shotsBefore)
+  assert.deepEqual(p, before)
+  assert.equal(rec.downloads.length, 0)
+  assert.equal(rec.saved.length, 0)
+  assert.deepEqual(rec.toasts, [])
+  assert.equal(isPipelineJsonBlocked(p), true)
+  // 取消后再次点击导出仍被拦截，待确认列表不变
+  const again = attemptPipelineExport(p, deps)
+  assert.equal(again.status, 'blocked')
+  if (again.status === 'blocked') assert.deepEqual(again.pending.map(pendingKey), r.pending.map(pendingKey))
+  assert.equal(rec.downloads.length, 0)
+  assert.equal(rec.saved.length, 0)
+})
+
+t('闸门：逐条全部勾选后先 setProject 写入 acceptedRisks，再下载；对白与 JSON 不变', () => {
+  const p = toProject(load('f01-baseline.json'))
+  const before = snapshot(p)
+  const jsonBefore = JSON.stringify(buildVideoPipelineExport(p), null, 2)
+  const { deps, rec } = makeDeps()
+  const r = attemptPipelineExport(p, deps)
+  assert.equal(r.status, 'blocked')
+  if (r.status !== 'blocked') return
+  const checked: Record<string, boolean> = {}
+  for (const f of r.pending) checked[pendingKey(f)] = true
+  assert.equal(allPendingChecked(r.pending, checked), true)
+  const c = confirmAcceptAndExport(p, r.pending, checked, deps)
+  assert.equal(c.status, 'downloaded')
+  if (c.status !== 'downloaded') return
+  assert.equal(rec.saved.length, 1)
+  assert.equal(rec.saved[0].acceptedRisks?.length, 2)
+  assert.ok(rec.saved[0].acceptedRisks!.every((x) => x.code === 'dialogue_missing' && x.note === PIPELINE_ACCEPT_NOTE))
+  assert.equal(rec.downloads.length, 1)
+  assert.equal(rec.downloads[0].mime, 'application/json')
+  assert.ok(rec.downloads[0].filename.length > 0)
+  assert.equal(rec.downloads[0].content, jsonBefore)
+  assert.equal(JSON.parse(rec.downloads[0].content).schema, 'short-drama-studio/video-pipeline@1')
+  assert.equal(isPipelineJsonBlocked(rec.saved[0]), false)
+  // 对白、剧本不变
+  assert.deepEqual(rec.saved[0].storyboards, before.storyboards)
+  assert.deepEqual(rec.saved[0].scripts, before.scripts)
+  assert.deepEqual(p, before)
+})
+
+t('闸门：已全部接受后再次导出直接下载；无确定缺词的项目直接下载', () => {
+  const p = toProject(load('f01-baseline.json'))
+  const accepted = acceptRisksForFindings(p, unacceptedDefiniteMissing(p), 'x', '2026-11-24T04:00:00.000Z')
+  const a = makeDeps()
+  const ra = attemptPipelineExport(accepted, a.deps)
+  assert.equal(ra.status, 'downloaded')
+  assert.equal(a.rec.downloads.length, 1)
+  assert.equal(a.rec.saved.length, 0)
+  const clean = toProject(load('f15-paraphrase.json'))
+  assert.equal(isPipelineJsonBlocked(clean), false)
+  const b = makeDeps()
+  const rb = attemptPipelineExport(clean, b.deps)
+  assert.equal(rb.status, 'downloaded')
+  assert.equal(b.rec.downloads.length, 1)
+  assert.equal(b.rec.saved.length, 0)
+})
+
+t('闸门：项目 JSON / Markdown / Seedance 不依赖闸门函数（调用生产导出函数，被拦项目仍可生成）', () => {
+  const p = toProject(load('f01-baseline.json'))
+  assert.equal(isPipelineJsonBlocked(p), true)
+  // 这些导出不经过 attemptPipelineExport，被拦截的项目照常产出内容
+  assert.ok(projectToMarkdown(p).length > 0)
+  assert.ok(typeof seedancePack(p, 1) === 'string')
+  assert.ok(JSON.stringify(p).length > 0)
+  const { rec } = makeDeps()
+  assert.equal(rec.downloads.length, 0)
+})
+
+t('两入口共用同一闸门（辅助源码断言）：Storyboard 与 ExportPanel 都用 usePipelineExportGate，Storyboard 不再直接下载流水线 JSON', () => {
+  const board = readFileSync(join(here, '../src/components/Storyboard.tsx'), 'utf8')
+  const panel = readFileSync(join(here, '../src/components/ExportPanel.tsx'), 'utf8')
+  const shared = readFileSync(join(here, '../src/components/PipelineExportGate.tsx'), 'utf8')
+  assert.ok(board.includes('usePipelineExportGate(api)') && panel.includes('usePipelineExportGate(api)'))
+  assert.ok(!board.includes('downloadText') && !board.includes('videoPipelineFilename') && !board.includes('buildVideoPipelineExport'))
+  assert.ok(!panel.includes('videoPipelineFilename') && !panel.includes('acceptRisksForFindings'))
+  assert.ok(shared.includes('attemptPipelineExport') && shared.includes('confirmAcceptAndExport'))
 })
 
 console.log(`\n${pass} tests passed`)
