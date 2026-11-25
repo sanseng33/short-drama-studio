@@ -362,4 +362,18 @@ t('两入口共用同一闸门（辅助源码断言）：Storyboard 与 ExportPa
   assert.ok(shared.includes('attemptPipelineExport') && shared.includes('confirmAcceptAndExport'))
 })
 
+t('闸门：资产清单默认非严格，不新增拦截；下载内容含 assetContract h3-feed@1', () => {
+  const clean = toProject(load('f15-paraphrase.json'))
+  assert.equal(isPipelineJsonBlocked(clean), false)
+  const { deps, rec } = makeDeps()
+  const r = attemptPipelineExport(clean, deps)
+  assert.equal(r.status, 'downloaded')
+  assert.equal(rec.downloads.length, 1)
+  const parsed = JSON.parse(rec.downloads[0].content)
+  assert.equal(parsed.schema, 'short-drama-studio/video-pipeline@1')
+  assert.equal(parsed.assetContract.version, 'h3-feed@1')
+  assert.equal(parsed.assetContract.strict, false)
+  assert.equal(rec.downloads[0].content, JSON.stringify(buildVideoPipelineExport(clean), null, 2))
+})
+
 console.log(`\n${pass} tests passed`)

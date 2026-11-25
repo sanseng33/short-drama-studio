@@ -12,6 +12,7 @@ import {
 import { auditEpisodeDialogue, buildDialogueAuditSnapshot } from '../dialogueAudit'
 import type { Project, Shot } from '../../types'
 import { auditAssets } from '../assetAudit'
+import { collectShotStateFindings } from '../shotState/record'
 
 export function collectFindings(project: Project): CheckFinding[] {
   const out: CheckFinding[] = []
@@ -20,6 +21,10 @@ export function collectFindings(project: Project): CheckFinding[] {
   }
   out.push(...staleFindings(project))
   out.push(...auditAssets(project))
+  // shot-state compat 记录：只追加，不参与任何闸门。
+  // collectShotStateFindings 内部的 try/catch 仅用于这条附加记录：失败等于「无记录」，不是「校验通过」。
+  // 导出 / run-ready 路径不吞异常（见 shotState/export.ts）。
+  out.push(...collectShotStateFindings(project))
   return out
 }
 
