@@ -13,6 +13,7 @@ import {
   generateStoryboard,
 } from '../lib/templates'
 import { loadLlm, loadProject, saveLlm, saveProject } from '../lib/storage'
+import { commitImportedProject, parseProjectImportJson } from '../lib/projectImport'
 import { generateStoryboardChecked, llmOf } from '../lib/generator'
 import { applyDialogueAuditToProject } from '../lib/consistency/collect'
 import type { CheckFinding } from '../lib/consistency/types'
@@ -254,6 +255,24 @@ export function useProject() {
     flash('已确认设定事实')
   }, [flash])
 
+  const previewProjectImport = useCallback((raw: string) => parseProjectImportJson(raw), [])
+
+  const commitProjectImport = useCallback((raw: string) => {
+    const result = commitImportedProject({
+      current: project,
+      raw,
+      confirmed: true,
+      storage: localStorage,
+    })
+    if (!result.ok) {
+      setError(result.message)
+      return result
+    }
+    setProject(result.project)
+    flash('项目 JSON 已导入')
+    return result
+  }, [flash, project])
+
   const ignoreFinding = useCallback((finding: CheckFinding) => {
     if (!finding.targetKey) return
     setProject((p) => ({
@@ -298,6 +317,8 @@ export function useProject() {
     toggleOutlineLock,
     confirmFacts,
     ignoreFinding,
+    previewProjectImport,
+    commitProjectImport,
   }
 }
 
