@@ -8,6 +8,7 @@ import type { EpisodeOutline, LlmSettings, Project, Shot } from '../types'
 import { chatCompletion, STORYBOARD_SYSTEM } from './llm'
 import { storyboardUser } from './prompts'
 import { normalizeLlmShots } from './shotCast'
+import { recordShotStates, type ShotStateEpisodeRecord } from './shotState/record'
 import { autoFixStoryboard, repairPrompt, validateStoryboard, type RawShotLike, type StoryboardIssue } from './generatorRules'
 
 export function parseJsonArray<T = unknown>(text: string): T[] {
@@ -27,6 +28,8 @@ export interface StoryboardResult {
   shots: Shot[]
   issues: StoryboardIssue[]
   attempts: number
+  /** shot-state compat 记录（迁移 + 校验）。只记录：不进入 issues，不影响修复循环与返回的镜头。 */
+  shotState?: ShotStateEpisodeRecord
 }
 
 export async function generateStoryboardChecked(
@@ -56,5 +59,13 @@ export async function generateStoryboardChecked(
     user = `${base}\n\n【上一版输出】\n${JSON.stringify(raw)}\n\n${repairPrompt(issues)}`
   }
   if (!best) throw new Error(`storyboard ep${o.episode}: no parseable output`)
-  return { shots: normalizeLlmShots(best.raw as unknown as Parameters<typeof normalizeLlmShots>[0], o.episode, p.characters), issues: best.issues, attempts }
+  const shots = normalizeLlmShots(best.raw as unknown as Parameters<typeof normalizeLlmShots>[0], o.episode, p.characters)
+  const result: StoryboardResult = { shots, issues: best.issues, attempts }
+  try {
+    result.shotState = recordShotStates(shots, p.characters, { episode: o.episode })
+  } catch {
+    // 仅限 compat 附加记录：失败等于「无记录」，不是「校验通过」。
+    // 不得把这种吞异常用到导出 / run-ready 路径（那里必须抛错或返回 ok:false）。
+  }
+  return result
 }

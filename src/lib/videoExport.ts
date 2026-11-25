@@ -6,6 +6,7 @@ import { postProcessExport, type DialogueLineOut } from './segmentPost'
 import { missingVoices, type AutoVoice, type VoiceSpec } from './voice'
 import { buildAssetContract, type AssetContract } from './assetFeed'
 import { factsForShotPrompts, tierSettingFactsForPrompt, type SettingFactsByTier } from './settingFacts'
+import { buildShotStateExportPack, type ShotStateExportOptions, type ShotStateExportPack } from './shotState/export'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
 /** Dialogue pacing: Chinese chars (CJK + alnum) per second */
@@ -199,6 +200,13 @@ export interface VideoPipelineOptions {
   sceneOverrides?: Record<string, string>
   /** opt-in (default false): throw AssetContractError when an on-screen binding is incomplete (no refSet / missing ref file / no sceneId / missing plate / duplicate characterId); it does not prove files are readable or hashes verified (see assetFeed.ts) */
   assetContractStrict?: boolean
+  /**
+   * opt-in (default off): attach a versioned `shot-state-ssot@0.1.0-draft` pack as `shotStateExport`.
+   * Studio-side additive pack only: the H3 receiver is NOT modified and does NOT declare support for this field.
+   * `true` = compat recording; pass options for strict / run-ready (throws ShotStateExportRejectedError when unmet).
+   * When off, the output has no `shotStateExport` key and is byte-identical to before.
+   */
+  shotStateExport?: boolean | ShotStateExportOptions
 }
 
 export interface VideoPipelineExport {
@@ -266,6 +274,8 @@ export interface VideoPipelineExport {
   autoVoices?: Record<string, AutoVoice>
   /** immutable asset feed manifest `h3-feed@1` (assetFeed.ts); additive, old consumers ignore it */
   assetContract?: AssetContract
+  /** only with options.shotStateExport; studio-side opt-in pack, H3 receiver unchanged and does not declare support */
+  shotStateExport?: ShotStateExportPack
 }
 
 // ---------------- text helpers (exported for tests / reuse) ----------------
@@ -1092,6 +1102,10 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
   const feed = buildAssetContract(project, out, opts.assetContractStrict === true)
   out.warnings.push(...feed.warnings)
   out.assetContract = feed.contract
+  // explicit opt-in only; a strict / run-ready rejection propagates (never swallowed)
+  if (opts.shotStateExport) {
+    out.shotStateExport = buildShotStateExportPack(project, opts.shotStateExport === true ? {} : opts.shotStateExport)
+  }
   return out
 }
 

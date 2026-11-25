@@ -1,7 +1,32 @@
 import { cleanField } from './placeholder'
 import type { Project } from '../types'
+import {
+  buildShotStateExportPack,
+  renderShotStateAppendix,
+  shotStatePromptView,
+  type ShotStateExportOptions,
+  type ShotStateExportPack,
+} from './shotState/export'
 
-export function projectToMarkdown(project: Project): string {
+/**
+ * Opt-in shot-state presentation (default off: no options = output identical to before).
+ * Studio-side additive section only; the H3 receiver is unchanged and does not declare support.
+ * `true` = compat recording. strict / run-ready options throw ShotStateExportRejectedError when unmet.
+ */
+export interface ShotStateExportTextOptions {
+  shotState?: boolean | ShotStateExportOptions
+}
+
+function shotStatePack(project: Project, o: ShotStateExportTextOptions | undefined, episode?: number): ShotStateExportPack | null {
+  const s = o?.shotState
+  if (!s) return null
+  const base: ShotStateExportOptions = s === true ? {} : s
+  return buildShotStateExportPack(project, episode !== undefined && base.episode === undefined ? { ...base, episode } : base)
+}
+
+export function projectToMarkdown(project: Project, options?: ShotStateExportTextOptions): string {
+  const pack = shotStatePack(project, options)
+  const promptView = pack ? shotStatePromptView(pack) : null
   const lines: string[] = [
     `# ${project.title}`,
     '',
@@ -62,7 +87,7 @@ export function projectToMarkdown(project: Project): string {
       }
       lines.push('', '#### Seedance 提示词', '')
       for (const s of project.storyboards[ep]) {
-        lines.push(`**镜${s.shotNo}**`, '', '```', s.seedancePrompt, '```', '')
+        lines.push(`**镜${s.shotNo}**`, '', '```', promptView ? promptView(s.id, s.seedancePrompt) : s.seedancePrompt, '```', '')
       }
     }
   }
@@ -73,10 +98,13 @@ export function projectToMarkdown(project: Project): string {
     '',
     '详见 GUIDE.md',
   )
+  if (pack) lines.push('', '---', '', ...renderShotStateAppendix(pack, 2))
   return lines.join('\n')
 }
 
-export function seedancePack(project: Project, episode?: number): string {
+export function seedancePack(project: Project, episode?: number, options?: ShotStateExportTextOptions): string {
+  const pack = shotStatePack(project, options, episode)
+  const promptView = pack ? shotStatePromptView(pack) : null
   const eps =
     episode != null
       ? [episode]
@@ -93,12 +121,13 @@ export function seedancePack(project: Project, episode?: number): string {
         `### 镜${s.shotNo}｜${s.size}｜${s.durationSec}s｜${s.camera}`,
         s.groupNote ? `> 镜头组：${s.groupNote}` : '',
         '',
-        s.seedancePrompt,
+        promptView ? promptView(s.id, s.seedancePrompt) : s.seedancePrompt,
         '',
         '---',
         '',
       )
     }
   }
+  if (pack) blocks.push(...renderShotStateAppendix(pack, 2))
   return blocks.filter((x) => x !== undefined).join('\n')
 }
