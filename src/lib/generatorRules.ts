@@ -7,7 +7,7 @@ import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, SHOT_TARGET_SEC } from './dialog
 import { isVisibleAction } from './actionDensity'
 import { locationNamer, normalizeLocation } from './locationNorm'
 import { normRealm, realmOfText } from './realm'
-import { normCameraSide, normFacing, normHands, normPose, normSide, normVoiceMode } from './blocking'
+import { normCameraSide, normFacing, normHands, normPose, normSide, normVoiceMode, presentKeysForBlocking, trimBlockingToPresent } from './blocking'
 
 export const EPISODE_CAP_SEC = 90
 export const MAX_ACTIONS_PER_SEGMENT = 2
@@ -60,6 +60,8 @@ export interface RawShotLike {
   cameraSide?: string
   eyeline?: Record<string, unknown>
   voiceMode?: string
+  characterIds?: string[]
+  voiceOnly?: string[]
   blocking?: Record<string, unknown>
   lighting?: Record<string, unknown>
   realm?: string
@@ -245,7 +247,10 @@ export function autoFixContinuity<T extends RawShotLike>(shots: T[], namer: Retu
     if (!light && lightSig(s.lighting)) light = s.lighting
     if (!blocking && s.blocking && typeof s.blocking === 'object') blocking = s.blocking
     if (light) s.lighting = light
-    if (blocking) s.blocking = blocking
+    if (blocking) {
+      // Scene-level plan stays in `blocking` so later shots keep left/right; write a trimmed copy onto this shot.
+      s.blocking = trimBlockingToPresent(blocking, presentKeysForBlocking(s)) as typeof s.blocking
+    }
     const st = normRawState(s.startState)
     const en = normRawState(s.endState)
     if (st) s.startState = st as never

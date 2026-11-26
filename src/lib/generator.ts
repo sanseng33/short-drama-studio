@@ -8,6 +8,7 @@ import type { EpisodeOutline, LlmSettings, Project, Shot } from '../types'
 import { chatCompletion, STORYBOARD_SYSTEM } from './llm'
 import { storyboardUser } from './prompts'
 import { normalizeLlmShots } from './shotCast'
+import { fillStructuredShotFields } from './shotState/fillShot'
 import { recordShotStates, type ShotStateEpisodeRecord } from './shotState/record'
 import { autoFixStoryboard, repairPrompt, validateStoryboard, type RawShotLike, type StoryboardIssue } from './generatorRules'
 
@@ -59,7 +60,11 @@ export async function generateStoryboardChecked(
     user = `${base}\n\n【上一版输出】\n${JSON.stringify(raw)}\n\n${repairPrompt(issues)}`
   }
   if (!best) throw new Error(`storyboard ep${o.episode}: no parseable output`)
-  const shots = normalizeLlmShots(best.raw as unknown as Parameters<typeof normalizeLlmShots>[0], o.episode, p.characters)
+  const shots = fillStructuredShotFields(
+    normalizeLlmShots(best.raw as unknown as Parameters<typeof normalizeLlmShots>[0], o.episode, p.characters),
+    p.characters,
+    { facts: p.settingFacts },
+  )
   const result: StoryboardResult = { shots, issues: best.issues, attempts }
   try {
     result.shotState = recordShotStates(shots, p.characters, { episode: o.episode })

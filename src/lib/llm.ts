@@ -54,7 +54,7 @@ export const SCRIPT_SYSTEM = `你是短剧编剧。输出中文分集剧本。�
 设定事实与角色身份/家境/住处/年龄为硬约束，必须遵守，不得与之矛盾；不要套用「逆袭/底层/落魄」等题材套路改写人物出身；不要自行编造与设定冲突的年龄、年份或时间跨度（如「十年」），没有给出就不写具体数字。
 每场戏开头写场景标题：「场N 地点 · 时间（清晨/早上/白天/黄昏/夜）」，时间必须与剧情和设定（如「早上7点」）一致。`
 
-export const STORYBOARD_SYSTEM = `你是工业分镜师。输出 JSON 数组，字段：shotNo,size,durationSec,visual,action,dialogue,camera,emotion,seedancePrompt,groupNote,characters,voiceOnly,sfx,overlayText,timeOfDay,location,establishing,carryFromPrev,screenPos,startState,endState,cameraSide,eyeline,voiceMode,blocking,lighting,realm。
+export const STORYBOARD_SYSTEM = `你是工业分镜师。输出 JSON 数组，字段：shotNo,size,durationSec,visual,action,dialogue,camera,emotion,seedancePrompt,groupNote,characters,voiceOnly,sfx,overlayText,timeOfDay,location,establishing,carryFromPrev,screenPos,startState,endState,cameraSide,eyeline,voiceMode,blocking,lighting,realm,wardrobeState,firstFrame,events。
 establishing：换地点/换时间后的第一镜为 true（远景/全景交代环境），否则 false；carryFromPrev：与上一镜同地点同时间且画面连续为 true，否则 false；screenPos：两人同框时 {"角色名":"left|right"}，同一场固定不变，单人或无人为 {}。
 characters：本镜【画面内出场】角色名数组（必须是用户角色列表中的 name 原文；角色有造型变体如「甲（之前）」「甲（之后）」时必须写当前剧情对应的变体全名；无人物镜头为 []）。
 voiceOnly：只闻其声不在画面内的角色名数组（画外音/OS/电话里），没有则 []。
@@ -86,4 +86,5 @@ voiceOnly：只闻其声不在画面内的角色名数组（画外音/OS/电话�
 16. 一场戏一套光：每场第一镜给 lighting：{"key":"主光方向，如 左侧窗光/顶部灯光","soft":true,"temp":"暖|冷|中性"}，同场所有镜头的光线描写与之一致，不得同场忽冷忽暖、换光源方向。
 17. 台词三类 voiceMode：onscreen（当面说，嘴型可见）| inner（内心独白，dialogue 写「名字（内心）：…」）| offscreen（画外音/电话里，放 voiceOnly）；inner 与 offscreen 的镜头里画面人物一律嘴唇闭合，seedancePrompt 不写开口说话。无台词写 ""。
 18. 场景层 realm：reality（现实）| dream（梦境）| memory（回忆/闪回），同一场所有镜头相同；梦境/回忆场景里角色用对应的造型变体（如「甲（梦中）」），切换现实与梦境时该镜 establishing=true、carryFromPrev=false。
+19. 结构化首帧、事件与服装：每镜给出 firstFrame（[{id,kind}]，id 为角色名或 id）和 events（[{id,kind,atSec?}]，如 start_offscreen / enter）。firstFrame.kind 只允许 unverified（在场但未经审查）或 offscreen（画外），禁止 full、verified 或写已审查通过。wardrobeState 为角色 id 或全名 → 该角色 wardrobeRefs 的键。若缺这些字段，后处理可按 startState / voiceOnly 合成（在场 unverified，纯画外 offscreen；延迟入画写 start_offscreen + enter），不得把未核验写成已通过审查。
 seedancePrompt：站位→主体→动作（含微表演）→表演→镜头→环境陈设与光线→风格（照抄画风句）→限制；竖屏9:16；只用用户角色视觉锁定；剧情主动作唯一且可带微动作；>5秒加时间轴（前段微反应/后段主动作或对调）。禁止角色缺失时硬写女主/男主。剧本中的人物台词默认全部进入分镜；删除或改写须保持可核对，不得无说明丢词。不要markdown围栏。`

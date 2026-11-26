@@ -110,6 +110,64 @@ const normAnchor = (v: unknown): AnchorSide | null => {
   const s = normSide(t)
   return s === 'center' ? 'back' : s
 }
+/**
+ * Characters treated as visually present for blocking trim:
+ * characterIds (or raw `characters`) plus startState keys.
+ * voiceOnly-only names are excluded; a character who is also in characterIds / startState
+ * (on-screen VO) stays present.
+ */
+export function presentKeysForBlocking(
+  shot: {
+    characterIds?: readonly string[] | null
+    characters?: readonly string[] | null
+    startState?: unknown
+    voiceOnly?: readonly string[] | null
+  },
+  resolve?: (key: string) => string | null,
+): string[] {
+  const keys = new Set<string>()
+  const add = (k?: string | null) => {
+    const t = (k || '').trim()
+    if (!t) return
+    keys.add(t)
+    const mapped = resolve?.(t)
+    if (mapped && mapped.trim()) keys.add(mapped.trim())
+  }
+  for (const k of [...(shot.characterIds || []), ...(shot.characters || [])]) add(k)
+  if (shot.startState && typeof shot.startState === 'object' && !Array.isArray(shot.startState)) {
+    for (const k of Object.keys(shot.startState as object)) add(k)
+  }
+  const present = new Set(keys)
+  for (const k of shot.voiceOnly || []) {
+    const t = (k || '').trim()
+    if (!t) continue
+    const aliases = new Set<string>([t])
+    const mapped = resolve?.(t)
+    if (mapped && mapped.trim()) aliases.add(mapped.trim())
+    const onScreen = [...aliases].some((a) => present.has(a))
+    if (!onScreen) for (const a of aliases) keys.delete(a)
+  }
+  return [...keys]
+}
+
+/** Keep door / window; drop positions / facing / holding keys that are not present on this shot. Pure. */
+export function trimBlockingToPresent<T extends Record<string, unknown>>(
+  blocking: T | null | undefined,
+  present: Iterable<string>,
+): T | undefined {
+  if (!blocking || typeof blocking !== 'object' || Array.isArray(blocking)) return blocking ?? undefined
+  const allow = new Set([...present].map((k) => String(k || '').trim()).filter(Boolean))
+  const keepRecord = (raw: unknown): unknown => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+    return Object.fromEntries(Object.entries(raw as Record<string, unknown>).filter(([k]) => allow.has(k)))
+  }
+  const out: Record<string, unknown> = { ...blocking }
+  if ('positions' in out) out.positions = keepRecord(out.positions)
+  if ('facing' in out) out.facing = keepRecord(out.facing)
+  if ('holding' in out) out.holding = keepRecord(out.holding)
+  return out as T
+}
+
 /** generator id/name keyed record → id keyed (names map through `idOf`) */
 const keyed = <T>(raw: unknown, idOf: (k: string) => string | null, f: (v: unknown) => T | null): Record<string, T> => {
   const out: Record<string, T> = {}

@@ -60,6 +60,8 @@ export function parseScriptLine(rawLine: string): { kind: 'skip' | 'title' | 'li
   if (!n1) return { kind: 'skip' }
   if (/^场\s*\d/.test(n1)) return { kind: 'title' }
   if (/^△/.test(n1) || /^[（(][^：:]*[）)]$/.test(n1)) return { kind: 'skip' }
+  if (/^#{1,6}(\s|$)/.test(n1)) return { kind: 'skip' }
+  if (/^[-*+]\s+/.test(n1) || /^\d+[.)、]\s+/.test(n1)) return { kind: 'skip' }
 
   const colon = n1.indexOf(':')
   if (colon <= 0) return { kind: 'skip' }
@@ -72,6 +74,7 @@ export function parseScriptLine(rawLine: string): { kind: 'skip' | 'title' | 'li
   const label = normalizeSpeaker(speakerRaw) || speakerRaw
 
   if (RESERVED_LABELS.has(label) || RESERVED_LABELS.has(speakerRaw)) return { kind: 'skip' }
+  if (/来源说明|生成约束|装配说明/.test(label) || /来源说明|生成约束|装配说明/.test(speakerRaw)) return { kind: 'skip' }
 
   // P7 先按顿号/和/与/& 拆开，再对每个人做 P2 校验（避免「小李、小王」被当作含顿号的非法说话人）
   const speakers = splitSpeakers(speakerRaw)

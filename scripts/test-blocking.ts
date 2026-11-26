@@ -220,10 +220,16 @@ t('export: generator hints pass through with character ids (states, eyeline, blo
       startState: { 甲: { pos: 'left', facing: 'right', pose: '坐', gaze: '乙', hands: '空手' } }, endState: { 甲: { pos: 'left', facing: 'right', pose: '站', gaze: '乙', hands: '空手' } },
       cameraSide: 'master', eyeline: { 甲: 'right' }, voiceMode: 'onscreen', blocking: { positions: { 甲: 'left', 乙: 'right' }, window: 'back' }, lighting: { key: '左侧窗光', soft: true, temp: '暖' } }] },
   } as unknown as Project
-  const s = buildVideoPipelineExport(p).shots[0] as any
+  const exp = buildVideoPipelineExport(p)
+  const s = exp.shots[0] as any
   assert.deepEqual(Object.keys(s.startState), ['c1']); assert.equal(s.endState.c1.pose, '站')
   assert.equal(s.cameraSide, 'master'); assert.deepEqual(s.eyeline, { c1: 'right' }); assert.equal(s.voiceMode, 'onscreen')
-  assert.deepEqual(s.blockingHint.positions, { c1: 'left', c2: 'right' }); assert.equal(s.lightingHint.key, '左侧窗光')
+  // startState 只有甲时该镜会被延迟入画拆成 pre/post：pre 只在场 c1，导出时裁掉残留的乙；post 两人仍在。
+  assert.deepEqual(s.blockingHint.positions, { c1: 'left' }); assert.equal(s.blockingHint.window, 'back'); assert.equal(s.lightingHint.key, '左侧窗光')
+  const post = exp.shots.find((x: { delayedEntrySplit?: string }) => x.delayedEntrySplit === 'post') as any
+  assert.ok(post, 'delayed-entry post shot')
+  assert.deepEqual(post.blockingHint.positions, { c1: 'left', c2: 'right' })
+  assert.equal(post.blockingHint.window, 'back')
 })
 
 t('repack CLI: P0 report sections, every shot carries the fields; --axis-gate fail exits 9 on a crossing; old scripts get inferred fields', () => {
