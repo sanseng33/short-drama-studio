@@ -264,7 +264,13 @@ t('dialogueLines: always an array, timed from the lip-sync beat segment, voiceOn
   const tl = timedDialogueLines(two)
   assert.deepEqual(tl.map((l) => [l.startSec, l.endSec, !!l.voiceOnly]), [[0, 2, false], [2, 3, true]], 'shared segment split by length; b1 not in cast → voiceOnly')
   const vo = SH({ dialogue: '想什么呢', speaker: 'a1', voiceOnly: ['a1'], durationSec: 4 })
-  assert.deepEqual(timedDialogueLines(vo), [{ speaker: 'a1', speakerName: null, text: '想什么呢', startSec: 0, endSec: 4, voiceOnly: true }], 'no beats → whole shot')
+  const voLines = timedDialogueLines(vo)
+  assert.equal(voLines.length, 1)
+  assert.equal(voLines[0].voiceOnly, true)
+  assert.equal(voLines[0].text, '想什么呢')
+  assert.equal(voLines[0].startSec, 0)
+  assert.ok(voLines[0].endSec < 4, 'short VO must not fill 0–duration')
+  assert.ok(voLines[0].endSec - voLines[0].startSec >= 0.5)
   const off = SH({ dialogue: '谁？', speaker: null, speakerOffscreen: true, durationSec: 3 })
   assert.equal(timedDialogueLines(off)[0].voiceOnly, true)
   const e = annotateShots(pack([a, SH({ id: 'quiet' })]))
@@ -1297,7 +1303,7 @@ if (existsSync(FIX)) {
       ['喊完低下头。', '收声后低下头。'],
       ['说完这句嘴唇抿了一下。', '收声后嘴唇抿了一下。'],
       ['他抬头对着空气嘀咕，偏了下头。', '他抬头嘴唇小幅快速开合，偏了下头。'],
-      ['画外有人说话，画面人物停住倾听，嘴唇闭合不说话。', '画外传来人声，画面人物停住倾听，嘴唇闭合。'],
+      ['画外有人说话，画面人物停住倾听，嘴唇闭合不说话。', '画外传来人声，画面人物继续听着，嘴唇闭合。'],
       ['嘴唇闭合安静听对面说话。', '嘴唇闭合安静听着对面。'],
       ['笔尖点了一下才说话。', '笔尖点了一下才开口。'],
       ['他双手撑在栏杆上喊话。', '他双手撑在栏杆上张大嘴。'],

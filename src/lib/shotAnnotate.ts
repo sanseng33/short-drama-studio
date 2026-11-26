@@ -21,7 +21,8 @@
 import { EMOTION_VISIBLE } from './emotionVocab'
 import { HOLD_EXPRESSION, parseRewriteNote, rewriteNote, visibleForEmotion, visualizePrompt } from './emotionVisual'
 import { clearMouth, MOUTH_CLEAR_MARK } from './mouthOcclusion'
-import { speechSec, type SpeechRate } from './dialogueTiming'
+import { dialogueNeedSec, speechSec, type SpeechRate } from './dialogueTiming'
+import { LIFE_MOTION_CONSTRAINT, ensureLifeMotionConstraint } from './lifeMotion'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { sha1Hex } from './hash'
 import { isPropNegLine, qualifyTextProps, textPropNote } from './textProps'
@@ -222,7 +223,7 @@ const speechLen = (t: string) => Math.max(1, t.replace(/[\s，。！？、…—
 /**
  * The shot's OWN lines (split children already carry only theirs) with times relative to the shot: lines go to the
  * beat segments marked dialogue in order (several lines in one segment share it by length); without beat segments
- * the lines share the whole shot by length. voiceOnly: off-list speaker, speakerOffscreen or a voiceOnly id not on screen.
+ * the lines share the whole shot by length, except short voice-only / offscreen / inner lines which take an estimated window instead of 0–duration. voiceOnly: off-list speaker, speakerOffscreen, voiceMode offscreen/inner, or a voiceOnly id (even if the speaker is on screen).
  */
 export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] = [], rate: Partial<SpeechRate> = {}): TimedLine[] {
   const raw = s.dialogueLines?.length
@@ -231,6 +232,15 @@ export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] =
       ? [{ speaker: s.speaker, speakerName: s.speakerName, text: s.dialogue, voiceOnly: s.speakerOffscreen }]
       : []
   const on = new Set(onscreenCast(s, chars))
+  const shotVo = new Set(s.voiceOnly || [])
+  const modeVo = /^(offscreen|inner)$/i.test(String(s.voiceMode || ''))
+  const isVo = (l: { voiceOnly?: boolean; speaker?: string | null; speakerName?: string | null }) =>
+    Boolean(l.voiceOnly) ||
+    modeVo ||
+    !l.speaker ||
+    !on.has(l.speaker) ||
+    shotVo.has(l.speaker) ||
+    Boolean(l.speakerName && shotVo.has(l.speakerName))
   const lines = raw.filter((l) => l.text?.trim())
   if (!lines.length) return []
   const total = s.durationSec || 0
@@ -239,6 +249,19 @@ export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] =
   lines.forEach((_, i) => slots[Math.min(i, slots.length - 1)].idx.push(i))
   const out: TimedLine[] = []
   for (const sl of slots) {
+    const tightVo = !segs.length && sl.idx.length > 0 && sl.idx.every((i) => isVo(lines[i]))
+    const needs = sl.idx.map((i) => Math.max(0.5, r2(dialogueNeedSec([lines[i].text], rate))))
+    const sumNeed = needs.reduce((a, b) => a + b, 0)
+    if (tightVo && sumNeed < sl.end - sl.start - 0.05) {
+      let t0 = sl.start
+      sl.idx.forEach((i, k) => {
+        const l = lines[i]
+        const t1 = r2(Math.min(sl.end, t0 + needs[k]))
+        out.push({ speaker: l.speaker ?? null, speakerName: l.speakerName ?? null, text: l.text.trim(), startSec: r2(t0), endSec: Math.max(r2(t0 + 0.4), t1), voiceOnly: true })
+        t0 = t1
+      })
+      continue
+    }
     // several lines in one segment share it by estimated speech (same estimator as the beat sizing / overrun check)
     const w = sl.idx.map((i) => speechSec(lines[i].text, rate) || speechLen(lines[i].text))
     const sum = w.reduce((a, b) => a + b, 0) || 1
@@ -246,7 +269,7 @@ export function timedDialogueLines(s: VideoPipelineShot, chars: WardrobeMeta[] =
     sl.idx.forEach((i, k) => {
       const l = lines[i]
       const t1 = k === sl.idx.length - 1 ? sl.end : t0 + ((sl.end - sl.start) * w[k]) / sum
-      const vo = Boolean(l.voiceOnly) || !l.speaker || !on.has(l.speaker)
+      const vo = isVo(l)
       out.push({ speaker: l.speaker ?? null, speakerName: l.speakerName ?? null, text: l.text.trim(), startSec: r2(t0), endSec: r2(t1), ...(vo ? { voiceOnly: true } : {}) })
       t0 = t1
     })
@@ -277,7 +300,7 @@ const SPEED_TAG_WORDS: Record<string, string> = { 快: '动作利落快速', 慢
 export function stripRenderLines(prompt: string): string {
   return stripFirstLineNoText(prompt || '')
     .split('\n')
-    .filter((l) => !l.startsWith('景别：') && l.trim() !== NO_TEXT_CONSTRAINT && l.trim() !== BAND_NEGATIVE && !isPropNegLine(l))
+    .filter((l) => !l.startsWith('景别：') && l.trim() !== NO_TEXT_CONSTRAINT && l.trim() !== BAND_NEGATIVE && l.trim() !== LIFE_MOTION_CONSTRAINT && !isPropNegLine(l))
     .join('\n')
     .replace(new RegExp(NO_TEXT_CONSTRAINT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '')
     .trimEnd()
@@ -496,6 +519,7 @@ export interface RenderContext {
   onscreen: string[]
   wardrobeState: Record<string, string>
   chars: WardrobeMeta[]
+  voiceMode?: string
 }
 
 /**
@@ -568,6 +592,7 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   const tl = dropRepeatedTimeLead(cw.prompt)
   p = withFirstLineNoText(tl.prompt)
   notes.push(...tl.notes)
+  p = ensureLifeMotionConstraint(p, ctx?.voiceMode)
   const tail = [tp.negLine, `景别：${framingWords(framing, n)}。`, BAND_NEGATIVE, NO_TEXT_CONSTRAINT].filter(Boolean).join('\n')
   return { prompt: `${p}\n${tail}`, notes }
 }
@@ -761,7 +786,7 @@ export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Par
     shots: e.shots.map((s, i) => {
       const framing = framingOf(s, chars)
       const onscreen = onscreenCast(s, chars)
-      const r = renderPrompt(s.prompt, framing, { onscreen, wardrobeState: ws[i], chars })
+      const r = renderPrompt(s.prompt, framing, { onscreen, wardrobeState: ws[i], chars, voiceMode: s.voiceMode })
       const cc = s.castCorrection
       if (cc) {
         // re-cast shot: the upstream subject text describes the replaced variant → solo subject from the pack data

@@ -61,6 +61,10 @@ export type StaleReason = 'script' | 'facts' | 'locations' | 'characters'
 export interface ProjectLocks {
   outline?: boolean
   scripts?: Record<number, boolean>
+  /** true = lock every shot of that episode's storyboard */
+  storyboards?: Record<number, boolean>
+  /** lock individual shots by id */
+  shots?: Record<string, boolean>
 }
 
 export interface ProjectStale {

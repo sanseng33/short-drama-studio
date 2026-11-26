@@ -7,6 +7,7 @@ import { generateScript } from '../templates'
 import { applyDialogueAuditToProject } from './collect'
 import { isScriptLocked, overwriteLockedScriptMessage } from './factLocks'
 import { refreshStale } from './stale'
+import { isEpisodeStoryboardLocked } from './storyboardLocks'
 
 export interface ScriptGenOpts {
   confirmOverwrite?: boolean
@@ -96,7 +97,7 @@ export function applyOneClickStoryboard(
   episode: number,
   makeShots: () => Shot[],
 ): { project: Project; kept: boolean } {
-  if (isScriptLocked(prev, episode) && proj.storyboards[episode]?.length) {
+  if ((isScriptLocked(prev, episode) || isEpisodeStoryboardLocked(prev, episode) || isEpisodeStoryboardLocked(proj, episode)) && proj.storyboards[episode]?.length) {
     return { project: applyDialogueAuditToProject(proj, episode), kept: true }
   }
   const shots = makeShots()
