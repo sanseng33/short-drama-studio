@@ -2,6 +2,7 @@
 import type { Character, Project, Shot } from '../types'
 import { finalizeDelayedEntryDurationWarnings, splitDelayedEntryShots } from './delayedEntrySplit'
 import { mapNamesToIds, shotCharacterIds } from './shotCast'
+import { presentKeysForBlocking, trimBlockingToPresent } from './blocking'
 import { cleanField, cleanPrompt } from './placeholder'
 import { postProcessExport, SEGMENT_MIN_SEC, type DialogueLineOut } from './segmentPost'
 import { missingVoices, type AutoVoice, type VoiceSpec } from './voice'
@@ -854,9 +855,14 @@ function generatorHints(s: Shot, chars: Character[], idx: number, total: number)
     o && typeof o === 'object' && !Array.isArray(o) ? Object.fromEntries(Object.entries(o).map(([k, v]) => [idOf(k), v])) : undefined
   const st = idx === 0 ? ids(s.startState) : undefined
   const en = idx === total - 1 ? ids(s.endState) : undefined
-  const bl = s.blocking && typeof s.blocking === 'object'
+  const present = presentKeysForBlocking(
+    { characterIds: s.characterIds, startState: s.startState, voiceOnly: s.voiceOnly },
+    (k) => idOf(k),
+  ).map((k) => idOf(k))
+  const blRaw = s.blocking && typeof s.blocking === 'object'
     ? Object.fromEntries(Object.entries(s.blocking).map(([k, v]) => [k, ['positions', 'facing', 'holding'].includes(k) ? ids(v as Record<string, unknown>) : v]))
     : undefined
+  const bl = blRaw ? trimBlockingToPresent(blRaw as Record<string, unknown>, present) : undefined
   return {
     ...(st ? { startState: st as never } : {}),
     ...(en ? { endState: en as never } : {}),

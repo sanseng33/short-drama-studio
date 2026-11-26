@@ -48,6 +48,26 @@ export type ContinuityShot = Pick<
 
 /** Place patterns: longer / more specific first. */
 const PLACE_RULES: { key: string; labelZh: string; re: RegExp; weight: number }[] = [
+  // Higher-weight places that must NOT be entered in PLACE_FAMILY (do not fold into villa_bedroom / bus / each other).
+  {
+    key: 'villa_foyer',
+    labelZh: '别墅玄关',
+    re: /玄关/,
+    weight: 45,
+  },
+  {
+    key: 'car_interior',
+    labelZh: '车内',
+    // Interior driving cues; do not steal bus 车厢 (avoid matching 车厢内 via a bare 车内).
+    re: /盘山公路车内|公路车内|驾驶座|驾驶位|挡风玻璃|方向盘|(?<!厢)车内/,
+    weight: 40,
+  },
+  {
+    key: 'mountain_road_curve',
+    labelZh: '盘山公路弯道',
+    re: /盘山公路弯道|盘山公路急弯|公路弯道|俯拍弯道|高位俯拍[^。；\n]{0,16}弯道|弯道[^。；\n]{0,20}(护栏|车灯)/,
+    weight: 42,
+  },
   {
     key: 'villa_bedroom',
     labelZh: '别墅卧室',

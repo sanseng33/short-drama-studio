@@ -50,3 +50,4 @@ export {
 export { recordShotStates, shotStateFindings, collectShotStateFindings, type ShotStateEpisodeRecord } from './record'
 
 export { shotStateFromShot, hasExplicitShotState } from './fromShot'
+export { fillStructuredShotFields, dropOffscreenOnlyCharacterIds, offscreenOnlyIds } from './fillShot'

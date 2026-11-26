@@ -28,6 +28,8 @@ import {
   type StateText,
 } from './types'
 import { migrateLegacyShot, type CharLike } from './migrate'
+import { baseWardrobeStateFromCard } from '../wardrobeConstraint'
+import type { Character } from '../../types'
 
 export type ShotStateBuildOrigin = MigrationInfo['origin']
 
@@ -96,13 +98,35 @@ function parseEvents(raw: unknown, chars: readonly CharLike[]): ShotEvent[] | nu
 
 function costumeFromShot(shot: Shot, chars: readonly CharLike[]): CostumeEntry[] | undefined {
   const raw = (shot as Shot & { wardrobeState?: unknown }).wardrobeState
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const out: CostumeEntry[] = []
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof v !== 'string' || !v.trim()) continue
-    const [id] = mapNamesToIds([k], chars as never)
-    if (!id) continue
-    out.push({ id, state: v.trim() })
+  const seen = new Set<string>()
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v !== 'string' || !v.trim()) continue
+      const [id] = mapNamesToIds([k], chars as never)
+      if (!id) continue
+      out.push({ id, state: v.trim() })
+      seen.add(id)
+    }
+  }
+  // Empty wardrobeState: backfill from the character-card base (refSet / wardrobeState / refs).
+  // Do not invent pajama (or any other look) unless that is the card base.
+  if (!out.length) {
+    const startIds = resolveStateKeys(shot.startState, chars)
+    const voiceIds = mapNamesToIds(shot.voiceOnly, chars as never)
+    const charIds = shotCharacterIds(shot, chars as never)
+    const involved = [...new Set([...charIds, ...startIds, ...voiceIds])]
+    for (const id of involved) {
+      if (seen.has(id)) continue
+      const c = chars.find((x) => x.id === id) as (CharLike & Partial<Character>) | undefined
+      const base = baseWardrobeStateFromCard(c)
+      const hasCard =
+        Boolean(c && ((c as Partial<Character>).wardrobeState?.trim() || (c as Partial<Character>).refImage?.trim() || ((c as Partial<Character>).wardrobeRefs && Object.keys((c as Partial<Character>).wardrobeRefs || {}).length)))
+      if (base.source === 'default' && base.state === 'default' && !hasCard) continue
+      if (!base.state) continue
+      out.push({ id, state: base.state })
+      seen.add(id)
+    }
   }
   return out.length ? out : undefined
 }
@@ -200,11 +224,14 @@ export function shotStateFromShot(shot: Shot, chars: readonly CharLike[] = []): 
 
   // Legacy fallback: keep migrate for shots with no structured presence, but mark
   // pure offscreen VO as offscreen rather than unverified-on-frame.
+  // A character in voiceOnly and not in startState (including empty startState)
+  // must not be marked visible; they are offscreen-only even if listed in characterIds.
   const legacy = migrateLegacyShot(shot, chars)
-  const on = new Set(charIds)
+  const offOnly = new Set(voiceIds.filter((id) => !startIds.includes(id)))
   const firstFrame: FirstFrameEntry[] = []
   const seen = new Set<string>()
   for (const id of charIds) {
+    if (offOnly.has(id)) continue
     firstFrame.push({ id, kind: 'unverified' })
     seen.add(id)
   }
