@@ -4,6 +4,7 @@
  * Bytes are never persisted on export; sha256 or an external file declaration binds the still.
  */
 import { isSha256Hex, sha256Hex } from './contentHash'
+import { axisNeedsVerifiedStartFrame } from './pictureRules'
 import {
   conflictingAnchors,
   extractAnchors,
@@ -42,6 +43,33 @@ export function isBoundStartFrameStill(still: StartFrameStill | null | undefined
   if (still.sha256 && isSha256Hex(still.sha256)) return true
   if (typeof still.source === 'string' && still.source.trim()) return true
   return false
+}
+
+/**
+ * Bound by a content hash and an origin this repo already treats as checked.
+ * `local_computed` was hashed from bytes; `imported_manifest` keeps a user-manifest hash.
+ * `external_unverified`, a bare source name, or a wardrobe / identity ref is not a verified start frame.
+ */
+export function isVerifiedStartFrameStill(still: StartFrameStill | null | undefined): boolean {
+  if (!still || typeof still !== 'object') return false
+  if (!still.sha256 || !isSha256Hex(still.sha256)) return false
+  return still.origin === 'local_computed' || still.origin === 'imported_manifest'
+}
+
+export interface StartFrameRequirementShot {
+  visual?: string
+  action?: string
+  camera?: string
+  seedancePrompt?: string
+  prompt?: string
+  startFrameStill?: StartFrameStill | null
+  refImage?: string | null
+}
+
+/** Hug / over-the-shoulder prose requires a verified start-frame still. Ref images do not count. */
+export function missingVerifiedStartFrame(shot: StartFrameRequirementShot): boolean {
+  if (!axisNeedsVerifiedStartFrame(shot)) return false
+  return !isVerifiedStartFrameStill(shot.startFrameStill || undefined)
 }
 
 export function normalizeStartFrameStill(raw: StartFrameStill): StartFrameStill {

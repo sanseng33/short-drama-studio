@@ -8,7 +8,9 @@
  * and a head turn had no stability constraint.
  */
 import assert from 'node:assert/strict'
-import { autoFixStoryboard, complianceBlock, repairPrompt, type RawShotLike } from '../src/lib/generatorRules'
+import { autoFixStoryboard, complianceBlock, repairPrompt, validateStoryboard, type RawShotLike } from '../src/lib/generatorRules'
+import { evaluateExportHardGates } from '../src/lib/exportHardGates'
+import { attemptPipelineExport } from '../src/lib/consistency/pipelineExportGate'
 import { generateStoryboardChecked } from '../src/lib/generator'
 import { buildVideoPipelineExport } from '../src/lib/videoExport'
 import { buildBeatPrompt } from '../src/lib/beatPrompt'
@@ -22,6 +24,7 @@ import {
 } from '../src/lib/lifeMotion'
 import {
   DECORATIVE_LIGHT_BAN,
+  HIDDEN_FACE_PARTS,
   LIFE_MOTION_HARD_CONSTRAINT,
   TURN_STABILITY_CONSTRAINT,
   applyPictureConstraints,
@@ -417,12 +420,266 @@ const main = async () => {
     assert.ok(next.startState && '林薇（梦中）' in next.startState)
   })
 
+  const verifiedStill = {
+    sha256: '5a08483fd700e4ea396f18534630c267ffc62b77ae7e2ad78a679f688cbe6f64',
+    source: 'start.jpg',
+    origin: 'imported_manifest' as const,
+  }
+  const faceCtx = { characters: [{ name: '甲', baseName: '甲' }], locations: ['餐厅'], secondsPerEp: 75 }
+  const faceShot = (over: Partial<RawShotLike> = {}): RawShotLike => ({
+    id: 's-hug',
+    shotNo: 1,
+    durationSec: 6,
+    visual: '两人站姿拥抱',
+    action: '保持拥抱',
+    dialogue: '',
+    seedancePrompt: '左右全身拥抱。限制：无文字。',
+    characters: ['甲'],
+    location: '餐厅',
+    timeOfDay: '白天',
+    cameraSide: 'master',
+    lighting: { key: '窗光', soft: true, temp: '暖' },
+    realm: 'reality',
+    startState: { 甲: { pos: 'center', facing: 'front', pose: '站', gaze: 'front', hands: '空手' } },
+    endState: { 甲: { pos: 'center', facing: 'front', pose: '站', gaze: 'front', hands: '空手' } },
+    ...over,
+  })
+  const faceProject = (s: RawShotLike): Project => ({
+    id: 'p-face',
+    title: '起幅',
+    genre: '都市逆袭',
+    platform: '红果',
+    episodeCount: 1,
+    secondsPerEp: 75,
+    style: '真人都市',
+    logline: 'l',
+    locations: ['餐厅'],
+    characters: [{ id: 'c1', name: '甲', role: '主角', visualLock: '短发', costume: '外套', signatureProp: '包' }],
+    outline: [],
+    scripts: {},
+    storyboards: {
+      1: [
+        {
+          id: s.id || 's-hug',
+          shotNo: 1,
+          size: '全景',
+          durationSec: s.durationSec || 6,
+          visual: s.visual || '',
+          action: s.action || '',
+          dialogue: s.dialogue || '',
+          camera: s.camera || '固定',
+          emotion: '',
+          seedancePrompt: s.seedancePrompt || '',
+          location: '餐厅',
+          timeOfDay: '白天',
+          characterIds: ['c1'],
+          ...(s.startFrameStill ? { startFrameStill: s.startFrameStill } : {}),
+        },
+      ],
+    },
+    selectedEpisode: 1,
+    updatedAt: '2026-11-26T00:00:00.000Z',
+  })
+  const rulesOf = (s: RawShotLike) => validateStoryboard([s], faceCtx).map((x) => x.rule)
+
+  await t('hug or OTS without a verified start frame fails; a verified still passes', () => {
+    assert.ok(rulesOf(faceShot()).includes('startFrame'))
+    assert.ok(rulesOf(faceShot({ visual: '首帧已是拥抱', action: '站着', seedancePrompt: '站着。' })).includes('startFrame'))
+    assert.ok(rulesOf(faceShot({ visual: '门口', action: '右手从母亲后背收回', seedancePrompt: '站着。' })).includes('startFrame'))
+    assert.ok(rulesOf(faceShot({ visual: '过肩近景', action: '看向前方', seedancePrompt: '过肩。' })).includes('startFrame'))
+    assert.ok(rulesOf(faceShot({ startFrameStill: { source: 'wardrobe.png' } })).includes('startFrame'), 'source-only is bound, not verified')
+    assert.ok(
+      rulesOf(faceShot({ startFrameStill: { source: 'plate.jpg', origin: 'external_unverified' } })).includes('startFrame'),
+    )
+    assert.ok(rulesOf({ ...faceShot(), refImage: 'identity.png' } as RawShotLike).includes('startFrame'), 'wardrobe ref is not a start frame')
+    assert.ok(!rulesOf(faceShot({ startFrameStill: verifiedStill })).includes('startFrame'))
+    assert.ok(
+      !rulesOf(faceShot({ visual: '过肩', action: '站着', seedancePrompt: '过肩。', startFrameStill: { ...verifiedStill, origin: 'local_computed' } })).includes('startFrame'),
+    )
+  })
+
+  await t('export gate blocks a hug without a verified still and allows the verified binding', () => {
+    const bare = faceProject(faceShot())
+    const hard = evaluateExportHardGates(bare)
+    assert.equal(hard.ok, false)
+    assert.ok(hard.issues.some((i) => i.code === 'start_frame_required'))
+    const blocked = attemptPipelineExport(bare, {
+      download: () => {
+        throw new Error('must not download')
+      },
+      flash: () => {},
+      setProject: () => {},
+    })
+    assert.equal(blocked.status, 'blocked_consistency')
+    const ok = evaluateExportHardGates(faceProject(faceShot({ startFrameStill: verifiedStill })))
+    assert.ok(!ok.issues.some((i) => i.code === 'start_frame_required'), JSON.stringify(ok.issues))
+  })
+
+  await t('不露正脸 and OTS profile language upgrade to 低髻 hidden-face clauses', () => {
+    const [s] = autoFixStoryboard(
+      [
+        faceShot({
+          id: 's-face',
+          visual: '过肩，清晰侧脸占满画边',
+          camera: '过肩',
+          action: '站着',
+          seedancePrompt: '过肩构图。限制：不露正脸，侧脸可以入画，无文字。',
+          startFrameStill: verifiedStill,
+        }),
+      ],
+      faceCtx,
+    )
+    const limit = limitClause(s.seedancePrompt || '')
+    for (const part of HIDDEN_FACE_PARTS) assert.ok(limit.includes(part), limit)
+    assert.ok(limit.includes('低髻'), limit)
+    assert.ok(!limit.includes('低鬆') && !limit.includes('低鬃'), limit)
+    assert.ok(!limit.includes('不露正脸'), limit)
+    assert.ok(!limit.includes('侧脸可以入画'), limit)
+    assert.ok(!(s.visual || '').includes('清晰侧脸'), s.visual)
+    assert.ok((s.camera || '').includes('过肩'), s.camera)
+  })
+
+  await t('伸手 and 张嘴 pick up the stability clause without a literal 转头', () => {
+    for (const action of ['她伸手去拿杯子', '她张嘴']) {
+      const [s] = autoFixStoryboard(
+        [faceShot({ visual: '门口', action, seedancePrompt: '门口。限制：无文字。', durationSec: 7, size: '全景' })],
+        faceCtx,
+      )
+      assert.ok(limitClause(s.seedancePrompt || '').includes(TURN_STABILITY_CONSTRAINT), `${action} ${s.seedancePrompt}`)
+      assert.ok(!(s.action || '').includes('转头'), s.action)
+    }
+  })
+
+  await t('视线越过 / 望向深处 is a turn: close shots shrink it, wide shots keep the words, both constrain 限制', () => {
+    const [close] = autoFixStoryboard(
+      [
+        faceShot({
+          size: '中近景',
+          durationSec: 6,
+          visual: '脸部近景',
+          action: '视线越过肩头望向走廊深处',
+          seedancePrompt: '中近景。动作：视线越过肩头望向走廊深处。限制：无文字。',
+        }),
+      ],
+      faceCtx,
+    )
+    assert.ok((close.action || '').includes('头基本不动'), close.action)
+    assert.ok(!(close.action || '').includes('视线越过'), close.action)
+    assert.ok(limitClause(close.seedancePrompt || '').includes(TURN_STABILITY_CONSTRAINT), close.seedancePrompt)
+    assert.ok(!pictureBody(close.seedancePrompt || '').includes('视线越过'), close.seedancePrompt)
+
+    const [wide] = autoFixStoryboard(
+      [
+        faceShot({
+          size: '全景',
+          durationSec: 7,
+          visual: '大厅',
+          action: '视线越过人群望向深处',
+          seedancePrompt: '全景。动作：视线越过人群望向深处。限制：无文字。',
+        }),
+      ],
+      faceCtx,
+    )
+    assert.ok((wide.action || '').includes('视线越过'), wide.action)
+    assert.ok(limitClause(wide.seedancePrompt || '').includes(TURN_STABILITY_CONSTRAINT), wide.seedancePrompt)
+  })
+
+  await t('a short shot keeps at most three motions and the life-motion floor in 限制', () => {
+    const [s] = autoFixStoryboard(
+      [
+        faceShot({
+          size: '全景',
+          durationSec: 6,
+          visual: '门口',
+          action: '转头，呼吸，眨眼，拍了拍肩，手指收紧，耸肩，点头',
+          seedancePrompt: '门口。限制：无文字。',
+        }),
+      ],
+      faceCtx,
+    )
+    const motions = (s.action || '').split(/[，,]/).filter((x) => x.trim())
+    assert.ok(motions.length <= 3, s.action)
+    assert.ok((s.action || '').includes('转头'), s.action)
+    assert.ok(limitClause(s.seedancePrompt || '').includes(LIFE_MOTION_HARD_CONSTRAINT), s.seedancePrompt)
+    assert.ok(limitClause(s.seedancePrompt || '').includes('发光粒子'), s.seedancePrompt)
+  })
+
+  await t('locked hug wording is restored, including a weak 不露正脸 line', async () => {
+    const lockedBody = '两人拥抱。限制：不露正脸。'
+    const locked: Shot = {
+      id: 's-lock',
+      shotNo: 1,
+      size: '全景',
+      durationSec: 6,
+      visual: '两人拥抱',
+      action: '保持拥抱',
+      dialogue: '',
+      camera: '固定',
+      emotion: '平静',
+      seedancePrompt: lockedBody,
+      location: '餐厅',
+      timeOfDay: '白天',
+      realm: 'reality',
+      characterIds: ['c1'],
+      cameraSide: 'master',
+      lighting: { key: '窗光', soft: true, temp: '暖' },
+    }
+    const project: Project = {
+      id: 'p',
+      title: '锁',
+      genre: '都市逆袭',
+      platform: '红果',
+      episodeCount: 1,
+      secondsPerEp: 75,
+      style: '真人都市',
+      logline: 'l',
+      locations: ['餐厅'],
+      characters: [lin],
+      outline: [{ episode: 1, title: '一', hook: '', summary: '', cliffhanger: '' }],
+      scripts: { 1: { episode: 1, title: '一', beats: [], fullText: '' } },
+      storyboards: { 1: [locked] },
+      selectedEpisode: 1,
+      updatedAt: '2026-11-26T00:00:00.000Z',
+      locks: { shots: { 's-lock': true } },
+    }
+    const llm = async () =>
+      JSON.stringify([
+        {
+          id: 's-lock',
+          shotNo: 1,
+          size: '全景',
+          durationSec: 6,
+          visual: '被改写的拥抱',
+          action: '走开',
+          dialogue: '',
+          camera: '固定',
+          emotion: '平静',
+          seedancePrompt: '被改写。限制：面部始终不入画。',
+          location: '餐厅',
+          timeOfDay: '白天',
+          characters: ['林薇（梦中）'],
+          realm: 'reality',
+          cameraSide: 'master',
+          lighting: locked.lighting,
+        },
+      ])
+    const result = await generateStoryboardChecked(llm, project, project.outline[0], '', { maxRepairs: 0 })
+    const kept = result.shots[0]
+    assert.equal(kept.visual, '两人拥抱')
+    assert.equal(kept.seedancePrompt, lockedBody)
+    assert.equal(project.characters[0].name, '林薇（梦中）')
+  })
+
   await t('compliance and repair prompts name the 限制 channel', () => {
     const block = complianceBlock({ secondsPerEp: 75, locations: ['餐厅'] })
     assert.ok(block.includes(DECORATIVE_LIGHT_BAN))
     assert.ok(block.includes(LIFE_MOTION_HARD_CONSTRAINT))
     assert.ok(block.includes('不要只写在 action'))
     assert.ok(block.includes('（梦中）'))
+    assert.ok(block.includes('发光粒子') && block.includes('彩色或红色光渗漏') && block.includes('装饰性光斑'))
+    assert.ok(block.includes('低髻') && !block.includes('低鬆') && !block.includes('低鬃'))
+    assert.ok(block.includes('视线越过'))
+    assert.ok(HIDDEN_FACE_PARTS.join('').includes('低髻'))
     const repair = repairPrompt([{ shot: 7, rule: 'sceneDecor', detail: 'x' }], { lockedShots: true })
     assert.ok(repair.includes('不要输出已锁定镜头'))
     assert.ok(repair.includes(DECORATIVE_LIGHT_BAN))

@@ -393,8 +393,8 @@ t('默认 buildVideoPipelineExport 无 shotStateExport，字节含默认限制�
   assert.equal(exp.schema, 'short-drama-studio/video-pipeline@1')
   assert.equal(Object.prototype.hasOwnProperty.call(exp, 'shotStateExport'), false)
   const hex = createHash('sha256').update(JSON.stringify(exp)).digest('hex')
-  // Digest includes the default 限制 clauses assembled on export (spark ban + life motion).
-  assert.equal(hex, 'aa6b85a4a3e8a03424ae80878d6135ab4c4a5a6fa7290e4059cfc1a68f4bb3b9')
+  // Digest includes the default 限制 channel. Updated because that ban now also names 发光粒子, 彩色或红色光渗漏, and 装饰性光斑.
+  assert.equal(hex, 'b3109269f5b63f6139a3df7e3d886d1ca23eb08d579700829d5bd92383e14e79')
 })
 
 console.log(`\n${pass} tests passed`)

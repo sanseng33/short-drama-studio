@@ -25,7 +25,7 @@ import { emotionWords, splitVoice, stripVoiceAdverbs, visibleForEmotion } from '
 export const PERFORMANCE_NOTE = '表演规则：'
 import { clearMouthClause, MOUTH_BLOCK_RE } from './mouthOcclusion'
 import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, dialogueSegmentNeeds, SHOT_TARGET_SEC, type DialoguePad, type SpeechRate } from './dialogueTiming'
-import { pictureConstraintClauses, stripRealmLabels } from './pictureRules'
+import { axisNeedsHiddenFaceLimit, pictureConstraintClauses, softenSharpProfile, stripRealmLabels } from './pictureRules'
 
 export type BeatMode = 'off' | 'speed'
 export type BeatSpeed = '快' | '慢' | '恢复常速'
@@ -784,13 +784,24 @@ export function validateBeatOverride(s: VideoPipelineShot, segs: BeatOverrideSeg
 }
 
 export function buildBeatPrompt(s0: VideoPipelineShot, chars: Char[], opts: BeatModeOptions = {}): BeatPromptResult {
-  const s: VideoPipelineShot = {
+  const stripped: VideoPipelineShot = {
     ...s0,
     prompt: stripRealmLabels(s0.prompt || ''),
     visual: stripRealmLabels(s0.visual || ''),
     action: stripRealmLabels(s0.action || ''),
     ...(s0.promptDefault != null ? { promptDefault: stripRealmLabels(s0.promptDefault) } : {}),
   }
+  const hidden = axisNeedsHiddenFaceLimit(stripped)
+  const s: VideoPipelineShot = hidden
+    ? {
+        ...stripped,
+        prompt: softenSharpProfile(stripped.prompt || ''),
+        visual: softenSharpProfile(stripped.visual || ''),
+        action: softenSharpProfile(stripped.action || ''),
+        camera: softenSharpProfile(stripped.camera || ''),
+        ...(stripped.promptDefault != null ? { promptDefault: softenSharpProfile(stripped.promptDefault) } : {}),
+      }
+    : stripped
   const src = s.promptDefault ?? s.prompt ?? ''
   const voiceDropped: string[] = []
   const total = Number(s.durationSec) || 0
@@ -1283,6 +1294,8 @@ export function buildBeatPrompt(s0: VideoPipelineShot, chars: Char[], opts: Beat
       voiceMode: s.voiceMode,
       offscreen: Boolean(s.speakerOffscreen || (hasDialogue && !onscreenSpeech)),
       action: s.action || '',
+      camera: s.camera,
+      wardrobeState: s.wardrobeState,
       picture: `${s.visual || ''}\n${src}`,
     })) {
       if (!limits.some((x) => x.includes(c))) limits.push(c)

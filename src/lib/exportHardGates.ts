@@ -5,11 +5,11 @@
  * Pipeline JSON is blocked; markdown / seedance warn.
  */
 import type { Project } from '../types'
-import { evaluateStartFrameConsistency, formatStartFrameConflicts } from './startFrameStill'
+import { evaluateStartFrameConsistency, formatStartFrameConflicts, missingVerifiedStartFrame } from './startFrameStill'
 import { validateContinuity, type RawShotLike } from './generatorRules'
 import { locationNamer } from './locationNorm'
 
-export type ExportHardCode = 'start_frame_conflict' | 'scene_decor_conflict'
+export type ExportHardCode = 'start_frame_conflict' | 'start_frame_required' | 'scene_decor_conflict'
 
 export interface ExportHardIssue {
   code: ExportHardCode
@@ -32,6 +32,18 @@ export function collectExportHardIssues(project: Project): ExportHardIssue[] {
     }
   }
   const namer = locationNamer(project.characters)
+  for (const [k, shots] of Object.entries(project.storyboards || {})) {
+    const episode = Number(k)
+    for (const s of shots || []) {
+      if (!missingVerifiedStartFrame(s)) continue
+      out.push({
+        code: 'start_frame_required',
+        episode: Number.isFinite(episode) ? episode : 0,
+        shotId: s.id,
+        message: `${s.id}${Number.isFinite(episode) ? `（第${episode}集）` : ''}：拥抱或过肩构图缺少已核验的起幅静帧（startFrameStill 须有 sha256，origin 为 local_computed 或 imported_manifest）。「首帧已是拥抱」或动作里的肢体接触不能代替静帧；定妆或服装参考图不是起幅`,
+      })
+    }
+  }
   for (const [k, shots] of Object.entries(project.storyboards || {})) {
     const episode = Number(k)
     if (!shots?.length) continue
