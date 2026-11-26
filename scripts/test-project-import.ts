@@ -367,7 +367,7 @@ t('写入后读回校验失败时恢复当前工程', () => {
   assert.equal(storage.getItem(PROJECT_STORAGE_KEY), before)
 })
 
-t('默认 buildVideoPipelineExport 无 opt-in 时字节与改前对照一致', () => {
+t('默认 buildVideoPipelineExport 无 shotStateExport，字节含默认限制条款且固定', () => {
   const c = character()
   const s = shot()
   const fixed: Project = {
@@ -393,7 +393,8 @@ t('默认 buildVideoPipelineExport 无 opt-in 时字节与改前对照一致', (
   assert.equal(exp.schema, 'short-drama-studio/video-pipeline@1')
   assert.equal(Object.prototype.hasOwnProperty.call(exp, 'shotStateExport'), false)
   const hex = createHash('sha256').update(JSON.stringify(exp)).digest('hex')
-  assert.equal(hex, '2125c45922eca41379945337052d6380b753b917e0b8e50b8d369b8a744e190d')
+  // Digest includes the default 限制 clauses assembled on export (spark ban + life motion).
+  assert.equal(hex, 'aa6b85a4a3e8a03424ae80878d6135ab4c4a5a6fa7290e4059cfc1a68f4bb3b9')
 })
 
 console.log(`\n${pass} tests passed`)

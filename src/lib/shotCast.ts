@@ -1,5 +1,6 @@
 /** Shot ↔ character mapping helpers (pure). */
 import type { Character, Shot } from '../types'
+import { stripRealmLabels } from './pictureRules'
 
 /** Fallback: detect characters whose name appears in visual / action / dialogue text. */
 export function detectCharacterIds(
@@ -7,7 +8,12 @@ export function detectCharacterIds(
   chars: Character[],
 ): string[] {
   const text = [shot.visual, shot.action, shot.dialogue].filter(Boolean).join('\n')
-  return chars.filter((c) => c.name && text.includes(c.name)).map((c) => c.id)
+  return chars
+    .filter((c) => {
+      const names = [c.name, c.baseName, stripRealmLabels(c.name || '')].map((n) => (n || '').trim()).filter((n) => n.length >= 1)
+      return names.some((n) => text.includes(n))
+    })
+    .map((c) => c.id)
 }
 
 /** Map LLM-provided names or ids to project character ids (order-preserving, deduped). */

@@ -22,7 +22,8 @@ import { EMOTION_VISIBLE } from './emotionVocab'
 import { HOLD_EXPRESSION, parseRewriteNote, rewriteNote, visibleForEmotion, visualizePrompt } from './emotionVisual'
 import { clearMouth, MOUTH_CLEAR_MARK } from './mouthOcclusion'
 import { dialogueNeedSec, speechSec, type SpeechRate } from './dialogueTiming'
-import { LIFE_MOTION_CONSTRAINT, ensureLifeMotionConstraint } from './lifeMotion'
+import { LIFE_MOTION_CONSTRAINT } from './lifeMotion'
+import { applyPictureConstraints, stripRealmLabels } from './pictureRules'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { sha1Hex } from './hash'
 import { isPropNegLine, qualifyTextProps, textPropNote } from './textProps'
@@ -179,7 +180,8 @@ export function onscreenCast(s: ShotLike & { visual?: string }, chars: { id: str
   return (s.characterIds || []).filter((id) => {
     if (!vo.has(id)) return true
     const c = byId.get(id)
-    return [c?.name, c?.baseName].some((n) => n && (s.visual || '').includes(n))
+    const plain = stripRealmLabels(c?.name || '').trim()
+    return [c?.name, c?.baseName, plain].some((n) => n && (s.visual || '').includes(n))
   })
 }
 
@@ -520,6 +522,10 @@ export interface RenderContext {
   wardrobeState: Record<string, string>
   chars: WardrobeMeta[]
   voiceMode?: string
+  /** Inner / offscreen audio when voiceMode was not copied onto the prompt. */
+  offscreen?: boolean
+  /** Shot action, so a turn that is not repeated in the prompt still reaches 「限制：」. */
+  action?: string
 }
 
 /**
@@ -592,7 +598,13 @@ export function renderPrompt(prompt: string, framing: Framing, ctx?: RenderConte
   const tl = dropRepeatedTimeLead(cw.prompt)
   p = withFirstLineNoText(tl.prompt)
   notes.push(...tl.notes)
-  p = ensureLifeMotionConstraint(p, ctx?.voiceMode)
+  p = applyPictureConstraints(p, {
+    hasPerson: framing !== 'empty' && n > 0,
+    voiceMode: ctx?.voiceMode,
+    offscreen: ctx?.offscreen,
+    action: ctx?.action,
+    picture: p,
+  })
   const tail = [tp.negLine, `景别：${framingWords(framing, n)}。`, BAND_NEGATIVE, NO_TEXT_CONSTRAINT].filter(Boolean).join('\n')
   return { prompt: `${p}\n${tail}`, notes }
 }
@@ -674,7 +686,8 @@ const dayRank = (tod?: string | null) => {
   for (const [re, r] of DAY_RANK) if (tod && re.test(tod)) return r
   return -1
 }
-const nameKeys = (c: WardrobeMeta) => [c.name, c.baseName].map((x) => (x || '').trim()).filter(Boolean)
+const nameKeys = (c: WardrobeMeta) =>
+  [...new Set([c.name, c.baseName, stripRealmLabels(c.name || '')].map((x) => (x || '').trim()).filter(Boolean))]
 
 export interface WardrobeProposal {
   characterId: string
@@ -786,7 +799,14 @@ export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Par
     shots: e.shots.map((s, i) => {
       const framing = framingOf(s, chars)
       const onscreen = onscreenCast(s, chars)
-      const r = renderPrompt(s.prompt, framing, { onscreen, wardrobeState: ws[i], chars, voiceMode: s.voiceMode })
+      const r = renderPrompt(s.prompt, framing, {
+        onscreen,
+        wardrobeState: ws[i],
+        chars,
+        voiceMode: s.voiceMode,
+        offscreen: Boolean(s.speakerOffscreen || (s.dialogueLines?.length && s.dialogueLines.every((l) => l.voiceOnly))),
+        action: s.action,
+      })
       const cc = s.castCorrection
       if (cc) {
         // re-cast shot: the upstream subject text describes the replaced variant → solo subject from the pack data

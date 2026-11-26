@@ -1,6 +1,8 @@
 /** 状态：未执行。建议：npx tsc -b && npx --yes tsx scripts/test-shot-state-export.ts
  * shot-state 显式 opt-in 导出（buildVideoPipelineExport / projectToMarkdown / seedancePack）验收。
- * 不联网，不执行 shell。默认导出的三个 sha256 是固定期望值；哈希变了只能修实现，不能改夹具或期望值。 */
+ * 不联网，不执行 shell。默认导出的三个 sha256 是固定期望值。
+ * Markdown / Seedance 哈希钉住分镜里存的提示词，不要为了过测去改期望值。
+ * 流水线哈希包含导出时写入「限制：」的默认画面条款（火花禁令、生命感微动）；只有那条通道的规则变了才更新 HASH_PIPELINE。 */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { projectToMarkdown, seedancePack } from '../src/lib/export'
@@ -151,7 +153,7 @@ const invalidatedDoc = (): ShotStateDoc => {
 
 // ---------------- A. 默认兼容哈希 ----------------
 
-const HASH_PIPELINE = '3c6e960b8d9eaeae6f9f87d620e43abcdbde24ed0f52a754cd769ee43d699bd8'
+const HASH_PIPELINE = '35ed7df9f262b5bf62f366aa68003e0f7e1a6fbd09b904458b2cb89d36c2f8ca'
 const HASH_MARKDOWN = '80dcf88fe3a1156ce831dad490a7c428b7f11a355ffe1aaf59561373303e690e'
 const HASH_SEEDANCE = 'da81142d09d881c8945a78d12e042c6607a370a94524db1edeb0c86d3f20fcc1'
 
