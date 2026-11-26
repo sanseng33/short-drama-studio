@@ -1,8 +1,8 @@
 /**
- * shot-state-ssot@0.1.0-draft（未冻结草案）的类型。单一状态源：出演、首帧可见、发声、事件时序、可选服装。
+ * shot-state-ssot@0.1.0（已冻结）的类型。单一状态源：出演、首帧可见、发声、事件时序、可选服装。
  * 不依赖 src/types.ts 的 Shot/Project 必填字段；旧 Shot 通过 migrate.ts 迁入。
  */
-export const SHOT_STATE_SPEC = 'shot-state-ssot@0.1.0-draft' as const
+export const SHOT_STATE_SPEC = 'shot-state-ssot@0.1.0' as const
 
 export type ShotStateMode = 'compat' | 'strict' | 'run-ready'
 

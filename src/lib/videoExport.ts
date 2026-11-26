@@ -211,8 +211,10 @@ export interface VideoPipelineOptions {
   /** opt-in (default false): throw AssetContractError when an on-screen binding is incomplete (no refSet / missing ref file / no sceneId / missing plate / duplicate characterId); it does not prove files are readable or hashes verified (see assetFeed.ts) */
   assetContractStrict?: boolean
   /**
-   * opt-in (default off): attach a versioned `shot-state-ssot@0.1.0-draft` pack as `shotStateExport`.
-   * Studio-side additive pack only: the H3 receiver is NOT modified and does NOT declare support for this field.
+   * opt-in (default off): attach a frozen `shot-state-export@0.1.0` pack
+   * (state source `shot-state-ssot@0.1.0`) as `shotStateExport`.
+   * Studio-side additive pack only: the H3 receiver has not declared support for this version and does not consume it.
+   * `h3.receiverDeclaresSupport` stays false until the receiver lists this ID.
    * `true` = compat recording; pass options for strict / run-ready (throws ShotStateExportRejectedError when unmet).
    * When off, the output has no `shotStateExport` key and is byte-identical to before.
    */
