@@ -15,6 +15,7 @@ import {
   type ResolvedCast,
 } from './cast'
 import { styleTag } from './styleTag'
+import { applyGeneratorPictureRules } from '../pictureRules'
 
 export interface Flavor {
   genreLabel: string
@@ -398,7 +399,7 @@ export function buildFlexibleShots(
     for (const c of chars) {
       if (!ids.includes(c.id) && c.name && rest.dialogue.includes(c.name)) ids.push(c.id)
     }
-    return {
+    return applyGeneratorPictureRules({
       id: `s${ep}-${i + 1}`,
       shotNo: i + 1,
       ...rest,
@@ -412,6 +413,6 @@ export function buildFlexibleShots(
         p.durationSec,
         flavor.styleTone,
       ),
-    }
+    })
   })
 }

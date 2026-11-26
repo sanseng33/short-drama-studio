@@ -25,6 +25,7 @@ import { emotionWords, splitVoice, stripVoiceAdverbs, visibleForEmotion } from '
 export const PERFORMANCE_NOTE = '表演规则：'
 import { clearMouthClause, MOUTH_BLOCK_RE } from './mouthOcclusion'
 import { DEFAULT_DIALOGUE_PAD, dialogueNeedSec, dialogueSegmentNeeds, SHOT_TARGET_SEC, type DialoguePad, type SpeechRate } from './dialogueTiming'
+import { axisNeedsHiddenFaceLimit, pictureConstraintClauses, softenSharpProfile, stripRealmLabels } from './pictureRules'
 
 export type BeatMode = 'off' | 'speed'
 export type BeatSpeed = '快' | '慢' | '恢复常速'
@@ -782,7 +783,25 @@ export function validateBeatOverride(s: VideoPipelineShot, segs: BeatOverrideSeg
   return e
 }
 
-export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatModeOptions = {}): BeatPromptResult {
+export function buildBeatPrompt(s0: VideoPipelineShot, chars: Char[], opts: BeatModeOptions = {}): BeatPromptResult {
+  const stripped: VideoPipelineShot = {
+    ...s0,
+    prompt: stripRealmLabels(s0.prompt || ''),
+    visual: stripRealmLabels(s0.visual || ''),
+    action: stripRealmLabels(s0.action || ''),
+    ...(s0.promptDefault != null ? { promptDefault: stripRealmLabels(s0.promptDefault) } : {}),
+  }
+  const hidden = axisNeedsHiddenFaceLimit(stripped)
+  const s: VideoPipelineShot = hidden
+    ? {
+        ...stripped,
+        prompt: softenSharpProfile(stripped.prompt || ''),
+        visual: softenSharpProfile(stripped.visual || ''),
+        action: softenSharpProfile(stripped.action || ''),
+        camera: softenSharpProfile(stripped.camera || ''),
+        ...(stripped.promptDefault != null ? { promptDefault: softenSharpProfile(stripped.promptDefault) } : {}),
+      }
+    : stripped
   const src = s.promptDefault ?? s.prompt ?? ''
   const voiceDropped: string[] = []
   const total = Number(s.durationSec) || 0
@@ -1270,6 +1289,17 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     if (src.includes(CARRY_WARDROBE_CONSTRAINT) || carry) limits.push(CARRY_WARDROBE_CONSTRAINT)
     if (s.splitFrom && src.includes(SOLO_SPLIT_LIMIT)) limits.push(SOLO_SPLIT_LIMIT)
     if (s.speakerOffscreen || lines.some((l) => l.voiceOnly)) limits.push('画外人声的来源不出镜，画面只出现指定角色')
+    for (const c of pictureConstraintClauses(src, {
+      hasPerson: cast.length > 0,
+      voiceMode: s.voiceMode,
+      offscreen: Boolean(s.speakerOffscreen || (hasDialogue && !onscreenSpeech)),
+      action: s.action || '',
+      camera: s.camera,
+      wardrobeState: s.wardrobeState,
+      picture: `${s.visual || ''}\n${src}`,
+    })) {
+      if (!limits.some((x) => x.includes(c))) limits.push(c)
+    }
     const prompt = [
       `竖屏9:16，${fmt(total)}秒单镜。${head ? `${head}，` : ''}${who}。`,
       subj ? `主体：${subj}。${solo}` : solo,

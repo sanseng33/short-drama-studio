@@ -19,6 +19,7 @@ import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, SAME_SCENE_WARDROBE_CO
 import { applyBeatMode, type BeatModeOptions, type BeatOverrides } from './beatPrompt'
 import { applyCrossCutSplit } from './crosscutSplit'
 import { annotateShots } from './shotAnnotate'
+import { applyPictureConstraints, axisNeedsHiddenFaceLimit, softenSharpProfile, stripRealmLabels } from './pictureRules'
 import { applyCastConsistency } from './castConsistency'
 import { assignRealms } from './realm'
 import type { RhythmOptions } from './rhythm'
@@ -688,6 +689,22 @@ export function postProcessExportWithStats(
       if (clean !== s.prompt) stats.dialogueStripped++
       s.prompt = addConstraint(clean, NO_GLYPH_CONSTRAINT)
     }
+    s.visual = stripRealmLabels(s.visual || '')
+    s.action = stripRealmLabels(s.action || '')
+    if (axisNeedsHiddenFaceLimit({ visual: s.visual, action: s.action, camera: s.camera, prompt: s.prompt, wardrobeState: s.wardrobeState })) {
+      s.visual = softenSharpProfile(s.visual)
+      s.action = softenSharpProfile(s.action)
+      if (s.camera) s.camera = softenSharpProfile(s.camera)
+    }
+    s.prompt = applyPictureConstraints(s.prompt || '', {
+      hasPerson: s.characterIds.length > 0,
+      voiceMode: s.voiceMode,
+      offscreen: Boolean(s.speakerOffscreen || (s.dialogueLines?.length && s.dialogueLines.every((l) => l.voiceOnly))),
+      action: s.action,
+      camera: s.camera,
+      wardrobeState: s.wardrobeState,
+      picture: `${s.visual}\n${s.prompt || ''}`,
+    })
     return s
   })
 
@@ -712,6 +729,15 @@ export function postProcessExportWithStats(
           if (dialogueTexts(m).length) p = addConstraint(p, NO_GLYPH_CONSTRAINT)
           p = lockPromptStyle(p, style, genre).text
           p = ensureSinglePrefixedClause(p, '光线：', '')
+          p = applyPictureConstraints(p, {
+            hasPerson: m.characterIds.length > 0,
+            voiceMode: m.voiceMode,
+            offscreen: Boolean(m.speakerOffscreen || m.dialogueLines?.some((l) => l.voiceOnly)),
+            action: m.action,
+            camera: m.camera,
+            wardrobeState: m.wardrobeState,
+            picture: `${m.visual || ''}\n${p}`,
+          })
         }
         merged.push({ ...m, prompt: p })
       }

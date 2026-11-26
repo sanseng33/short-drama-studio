@@ -9,6 +9,8 @@ import { locationNamer, normalizeLocation } from './locationNorm'
 import { normRealm, realmOfText } from './realm'
 import { normCameraSide, normFacing, normHands, normPose, normSide, normVoiceMode, presentKeysForBlocking, trimBlockingToPresent } from './blocking'
 import { conflictingAnchors, extractAnchors, mergeAnchors, shotAnchorText } from './sceneAnchors'
+import { applyGeneratorPictureRules, DECORATIVE_LIGHT_BAN, HIDDEN_FACE_PARTS, LIFE_MOTION_HARD_CONSTRAINT, TURN_STABILITY_CONSTRAINT } from './pictureRules'
+import { missingVerifiedStartFrame } from './startFrameStill'
 
 export const EPISODE_CAP_SEC = 90
 export const MAX_ACTIONS_PER_SEGMENT = 2
@@ -40,8 +42,14 @@ export function complianceBlock(p: { secondsPerEp: number; locations?: string[] 
 - 起止状态：每个有人物的镜头必须给 startState/endState（画面内每个角色的 pos/facing/pose/gaze/hands）；carryFromPrev=true 时本镜 startState 与上一镜 endState 完全一致，姿势/手持物的变化必须在时间轴里有对应动作；被下一镜承接的镜头最后约 1 秒只保持姿态。
 - 站位与机位：每场第一镜给 blocking（左右站位、朝向、门窗在哪侧、谁拿什么），本场人物不换边；每镜给 cameraSide（master/A/B）与 eyeline，A 与 B 之间必须隔一个 master 镜（否则越轴）。
 - 一场一套光：每场第一镜给 lighting（key 主光方向、soft 软硬、temp 冷暖），同场每镜光线一致。
-- 台词 voiceMode：onscreen / inner / offscreen；inner 与 offscreen 时画面人物嘴唇闭合，同时必须有生命感微动（呼吸、眨眼、肩线、重心或手指），禁止整段静止。无对白且非 inner/offscreen 的镜头不要写「嘴唇闭合不说话」；若写了必须同时写微动。
-- 场景层 realm：每镜写 reality / dream / memory，同一场相同；梦境/回忆里用角色对应的造型变体；现实与梦境/回忆切换的第一镜 establishing=true、carryFromPrev=false。${locs}`
+- 台词 voiceMode：onscreen / inner / offscreen；inner 与 offscreen 时画面人物嘴唇闭合，同时必须有生命感微动（呼吸、眨眼、肩线、重心或手指），禁止整段静止，并写入 seedancePrompt 的「限制：」硬约束，不要只写在 action 或时间轴。无对白且非 inner/offscreen 的镜头不要写「嘴唇闭合不说话」；若写了必须同时写微动。
+- 每镜 seedancePrompt 的「限制：」必须包含：${DECORATIVE_LIGHT_BAN}。有人物的镜头还要把「${LIFE_MOTION_HARD_CONSTRAINT}」写进同一条「限制：」。
+- visual、action、seedancePrompt 的画面散文只写角色的去括号显示名。不要写「（梦中）」「（梦里）」「（回忆）」「（闪回）」「（现实）」这种括号；角色表、characters、台词说话人、wardrobe 键、startState/screenPos/endState 的键仍用变体全名。
+- action 或时间轴含转头、转身、伸手、张嘴，或「视线越过 / 望向深处」这类会带动转头的视线时，「限制：」必须包含：${TURN_STABILITY_CONSTRAINT}。近景、特写、中近景里把大的暗示性转头改成眼睛小幅移动、头基本不动。
+- 短镜（durationSec ≤ 6）的 action 最多保留 3 个动作或微动作，不要堆一长串互相抢戏的微节拍；呼吸、眨眼、肩线与手部微动仍写在「限制：」里。
+- 拥抱、相拥、从后背收回手，或过肩/越肩构图：必须绑定已核验的 startFrameStill（有效 sha256，origin 为 local_computed 或 imported_manifest）。只写「首帧已是拥抱」或在 action 里暗示肢体接触不算。定妆图和服装参考图不是起幅静帧。
+- 背面、不露正脸、hidden_face，或过肩构图：seedance「限制：」必须包含「${HIDDEN_FACE_PARTS.join('，')}」，不要只写「不露正脸」，也不要写清晰侧脸占满画边。
+- 场景层 realm：每镜写 reality / dream / memory，同一场相同；梦境/回忆里 characters / 台词说话人 / 状态键用对应造型变体；现实与梦境/回忆切换的第一镜 establishing=true、carryFromPrev=false。${locs}`
 }
 
 export interface RawShotLike {
@@ -60,9 +68,12 @@ export interface RawShotLike {
   screenPos?: Record<string, string>
   startState?: Record<string, Record<string, unknown>>
   endState?: Record<string, Record<string, unknown>>
+  camera?: string
   cameraSide?: string
   eyeline?: Record<string, unknown>
   voiceMode?: string
+  wardrobeState?: Record<string, string>
+  startFrameStill?: { sha256?: string; source?: string; origin?: 'local_computed' | 'imported_manifest' | 'external_unverified' } | null
   characterIds?: string[]
   voiceOnly?: string[]
   blocking?: Record<string, unknown>
@@ -72,7 +83,7 @@ export interface RawShotLike {
 
 export interface StoryboardIssue {
   shot: number | null
-  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode' | 'realm' | 'sceneDecor'
+  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode' | 'realm' | 'sceneDecor' | 'startFrame'
   detail: string
 }
 
@@ -120,6 +131,13 @@ export function validateStoryboard(
       if (!loc || (!ctx.locations!.includes(loc) && !canon.has(normalizeLocation(loc, namer)))) out.push({ shot: n, rule: 'location', detail: `location「${loc}」不在场景表` })
     }
     if (!(s.timeOfDay || '').trim()) out.push({ shot: n, rule: 'timeOfDay', detail: '缺 timeOfDay' })
+    if (missingVerifiedStartFrame(s)) {
+      out.push({
+        shot: n,
+        rule: 'startFrame',
+        detail: '拥抱或过肩构图缺少已核验的起幅静帧（startFrameStill 须有 sha256，origin 为 local_computed 或 imported_manifest）。写「首帧已是拥抱」或只在动作里暗示接触不算；定妆/服装参考图不是起幅',
+      })
+    }
   })
   if (total > cap + 1e-6) out.push({ shot: null, rule: 'episodeSeconds', detail: `本集合计 ${total}s > ${cap}s` })
   // P0-1/2/3: start / end states, carry continuity, axis, scene lighting, voice mode
@@ -156,7 +174,7 @@ export function autoFixStoryboard<T extends RawShotLike>(shots: T[], ctx: { char
     const change = place || prev!.realm !== realm
     fixed.push({ ...s, ...(loc ? { location: loc } : {}), realm, establishing: change, carryFromPrev: change ? false : s.carryFromPrev !== false })
   })
-  return autoFixContinuity(fixed, namer)
+  return autoFixContinuity(fixed, namer).map((s) => applyGeneratorPictureRules(s))
 }
 
 /** repair prompt for the LLM from a list of issues */
@@ -167,7 +185,8 @@ export function repairPrompt(issues: StoryboardIssue[], opts?: { lockedShots?: b
   return `上一版分镜未通过自检，${how}，逐条修正：\n${issues
     .slice(0, 40)
     .map((x) => `- ${x.shot ? `第${x.shot}镜` : '全集'} [${x.rule}] ${x.detail}`)
-    .join('\n')}`
+    .join('\n')}
+每镜 seedancePrompt 的「限制：」都要写出：${DECORATIVE_LIGHT_BAN}；有人物时加上「${LIFE_MOTION_HARD_CONSTRAINT}」（写进限制，不要只留在 action）。visual/action/seedance 画面散文去掉（梦中）（回忆）等括号，角色表、台词说话人、startState/screenPos 键保留变体全名。action 含转头、转身、伸手、张嘴或视线越过、望向深处时，限制加上「${TURN_STABILITY_CONSTRAINT}」。近景和中近景把大的暗示性转头改成眼睛小幅移动、头基本不动。短镜 action 最多 3 个动作，生命感微动仍留在限制里。拥抱或过肩构图必须绑定已核验的 startFrameStill，不能只写「首帧已是拥抱」。背面、不露正脸或过肩时，限制写成「${HIDDEN_FACE_PARTS.join('，')}」，不要只留「不露正脸」。`
 }
 
 // ---------------- P0-1/2/3 (generator side) ----------------

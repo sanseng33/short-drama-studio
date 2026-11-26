@@ -17,6 +17,7 @@
  * valid; anything missing is inferred deterministically from the shot text and the multi-cast fields.
  */
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
+import { stripRealmLabels } from './pictureRules'
 import { inferGender, nounOf, POS_WORD } from './multiCast'
 import { locationKeyOf } from './sceneGroup'
 import { framingOf } from './shotAnnotate'
@@ -341,7 +342,12 @@ export interface BlockingReport {
 export function applyBlocking(exp0: VideoPipelineExport, opts: { axisGate?: AxisGate } = {}): { exp: Exp; report: BlockingReport } {
   const axisGate = opts.axisGate ?? 'warn'
   const chars = exp0.characters
-  const names = new Map(chars.map((c) => [c.id, [c.name, c.baseName].filter(Boolean) as string[]] as const))
+  const names = new Map(
+    chars.map((c) => {
+      const list = [...new Set([c.name, c.baseName, stripRealmLabels(c.name || '')].map((n) => (n || '').trim()).filter(Boolean))]
+      return [c.id, list] as const
+    }),
+  )
   const idOf = (k: string): string | null => {
     const t = (k || '').trim()
     if (!t) return null
