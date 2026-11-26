@@ -16,7 +16,23 @@ export function promptGenre(p: Pick<Project, 'genre' | 'customGenre' | 'source' 
   return p.genre
 }
 
+function wardrobeRefsBrief(c: Character) {
+  const refs = c.wardrobeRefs
+  if (!refs) return undefined
+  const out: Record<string, { refSet?: string | null; costume?: string; look?: string }> = {}
+  for (const [k, v] of Object.entries(refs)) {
+    if (!v) continue
+    out[k] = {
+      ...(v.refSet !== undefined ? { refSet: v.refSet } : {}),
+      ...(v.costume ? { costume: v.costume } : {}),
+      ...(v.look ? { look: v.look } : {}),
+    }
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 export function characterBrief(c: Character, full = true) {
+  const refs = full ? wardrobeRefsBrief(c) : undefined
   return {
     name: c.name,
     ...(c.baseName ? { baseName: c.baseName } : {}),
@@ -28,6 +44,8 @@ export function characterBrief(c: Character, full = true) {
     ...(c.background ? { background: c.background } : {}),
     ...(full ? { visualLock: c.visualLock, costume: c.costume, signatureProp: c.signatureProp } : {}),
     ...(full && c.personality ? { personality: c.personality } : {}),
+    ...(full && c.wardrobeState ? { wardrobeState: c.wardrobeState } : {}),
+    ...(refs ? { wardrobeRefs: refs } : {}),
   }
 }
 
@@ -100,6 +118,9 @@ export function storyboardUser(p: Project, o: EpisodeOutline, scriptText: string
 - visual 必须含本场地点的家境陈设锚点，并覆盖设定中的空间关系（如对窗邻居须拍到窗对窗）。
 - overlayText 只放界面原文，不放约束或描述；emotion 必须在 action/seedancePrompt 落地为可见表演。
 - 服装/道具描写不要写 logo、校徽、胸标、刺绣标、字样。
+- 每镜给出 wardrobeState（角色 id 或全名 → 该角色 wardrobeRefs 的键）。设定事实若写明 wardrobeRefs.键，必须用该键，不得改用角色默认 costume / refImage。没有写明的角色用其 wardrobeRefs 键或默认 costume。这是结构化字段，不要只把服装写在散文里。
+- 延迟入画（首帧 offscreen，随后 enter）不要写在同一镜里指望模型卡准时间。必须拆成前后两镜：前镜只有已在画面内的角色，characterIds / 参考 / 主体都不要挂入画角色；后镜首帧即包含入画角色。可另给 firstFrame 与 events（enter 带 atSec）；不要只写在 visual/action 里，也不要把未核验写成已审查通过。站位/主体/景别按该镜首帧写，不要把尚未入画的角色写成已经在画面里或「两人同框」。
+- 在画面内同时又有画外语音的角色：必须留在 characterIds，并把其 id/全名放进 voiceOnly（或 voiceMode=offscreen）。不要因为画外音就把在场角色从 characterIds 删掉。纯画外、本镜不出镜的角色只放 voiceOnly，不要放进 characterIds。
 - 剧本中的人物台词默认全部进入分镜；删除或改写须保持可核对，不得无说明丢词。
 ${complianceBlock(p)}`,
   )

@@ -49,6 +49,51 @@ type RawShot = Partial<Shot> & { characters?: unknown; characterNames?: unknown 
 const strArr = (v: unknown): string[] | undefined =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim()) : typeof v === 'string' && v.trim() ? v.split(/[，,、]/).map((x) => x.trim()).filter(Boolean) : undefined
 
+
+function mapWardrobeState(raw: unknown, chars: Character[]): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v !== 'string' || !v.trim()) continue
+    const ids = mapNamesToIds([k], chars)
+    if (ids.length) out[ids[0]] = v.trim()
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
+function mapFirstFrame(raw: unknown, chars: Character[]): Shot['firstFrame'] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined
+  const out: NonNullable<Shot['firstFrame']> = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as { id?: unknown; kind?: unknown; parts?: unknown }
+    const ids = mapNamesToIds([String(rec.id ?? '')], chars)
+    if (!ids.length || typeof rec.kind !== 'string' || !rec.kind.trim()) continue
+    const entry: NonNullable<Shot['firstFrame']>[number] = { id: ids[0], kind: rec.kind.trim() }
+    if (Array.isArray(rec.parts)) {
+      const parts = rec.parts.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim())
+      if (parts.length) entry.parts = parts
+    }
+    out.push(entry)
+  }
+  return out.length ? out : undefined
+}
+
+function mapShotEvents(raw: unknown, chars: Character[]): Shot['events'] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined
+  const out: NonNullable<Shot['events']> = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as { id?: unknown; kind?: unknown; atSec?: unknown }
+    const ids = mapNamesToIds([String(rec.id ?? '')], chars)
+    if (!ids.length || typeof rec.kind !== 'string' || !rec.kind.trim()) continue
+    const ev: NonNullable<Shot['events']>[number] = { id: ids[0], kind: rec.kind.trim() }
+    if (typeof rec.atSec === 'number' && Number.isFinite(rec.atSec)) ev.atSec = rec.atSec
+    out.push(ev)
+  }
+  return out.length ? out : undefined
+}
+
 /** Normalize LLM shot JSON: ids/shotNo + characterIds from names/ids, fallback detection. */
 export function normalizeLlmShots(raw: RawShot[], ep: number, chars: Character[]): Shot[] {
   return raw.map((x, k) => {
@@ -65,12 +110,18 @@ export function normalizeLlmShots(raw: RawShot[], ep: number, chars: Character[]
     const sfx = strArr(x.sfx)
     const overlayText = strArr(x.overlayText)
     const voiceOnly = strArr(x.voiceOnly)
+    const wardrobeState = mapWardrobeState(x.wardrobeState, chars)
+    const firstFrame = mapFirstFrame(x.firstFrame, chars)
+    const events = mapShotEvents(x.events, chars)
     return {
       ...s,
       characterIds: ids,
       ...(sfx ? { sfx } : {}),
       ...(overlayText ? { overlayText } : {}),
       ...(voiceOnly ? { voiceOnly } : {}),
+      ...(wardrobeState ? { wardrobeState } : {}),
+      ...(firstFrame ? { firstFrame } : {}),
+      ...(events ? { events } : {}),
     }
   })
 }

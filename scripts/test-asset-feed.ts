@@ -244,7 +244,7 @@ t('static check: a shot sceneId with no row at all in the manifest is a gap', ()
 
 t('new codes stay separate from the existing consistency codes', () => {
   const e = buildVideoPipelineExport(P([C('c1', '林川')], [shotLiving()]), OPTS)
-  const assetCodes = new Set(['asset_refset_missing', 'asset_plate_missing', 'asset_ref_file_missing', 'asset_scene_id_missing', 'asset_character_id_duplicate', 'asset_reference_conflict', 'asset_costume_placeholder', 'asset_costume_divergence'])
+  const assetCodes = new Set(['asset_refset_missing', 'asset_plate_missing', 'asset_ref_file_missing', 'asset_scene_id_missing', 'asset_character_id_duplicate', 'asset_reference_conflict', 'asset_costume_placeholder', 'asset_costume_divergence', 'asset_hidden_face_unqualified', 'asset_hidden_face_unverified'])
   for (const g of e.assetContract!.gaps) assert.ok(assetCodes.has(g.code))
   assert.ok(!e.warnings.some((w) => (w.code as string) === 'location_not_in_table' || (w.code as string) === 'character_look_not_in_shot'))
 })
@@ -432,6 +432,63 @@ t('fully bound export has no notices', () => {
 t('export without assetBindings is byte-stable across calls', () => {
   const p = P([boundChar()], [shotLiving()])
   assert.equal(JSON.stringify(buildVideoPipelineExport(p, OPTS)), JSON.stringify(buildVideoPipelineExport(p, OPTS)))
+})
+
+
+t('hidden_face 参考不合格：可见脸声明与缺认证均 fail closed；认证 hidden 才放行', () => {
+  const hidden = C('c8', '母亲', {
+    wardrobeState: 'hidden_face',
+    wardrobeRefs: { hidden_face: { refSet: 'mother_temp_back', costume: '围裙家居装', facePolicy: 'hidden' } },
+  })
+  const shot = S({ characterIds: ['c8'], location: '客厅', timeOfDay: '白天', visual: '母亲肩背', action: '站立' })
+  const visible = buildVideoPipelineExport(P([hidden], [shot], {
+    assetBindings: { characters: { 'c8:hidden_face': { origin: 'external_unverified', path: 'refsets/mother_temp_back/00_000.jpg', faceVisibility: 'visible' } } },
+  }), OPTS)
+  assert.ok(visible.assetContract!.gaps.some((g) => g.code === 'asset_hidden_face_unqualified' && g.characterId === 'c8'))
+  assert.ok(visible.warnings.some((w) => w.code === 'asset_hidden_face_unqualified'))
+  assert.throws(() => buildVideoPipelineExport(P([hidden], [shot], {
+    assetBindings: { characters: { 'c8:hidden_face': { origin: 'external_unverified', path: 'refsets/mother_temp_back/00_000.jpg', faceVisibility: 'visible' } } },
+  }), { ...OPTS, assetContractStrict: true }), (err: unknown) =>
+    err instanceof AssetContractError && err.gaps.some((g) => g.code === 'asset_hidden_face_unqualified'))
+
+  const unverified = buildVideoPipelineExport(P([hidden], [shot]), OPTS)
+  assert.ok(unverified.assetContract!.gaps.some((g) => g.code === 'asset_hidden_face_unverified' && g.characterId === 'c8'))
+  assert.throws(() => buildVideoPipelineExport(P([hidden], [shot]), { ...OPTS, assetContractStrict: true }), (err: unknown) =>
+    err instanceof AssetContractError && err.gaps.some((g) => g.code === 'asset_hidden_face_unverified'))
+
+  const ok = buildVideoPipelineExport(P([hidden], [shot], {
+    assetBindings: { characters: { 'c8:hidden_face': { origin: 'external_unverified', path: 'refsets/mother_temp_back/00_000.jpg', faceVisibility: 'hidden' } } },
+  }), OPTS)
+  assert.ok(!ok.assetContract!.gaps.some((g) => g.code === 'asset_hidden_face_unqualified' || g.code === 'asset_hidden_face_unverified'))
+
+  const formal = boundChar()
+  const formalExp = buildVideoPipelineExport(P([formal], [shotLiving()]), OPTS)
+  assert.ok(!formalExp.assetContract!.gaps.some((g) => String(g.code).startsWith('asset_hidden_face_')))
+})
+
+t('hidden_face 允许耳廓例外；未批准部位仍 fail closed，行上保留认证元数据', () => {
+  const hidden = C('c8', '母亲', {
+    wardrobeState: 'hidden_face',
+    wardrobeRefs: { hidden_face: { refSet: 'mother_temp_back', costume: '围裙家居装', facePolicy: 'hidden' } },
+  })
+  const shot = S({ characterIds: ['c8'], location: '客厅', timeOfDay: '白天', visual: '母亲肩背', action: '站立' })
+  const ear = buildVideoPipelineExport(P([hidden], [shot], {
+    assetBindings: { characters: { 'c8:hidden_face': { origin: 'external_unverified', path: 'refsets/mother_temp_back/00_000.jpg', faceVisibility: 'hidden', faceVisibilityAllow: ['ear'] } } },
+  }), OPTS)
+  const row = ear.assetContract!.characters.find((r) => r.characterId === 'c8')!
+  assert.equal(row.faceVisibility, 'hidden')
+  assert.deepEqual(row.faceVisibilityAllow, ['ear'])
+  assert.ok(!ear.assetContract!.gaps.some((g) => String(g.code).startsWith('asset_hidden_face_')))
+
+  const cheekBind = { origin: 'external_unverified' as const, path: 'refsets/mother_temp_back/00_000.jpg', faceVisibility: 'hidden' as const, faceVisibilityAllow: ['cheek'] as unknown as Array<'ear'> }
+  const cheek = buildVideoPipelineExport(P([hidden], [shot], {
+    assetBindings: { characters: { 'c8:hidden_face': cheekBind } },
+  }), OPTS)
+  assert.ok(cheek.assetContract!.gaps.some((g) => g.code === 'asset_hidden_face_unqualified' && /cheek/.test(g.message || '')))
+  assert.throws(() => buildVideoPipelineExport(P([hidden], [shot], {
+    assetBindings: { characters: { 'c8:hidden_face': { origin: 'external_unverified', path: 'refsets/mother_temp_back/00_000.jpg', faceVisibility: 'hidden', faceVisibilityAllow: ['jaw'] as unknown as Array<'ear'> } } },
+  }), { ...OPTS, assetContractStrict: true }), (err: unknown) =>
+    err instanceof AssetContractError && err.gaps.some((g) => g.code === 'asset_hidden_face_unqualified' && /jaw/.test(g.message || '')))
 })
 
 console.log(`\n${pass} tests passed`)

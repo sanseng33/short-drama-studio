@@ -41,6 +41,9 @@ export type StepId =
   | 'export'
   | 'settings'
 
+/** Visible parts still allowed when faceVisibility is hidden. Only `ear` is accepted; cheek/jaw/eye/profile are not. */
+export type FaceVisibilityAllowPart = 'ear'
+
 export interface Character {
   id: string
   name: string
@@ -86,7 +89,7 @@ export interface Character {
   /** keyword cues in shot visual/action text that switch the wardrobe state from that shot on */
   wardrobeCues?: { state: string; keywords: string[] }[]
     /** wardrobe state → character-pack reference set (lora_materials/datasets/<refSet>), null = none yet */
-    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string; costume?: string; look?: string }>
+    wardrobeRefs?: Record<string, { refSet: string | null; logoFree?: boolean; fallbackRefSet?: string; note?: string; costume?: string; look?: string; facePolicy?: 'hidden' | 'visible'; faceVisibility?: 'hidden' | 'visible' | 'unverified'; faceVisibilityAllow?: FaceVisibilityAllowPart[] }>
   /**
    * LoRA / Omni multi-ref training materials from 定妆包.
    * Training-only: never inject into visual prompts, characterBrief, or inject_character_meta.
@@ -198,6 +201,25 @@ export interface Shot {
   overlayText?: string[]
   /** Offscreen voices (names or ids): OS / 画外音 / 电话里 */
   voiceOnly?: string[]
+  /** Optional per-shot wardrobeRefs key by character id (or name, normalized on ingest). */
+  wardrobeState?: Record<string, string>
+  /**
+   * Optional structured first-frame visibility (character id / name + kind).
+   * When present and well-formed, export uses it; prose is not parsed to fill this in, and it is not a review pass.
+   */
+  firstFrame?: { id: string; kind: string; parts?: string[] }[]
+  /** Optional structured timed events (enter / start_offscreen / …). Same caveats as firstFrame. */
+  events?: { id: string; kind: string; atSec?: number }[]
+  /** Export/generation: this shot is the pre or post half of a delayed-entry split. */
+  delayedEntrySplit?: 'pre' | 'post'
+  /** Parent shot id when this shot was split from a delayed-entry (or other) parent. */
+  splitFrom?: string
+  /** Parent durationSec at split time (source; may differ from this part's execution duration). */
+  splitSourceDurationSec?: number
+  /** Planned part duration at split time, before any later padding or allocation. */
+  splitPlannedDurationSec?: number
+  /** True when the split used a half-and-half plan because enter events had no usable atSec. */
+  splitUntimed?: boolean
   /** Scene time of day carried from script, e.g. 清晨 / 白天 / 黄昏 / 夜 */
   timeOfDay?: string
   /** Optional short location tag, e.g. 别墅卧室 / 教室 (helps sceneId; post-process still derives when absent) */
@@ -272,6 +294,17 @@ export interface AssetBindingInput {
   sha256?: string
   origin?: 'local_computed' | 'imported_manifest' | 'external_unverified' | 'missing'
   note?: string
+  /**
+   * Attestation for a hidden-face / back-only wardrobe state.
+   * The contract does not infer this from pixels. `visible` is unqualified and fail-closed;
+   * missing attestation on a hidden-face ref is also fail-closed (`unverified`).
+   */
+  faceVisibility?: 'hidden' | 'visible' | 'unverified'
+  /**
+   * Optional exception list when faceVisibility is `hidden`.
+   * Only `ear` is a contract-accepted visible part (ear contour). Other parts fail closed as unqualified.
+   */
+  faceVisibilityAllow?: FaceVisibilityAllowPart[]
 }
 
 export interface ProjectAssetBindings {

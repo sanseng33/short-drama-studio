@@ -17,7 +17,8 @@ import {
   type CompiledModelAdapterText,
   type ModelAdapterSpec,
 } from './adapter'
-import { migrateLegacyShot, type CharLike } from './migrate'
+import { type CharLike } from './migrate'
+import { shotStateFromShot } from './fromShot'
 import { COMPILER_VERSION, semanticFieldStatus, textStatus } from './texts'
 import {
   SHOT_STATE_SPEC,
@@ -100,7 +101,7 @@ export interface ShotStateExportShot {
   shotId: string
   episode: number
   shotNo: number
-  docOrigin: 'provided' | 'legacy_migration'
+  docOrigin: 'provided' | 'legacy_migration' | 'shot_fields' | 'start_state'
   source: ShotStateSource
   sourceHash: string
   texts: ShotStateExportText[]
@@ -236,7 +237,7 @@ function mergeFields(base: readonly FieldDecl[], extra: readonly FieldDecl[] | u
 
 function buildShot(ep: number, shot: Shot, chars: readonly CharLike[], opts: ShotStateExportOptions, mode: ShotStateMode) {
   const provided = opts.docs?.[shot.id]
-  let doc: ShotStateDoc = provided ?? migrateLegacyShot(shot, chars)
+  let doc: ShotStateDoc = provided ?? shotStateFromShot(shot, chars)
   if (opts.adapter?.fieldDecls?.length) doc = { ...doc, fields: mergeFields(doc.fields, opts.adapter.fieldDecls) }
   const sourceHash = hashSource(doc.source)
   const texts = doc.texts.map((t) => describeText(doc, t, sourceHash))
@@ -266,7 +267,7 @@ function buildShot(ep: number, shot: Shot, chars: readonly CharLike[], opts: Sho
     shotId: shot.id,
     episode: ep,
     shotNo: shot.shotNo,
-    docOrigin: provided ? 'provided' : 'legacy_migration',
+    docOrigin: provided ? 'provided' : (doc.migration?.origin ?? 'legacy_migration'),
     source: doc.source,
     sourceHash,
     texts,
@@ -464,7 +465,15 @@ export function renderShotStateAppendix(pack: ShotStateExportPack, headingLevel 
   lines.push('')
   for (const s of pack.shots) {
     lines.push(`${h(1)} 镜 ${s.shotId}（第${s.episode}集 #${s.shotNo}）`, '')
-    lines.push(`- sourceHash：${s.sourceHash}｜来源：${s.docOrigin === 'provided' ? '提供的状态文档' : '旧 Shot compat 迁移'}`)
+    const originLabel =
+      s.docOrigin === 'provided'
+        ? '提供的状态文档'
+        : s.docOrigin === 'shot_fields'
+          ? '镜头上的结构化 firstFrame/events（未审查）'
+          : s.docOrigin === 'start_state'
+            ? '由 startState/endState 结构推导（未审查，不是散文猜测，不是 verified）'
+            : '旧 Shot compat 迁移'
+    lines.push(`- sourceHash：${s.sourceHash}｜来源：${originLabel}`)
     lines.push(`- 语义审查：${s.review.status === 'pass' ? 'pass' : s.review.status}｜校验（${pack.mode}）：${s.report.ok ? '无 error' : '有 error'}｜compat：${s.compat.ok ? '无 error' : '有 error'}`)
     if (s.unverifiedCharacterIds.length) lines.push(`- 首帧可见性未核验（unverified）：${s.unverifiedCharacterIds.join('、')}`)
     if (s.fields.runRequiredUnsupported.length) lines.push(`- 运行所需字段未被支持（阻断 run-ready）：${s.fields.runRequiredUnsupported.join('、')}`)

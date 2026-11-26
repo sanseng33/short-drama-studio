@@ -48,7 +48,7 @@
  * Repo tests for this module check the static manifest only. They never claim a live graph was verified.
  */
 import { isSha256Hex, sha256Hex } from './contentHash'
-import type { AssetBindingInput, Project, ProjectAssetBindings } from '../types'
+import type { AssetBindingInput, FaceVisibilityAllowPart, Project, ProjectAssetBindings } from '../types'
 import type { VideoPipelineExport, VideoPipelineWarning } from './videoExport'
 
 export const ASSET_CONTRACT_VERSION = 'h3-feed@1' as const
@@ -71,6 +71,10 @@ export interface CharacterAssetRow {
   wardrobeState: string
   refSet: string | null
   file: AssetFile
+  /** Present when the row is a hidden-face / facePolicy=hidden binding, or an attestation was supplied. */
+  faceVisibility?: 'hidden' | 'visible' | 'unverified'
+  /** Accepted visible-part exceptions (currently only `ear`). Omitted when empty. */
+  faceVisibilityAllow?: FaceVisibilityAllowPart[]
 }
 
 export interface SceneAssetRow {
@@ -88,6 +92,8 @@ export type AssetGapCode =
   | 'asset_scene_id_missing'
   | 'asset_character_id_duplicate'
   | 'asset_reference_conflict'
+  | 'asset_hidden_face_unqualified'
+  | 'asset_hidden_face_unverified'
 /** notices are visible warnings that never fail strict mode */
 export type AssetNoticeCode = 'asset_hash_unverified' | 'asset_binding_unused'
 export type AssetDivergenceCode = 'asset_costume_placeholder' | 'asset_costume_divergence'
@@ -207,6 +213,94 @@ export function resolveAssetFile(binding: AssetBindingInput | undefined, default
 
 const norm = (s: string | undefined | null): string => (s ?? '').replace(/\s+/g, '').toLowerCase()
 
+
+/** hidden_face (or facePolicy: hidden) requires an attested face-hidden still. No pixel inference. */
+export function requiresHiddenFace(
+  state: string,
+  ref?: { facePolicy?: 'hidden' | 'visible' } | null,
+): boolean {
+  if (ref?.facePolicy === 'visible') return false
+  if (ref?.facePolicy === 'hidden') return true
+  return (state || '').trim() === 'hidden_face'
+}
+
+export function attestedFaceVisibility(
+  ref?: { faceVisibility?: 'hidden' | 'visible' | 'unverified' } | null,
+  binding?: { faceVisibility?: 'hidden' | 'visible' | 'unverified' } | null,
+): 'hidden' | 'visible' | 'unverified' {
+  const v = binding?.faceVisibility || ref?.faceVisibility
+  if (v === 'hidden' || v === 'visible') return v
+  return 'unverified'
+}
+
+export const HIDDEN_FACE_ALLOWED_VISIBLE_PARTS: readonly FaceVisibilityAllowPart[] = ['ear']
+
+/** Binding list wins when present (including an empty list). Unknown parts are returned, not silently accepted. */
+export function attestedFaceVisibilityAllow(
+  ref?: { faceVisibilityAllow?: readonly string[] } | null,
+  binding?: { faceVisibilityAllow?: readonly string[] } | null,
+): { allowed: FaceVisibilityAllowPart[]; unknown: string[] } {
+  const raw = binding?.faceVisibilityAllow !== undefined ? binding.faceVisibilityAllow : (ref?.faceVisibilityAllow ?? [])
+  const allowed: FaceVisibilityAllowPart[] = []
+  const unknown: string[] = []
+  for (const item of raw) {
+    const key = String(item ?? '').trim()
+    if (!key) continue
+    if (key === 'ear') {
+      if (!allowed.includes('ear')) allowed.push('ear')
+    } else if (!unknown.includes(key)) {
+      unknown.push(key)
+    }
+  }
+  return { allowed, unknown }
+}
+
+export function collectHiddenFaceGaps(
+  contract: Pick<AssetContract, 'characters'>,
+  project: Project,
+): AssetGap[] {
+  const gaps: AssetGap[] = []
+  const chars = new Map((project.characters || []).map((c) => [c.id, c]))
+  for (const row of contract.characters) {
+    const c = chars.get(row.characterId)
+    const ref = c?.wardrobeRefs?.[row.wardrobeState]
+    if (!requiresHiddenFace(row.wardrobeState, ref)) continue
+    const binding = project.assetBindings?.characters?.[`${row.characterId}:${row.wardrobeState}`]
+    const vis = attestedFaceVisibility(ref, binding)
+    const allow = attestedFaceVisibilityAllow(ref, binding)
+    if (vis === 'hidden') {
+      if (allow.unknown.length) {
+        gaps.push({
+          code: 'asset_hidden_face_unqualified',
+          episode: 0,
+          characterId: row.characterId,
+          wardrobeState: row.wardrobeState,
+          message: `角色 ${row.characterId} × ${row.wardrobeState}：hidden_face 声明 faceVisibility=hidden，但 faceVisibilityAllow 含未批准可见部位（${allow.unknown.join(', ')}）；合同仅接受 ear（耳廓），面颊/下颌/眼周/侧脸仍不合格`,
+        })
+      }
+      continue
+    }
+    if (vis === 'visible') {
+      gaps.push({
+        code: 'asset_hidden_face_unqualified',
+        episode: 0,
+        characterId: row.characterId,
+        wardrobeState: row.wardrobeState,
+        message: `角色 ${row.characterId} × ${row.wardrobeState}：hidden_face / facePolicy=hidden 的参考被声明为可见脸（faceVisibility=visible），不合格，已拒绝`,
+      })
+    } else {
+      gaps.push({
+        code: 'asset_hidden_face_unverified',
+        episode: 0,
+        characterId: row.characterId,
+        wardrobeState: row.wardrobeState,
+        message: `角色 ${row.characterId} × ${row.wardrobeState}：hidden_face / facePolicy=hidden 的参考未经合格认证（未声明 faceVisibility=hidden），不合格默认拒绝`,
+      })
+    }
+  }
+  return gaps
+}
+
 export function buildAssetContract(project: Project, exp: VideoPipelineExport, strict: boolean): { contract: AssetContract; warnings: VideoPipelineWarning[] } {
   const bindings = project.assetBindings
   const chars = new Map(exp.characters.map((c) => [c.id, c]))
@@ -222,6 +316,7 @@ export function buildAssetContract(project: Project, exp: VideoPipelineExport, s
       const key = `${id}:${state}`
       if (charSeen.has(key)) continue
       const ref = c?.wardrobeRefs?.[state]
+      const projectRef = (project.characters || []).find((pc) => pc.id === id)?.wardrobeRefs?.[state]
       const refSet = ref?.refSet?.trim() || ref?.fallbackRefSet?.trim() || null
       const logical = refSet ? `refsets/${refSet}/00_000.png` : null
       const binding = bindings?.characters?.[key]
@@ -230,6 +325,13 @@ export function buildAssetContract(project: Project, exp: VideoPipelineExport, s
       else if (refSet) file = { logicalPath: logical, sha256: null, hashAlg: 'sha256', origin: 'external_unverified', note: 'refSet 名称来自 wardrobeRefs，没有文件字节，未在本机核验' }
       else file = missingFile('没有 refSet，也没有文件')
       const row: CharacterAssetRow = { characterId: id, ...(c?.characterKey ? { characterKey: c.characterKey } : {}), wardrobeState: state, refSet, file }
+      // Face attestation lives on the project character / binding; export character refs may be a narrower type.
+      const faceRef = (projectRef ?? ref) as { facePolicy?: 'hidden' | 'visible'; faceVisibility?: 'hidden' | 'visible' | 'unverified'; faceVisibilityAllow?: readonly string[] } | undefined
+      if (requiresHiddenFace(state, faceRef) || binding?.faceVisibility || faceRef?.faceVisibility) {
+        row.faceVisibility = attestedFaceVisibility(faceRef, binding)
+        const { allowed } = attestedFaceVisibilityAllow(faceRef, binding)
+        if (allowed.length) row.faceVisibilityAllow = allowed
+      }
       charSeen.set(key, row)
       charRows.push(row)
     }
@@ -286,7 +388,7 @@ export function buildAssetContract(project: Project, exp: VideoPipelineExport, s
     notices: [],
     divergences,
   }
-  contract.gaps = verifyAssetContract(contract, exp)
+  contract.gaps = [...verifyAssetContract(contract, exp), ...collectHiddenFaceGaps(contract, project)]
   contract.notices = collectAssetNotices(contract, bindings)
 
   const warnings: VideoPipelineWarning[] = [
