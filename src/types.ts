@@ -19,6 +19,7 @@ export type {
   StaleReason,
 } from './lib/consistency/types'
 export { KNOWN_SCHEMA_VERSION, PROJECT_BACKUP_KEY } from './lib/consistency/types'
+export type { StartFrameStill, StartFrameInventory } from './lib/startFrameStill'
 
 export type Genre =
   | '男频玄幻'
@@ -240,6 +241,13 @@ export interface Shot {
   voiceMode?: string
   /** generator: scene realm reality | dream | memory (look variants may switch at a realm boundary) */
   realm?: string
+  /** generator: false = do not FL2V from the previous shot's last frame */
+  carryFromPrev?: boolean
+  /**
+   * Bound start-frame still (sha256 and/or external file declaration). First-class: export must carry it as-is
+   * (bytes never persisted). When bound, visual/camera/size/seedancePrompt/startState must not contradict the still.
+   */
+  startFrameStill?: import('./lib/startFrameStill').StartFrameStill
 }
 
 export interface Project {

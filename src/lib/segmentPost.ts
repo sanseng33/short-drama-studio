@@ -15,7 +15,7 @@ import type { ArtStyle } from '../types'
 import { styleTag, styleToneForGenre } from './templates/styleTag'
 import { factsForShotPrompts, scrubTiers, tierSettingFacts } from './settingFacts'
 import type { VideoPipelineExport, VideoPipelineShot, VideoPipelineWarning } from './videoExport'
-import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
+import { applySceneContinuity, CARRY_WARDROBE_CONSTRAINT, SAME_SCENE_WARDROBE_CONSTRAINT, sceneFieldsForMerge } from './sceneContinuity'
 import { applyBeatMode, type BeatModeOptions, type BeatOverrides } from './beatPrompt'
 import { applyCrossCutSplit } from './crosscutSplit'
 import { annotateShots } from './shotAnnotate'
@@ -778,10 +778,17 @@ export function postProcessExportWithStats(
     ? [...settingFactsByTier.world, ...settingFactsByTier.ongoing]
     : factsForShotPrompts(settingFacts)
   // scene continuity (sceneId / sceneLabel / carryFromPrev) — after merge so ids are final
-  const withScene = applySceneContinuity(shots).map((s) => {
-    if (!s.carryFromPrev) return s
-    // Keep character.costume in the cast list; only stop re-locking pack wardrobe in the shot prompt.
-    return { ...s, prompt: addConstraint(s.prompt || '', CARRY_WARDROBE_CONSTRAINT) }
+  const withScene = applySceneContinuity(shots).map((s, i, arr) => {
+    if (s.carryFromPrev) {
+      // Keep character.costume in the cast list; only stop re-locking pack wardrobe in the shot prompt.
+      return { ...s, prompt: addConstraint(s.prompt || '', CARRY_WARDROBE_CONSTRAINT) }
+    }
+    const prev = i ? arr[i - 1] : null
+    if (prev && prev.episode === s.episode && prev.sceneId && prev.sceneId === s.sceneId) {
+      // same scene, new first frame: costume only, never "keep last-frame staging"
+      return { ...s, prompt: addConstraint(s.prompt || '', SAME_SCENE_WARDROBE_CONSTRAINT) }
+    }
+    return s
   }).map((s) => {
     // final guard (merge / carry may have re-assembled text): no dialogue substring in prompt
     const clean = stripDialogueFromPrompt(s.prompt || '', s)

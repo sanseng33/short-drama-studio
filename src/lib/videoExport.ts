@@ -9,6 +9,7 @@ import { missingVoices, type AutoVoice, type VoiceSpec } from './voice'
 import { buildAssetContract, type AssetContract } from './assetFeed'
 import { factsForShotPrompts, tierSettingFactsForPrompt, type SettingFactsByTier } from './settingFacts'
 import { buildShotStateExportPack, type ShotStateExportOptions, type ShotStateExportPack } from './shotState/export'
+import { exportStartFrameStill, type StartFrameStill } from './startFrameStill'
 
 export const VIDEO_PIPELINE_SCHEMA = 'short-drama-studio/video-pipeline@1'
 /** Dialogue pacing: Chinese chars (CJK + alnum) per second */
@@ -65,6 +66,8 @@ export interface VideoPipelineShot {
   carryFromPrev?: boolean
   /** optional storyboard location short tag (fed into scene classification when present) */
   location?: string
+  /** bound start-frame still (sha256 / source / inventory); export carries it without bytes */
+  startFrameStill?: StartFrameStill
   /** 'speed' when the prompt was rewritten as per-second speed beats (opt-in beatMode) */
   beatMode?: 'speed'
   /** beat mode: the timeline segments of `prompt` (seconds, speed tag, dialogue/lip-sync flags) */
@@ -186,7 +189,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing' | 'cast_consistency' | 'asset_refset_missing' | 'asset_plate_missing' | 'asset_ref_file_missing' | 'asset_scene_id_missing' | 'asset_character_id_duplicate' | 'asset_reference_conflict' | 'asset_hash_unverified' | 'asset_binding_unused' | 'asset_costume_placeholder' | 'asset_costume_divergence' | 'asset_hidden_face_unqualified' | 'asset_hidden_face_unverified' | 'delayed_entry_split' | 'delayed_entry_split_untimed' | 'delayed_entry_duration_below_min' | 'delayed_entry_duration_extended'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'episode_duration_mismatch' | 'start_frame_conflict' | 'scene_decor_conflict' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing' | 'cast_consistency' | 'asset_refset_missing' | 'asset_plate_missing' | 'asset_ref_file_missing' | 'asset_scene_id_missing' | 'asset_character_id_duplicate' | 'asset_reference_conflict' | 'asset_hash_unverified' | 'asset_binding_unused' | 'asset_costume_placeholder' | 'asset_costume_divergence' | 'asset_hidden_face_unqualified' | 'asset_hidden_face_unverified' | 'delayed_entry_split' | 'delayed_entry_split_untimed' | 'delayed_entry_duration_below_min' | 'delayed_entry_duration_extended'
   message: string
 }
 
@@ -1020,6 +1023,8 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         refImage: s.refImage || null,
         ...(s.timeOfDay ? { timeOfDay: s.timeOfDay } : {}),
         ...(s.location?.trim() ? { location: s.location.trim() } : {}),
+        ...(s.carryFromPrev === false ? { carryFromPrev: false } : s.carryFromPrev ? { carryFromPrev: true } : {}),
+        ...(s.startFrameStill ? { startFrameStill: exportStartFrameStill(s.startFrameStill) } : {}),
         ...(s.wardrobeState && typeof s.wardrobeState === 'object' ? { wardrobeState: s.wardrobeState } : {}),
         ...(s.delayedEntrySplit ? { delayedEntrySplit: s.delayedEntrySplit } : {}),
         ...(s.splitFrom ? { splitFrom: s.splitFrom } : {}),

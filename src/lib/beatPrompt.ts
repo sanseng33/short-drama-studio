@@ -17,6 +17,7 @@
 import { PERSON_DESCRIPTOR, stripRenderLines, UNCLEAR_PRONOUN_NOTE } from './shotAnnotate'
 import type { VideoPipelineExport, VideoPipelineShot } from './videoExport'
 import { CARRY_WARDROBE_CONSTRAINT } from './sceneContinuity'
+import { OFFSCREEN_CUE } from './blocking'
 import { FEMALE_RE } from './renderHygiene'
 import { actionCap, actionWeight, clauseCap, countActions, expandCompounds, isVisibleAction, limitActions, visibleCap } from './actionDensity'
 import { emotionWords, splitVoice, stripVoiceAdverbs, visibleForEmotion } from './emotionVisual'
@@ -924,7 +925,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
     const segLinesOv = ov.map((g) => {
       let body = g.text.replace(/[，；。\s]+$/, '')
       if (g.speed === '快' && !body.includes(BEAT_FAST_TAIL)) body = `${body}，${BEAT_FAST_TAIL}`
-      if (g.dialogue) body = `动作放慢，${body}；${voiceOnly ? '画外有人说话，画面人物停住倾听，嘴唇闭合不说话' : BEAT_MOUTH_CUE}`
+      if (g.dialogue) body = `动作放慢，${body}；${voiceOnly ? OFFSCREEN_CUE : BEAT_MOUTH_CUE}`
       return { g, body }
     }).map(({ g, body }, i, arr) => segmentLine(g.start, g.end, g.speed, i, body, i ? arr[i - 1].g.speed : undefined))
     return finish(segLinesOv, meta)
@@ -1233,7 +1234,7 @@ export function buildBeatPrompt(s: VideoPipelineShot, chars: Char[], opts: BeatM
       const refs = single ? [] : [...new Set(x.speakers.map((n) => stripNames(n, variants, refOf)).filter((r) => r && !BARE_PRONOUN_ONLY.test(r)))]
       if (!single && x.speech && x.speakers.length && !refs.length) todo.push(`台词段说话人无法用造型区分：${x.speakers.join('、')}`)
       const cue = !x.speech
-        ? '画外有人说话，画面人物停住倾听，嘴唇闭合不说话'
+        ? OFFSCREEN_CUE
         : refs.length >= 2
           ? `${refs.map((r, k) => `${k ? '随后' : ''}${r}${k ? '' : '先'}${BEAT_MOUTH_LINE}`).join('，')}，${BEAT_MOUTH_CLEAR}`
           : `${refs[0] || ''}${BEAT_MOUTH_CUE}`

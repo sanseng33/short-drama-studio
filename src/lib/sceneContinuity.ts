@@ -6,6 +6,7 @@
  * Prefer post-processing over LLM: derive from visual/prompt/action (+ optional location tag).
  */
 import type { VideoPipelineShot } from './videoExport'
+import { isBoundStartFrameStill, type StartFrameStill } from './startFrameStill'
 
 /**
  * Carry-shot wardrobe constraint (one place): keep prev last-frame costume/props/staging.
@@ -13,6 +14,10 @@ import type { VideoPipelineShot } from './videoExport'
  */
 export const CARRY_WARDROBE_CONSTRAINT =
   '服装/道具/站位：保持与上一镜末帧一致，禁止换装、禁止换回定妆静帧服装、禁止引入定妆包道具除非上一镜已有'
+
+/** Same-scene costume continuity without FL2V / last-frame staging (new first frame or author opted out of carry). */
+export const SAME_SCENE_WARDROBE_CONSTRAINT =
+  '服装：与同场已出场角色保持同一套服装，禁止换装、禁止换回定妆静帧服装；本镜是新构图首帧，不要求站位或道具与上一镜末帧一致'
 
 /** Coarse time bands used in sceneId suffixes. */
 export type TimeBand = 'night' | 'day' | 'dusk' | 'unknown'
@@ -44,6 +49,9 @@ export type ContinuityShot = Pick<
   carryFromPrev?: boolean
   /** Internal: merge crossed distinct sceneIds */
   _scenesCrossed?: boolean
+  startState?: Record<string, Record<string, unknown>> | import('./blocking').ShotState
+  endState?: Record<string, Record<string, unknown>> | import('./blocking').ShotState
+  startFrameStill?: StartFrameStill | null
 }
 
 /** Place patterns: longer / more specific first. */
@@ -309,6 +317,42 @@ export function sceneFieldsForMerge(sources: ContinuityShot[]): SceneFields & { 
  * Pure: returns new shot objects (shallow copy). Place falls forward within the same time band.
  * Pre-set sceneId/sceneLabel (e.g. from merge dominant) are kept.
  */
+
+const STATE_FIELDS = ['pos', 'facing', 'pose', 'gaze', 'hands'] as const
+
+/** Shared-character start vs previous end disagree on a filled field → not a last-frame carry. */
+export function sharedStateDisagrees(
+  start: Record<string, unknown> | null | undefined,
+  prevEnd: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!start || !prevEnd || typeof start !== 'object' || typeof prevEnd !== 'object') return false
+  for (const [k, raw] of Object.entries(start)) {
+    const prev = (prevEnd as Record<string, unknown>)[k]
+    if (!raw || !prev || typeof raw !== 'object' || typeof prev !== 'object') continue
+    const a = prev as Record<string, unknown>
+    const b = raw as Record<string, unknown>
+    for (const f of STATE_FIELDS) {
+      if (a[f] == null || b[f] == null) continue
+      if (String(a[f]) !== String(b[f])) return true
+    }
+  }
+  return false
+}
+
+export function shouldCarryFromPrev(
+  raw: ContinuityShot,
+  prev: (SceneFields & { episode: number; endState?: ContinuityShot['endState'] }) | null,
+  fields: SceneFields,
+  ep: number,
+): boolean {
+  if (!prev || prev.episode !== ep) return false
+  if (prev.sceneId !== fields.sceneId || isOverlayOnlyColdOpen(raw) || raw._scenesCrossed) return false
+  if (raw.carryFromPrev === false) return false
+  if (isBoundStartFrameStill(raw.startFrameStill || undefined)) return false
+  if (sharedStateDisagrees(raw.startState as Record<string, unknown> | undefined, prev.endState as Record<string, unknown> | undefined)) return false
+  return true
+}
+
 export function applySceneContinuity<T extends ContinuityShot>(
   shots: T[],
 ): (T & SceneFields & { carryFromPrev: boolean })[] {
@@ -316,7 +360,7 @@ export function applySceneContinuity<T extends ContinuityShot>(
   let lastPlace: { key: string; labelZh: string } | null = null
   let lastBand: TimeBand | null = null
   let lastEp: number | null = null
-  let prev: (SceneFields & { episode: number; carryFromPrev: boolean }) | null = null
+  let prev: (SceneFields & { episode: number; carryFromPrev: boolean; endState?: ContinuityShot['endState'] }) | null = null
 
   for (const raw of shots) {
     const ep = raw.episode
@@ -355,14 +399,11 @@ export function applySceneContinuity<T extends ContinuityShot>(
     }
     if (fields.timeBand !== 'unknown') lastBand = fields.timeBand
 
-    let carry = false
-    if (prev && prev.episode === ep) {
-      carry = prev.sceneId === fields.sceneId && !isOverlayOnlyColdOpen(raw) && !raw._scenesCrossed
-    }
+    const carry = shouldCarryFromPrev(raw, prev, fields, ep)
     const annotated = { ...raw, ...fields, carryFromPrev: carry }
     delete (annotated as ContinuityShot)._scenesCrossed
     out.push(annotated)
-    prev = { ...fields, episode: ep, carryFromPrev: carry }
+    prev = { ...fields, episode: ep, carryFromPrev: carry, endState: raw.endState }
   }
   return out
 }

@@ -8,6 +8,7 @@ import { isVisibleAction } from './actionDensity'
 import { locationNamer, normalizeLocation } from './locationNorm'
 import { normRealm, realmOfText } from './realm'
 import { normCameraSide, normFacing, normHands, normPose, normSide, normVoiceMode, presentKeysForBlocking, trimBlockingToPresent } from './blocking'
+import { conflictingAnchors, extractAnchors, mergeAnchors, shotAnchorText } from './sceneAnchors'
 
 export const EPISODE_CAP_SEC = 90
 export const MAX_ACTIONS_PER_SEGMENT = 2
@@ -39,11 +40,13 @@ export function complianceBlock(p: { secondsPerEp: number; locations?: string[] 
 - 起止状态：每个有人物的镜头必须给 startState/endState（画面内每个角色的 pos/facing/pose/gaze/hands）；carryFromPrev=true 时本镜 startState 与上一镜 endState 完全一致，姿势/手持物的变化必须在时间轴里有对应动作；被下一镜承接的镜头最后约 1 秒只保持姿态。
 - 站位与机位：每场第一镜给 blocking（左右站位、朝向、门窗在哪侧、谁拿什么），本场人物不换边；每镜给 cameraSide（master/A/B）与 eyeline，A 与 B 之间必须隔一个 master 镜（否则越轴）。
 - 一场一套光：每场第一镜给 lighting（key 主光方向、soft 软硬、temp 冷暖），同场每镜光线一致。
-- 台词 voiceMode：onscreen / inner / offscreen；inner 与 offscreen 时画面人物嘴唇闭合。
+- 台词 voiceMode：onscreen / inner / offscreen；inner 与 offscreen 时画面人物嘴唇闭合，同时必须有生命感微动（呼吸、眨眼、肩线、重心或手指），禁止整段静止。无对白且非 inner/offscreen 的镜头不要写「嘴唇闭合不说话」；若写了必须同时写微动。
 - 场景层 realm：每镜写 reality / dream / memory，同一场相同；梦境/回忆里用角色对应的造型变体；现实与梦境/回忆切换的第一镜 establishing=true、carryFromPrev=false。${locs}`
 }
 
 export interface RawShotLike {
+  id?: string
+  shotNo?: number
   durationSec?: number
   visual?: string
   action?: string
@@ -69,7 +72,7 @@ export interface RawShotLike {
 
 export interface StoryboardIssue {
   shot: number | null
-  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode' | 'realm'
+  rule: 'duration' | 'episodeSeconds' | 'dialogueFit' | 'speakers' | 'cast' | 'unknownCharacter' | 'location' | 'pronoun' | 'actions' | 'pingPong' | 'timeOfDay' | 'state' | 'stateJump' | 'axisCross' | 'lighting' | 'voiceMode' | 'realm' | 'sceneDecor'
   detail: string
 }
 
@@ -157,8 +160,11 @@ export function autoFixStoryboard<T extends RawShotLike>(shots: T[], ctx: { char
 }
 
 /** repair prompt for the LLM from a list of issues */
-export function repairPrompt(issues: StoryboardIssue[]): string {
-  return `上一版分镜未通过自检，请输出完整修正后的 JSON 数组（全部镜头，不要只给改动），逐条修正：\n${issues
+export function repairPrompt(issues: StoryboardIssue[], opts?: { lockedShots?: boolean }): string {
+  const how = opts?.lockedShots
+    ? '请只输出未锁定镜头的修正 JSON 数组（不要输出已锁定镜头，不要改写锁定正文）'
+    : '请输出完整修正后的 JSON 数组（全部镜头，不要只给改动）'
+  return `上一版分镜未通过自检，${how}，逐条修正：\n${issues
     .slice(0, 40)
     .map((x) => `- ${x.shot ? `第${x.shot}镜` : '全集'} [${x.rule}] ${x.detail}`)
     .join('\n')}`
@@ -191,13 +197,14 @@ export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeo
   const out: StoryboardIssue[] = []
   let lastSide: string | null = null
   let runLight: string | null = null
+  let runAnchors: import('./sceneAnchors').SceneAnchor[] = []
   let runCast = new Set<string>()
   shots.forEach((s, i) => {
     const n = i + 1
     const cast = s.characters || []
     const prev = i ? shots[i - 1] : null
     const newRun = !prev || runKey(prev, namer) !== runKey(s, namer)
-    if (newRun) (lastSide = null, (runLight = lightSig(s.lighting)))
+    if (newRun) (lastSide = null, (runLight = lightSig(s.lighting)), (runAnchors = extractAnchors(shotAnchorText(s))))
     const st = normRawState(s.startState)
     const en = normRawState(s.endState)
     if (cast.length && (!st || !en || cast.some((c) => !st[c] || !en[c]))) out.push({ shot: n, rule: 'state', detail: '缺 startState/endState（画面内每个角色的 pos/facing/pose/gaze/hands）' })
@@ -222,6 +229,13 @@ export function validateContinuity(shots: RawShotLike[], namer: ReturnType<typeo
     if (newRun && cast.length && !lightSig(s.lighting)) out.push({ shot: n, rule: 'lighting', detail: '本场第一镜缺 lighting（key/soft/temp）' })
     const ls = lightSig(s.lighting)
     if (!newRun && ls && runLight && ls !== runLight) out.push({ shot: n, rule: 'lighting', detail: `同场光线不一致：${ls} ≠ ${runLight}` })
+    if (!newRun) {
+      const curAnchors = extractAnchors(shotAnchorText(s))
+      for (const c of conflictingAnchors(runAnchors, curAnchors).filter((x) => x.kind === 'decor')) {
+        out.push({ shot: n, rule: 'sceneDecor', detail: `同场陈设锚点互相否定：${c.detail}` })
+      }
+      runAnchors = mergeAnchors(runAnchors, curAnchors)
+    }
     // a missing realm is filled by autoFixStoryboard (scene / text / reality); an invalid one is an error
     if (s.realm && !normRealm(s.realm)) out.push({ shot: n, rule: 'realm', detail: `realm「${s.realm}」无效，只能是 reality/dream/memory` })
     if (prev && (normRealm(s.realm) || 'reality') !== (normRealm(prev.realm) || 'reality') && s.carryFromPrev) out.push({ shot: n, rule: 'realm', detail: '现实与梦境/回忆切换时不能 carryFromPrev' })

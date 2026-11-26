@@ -50,7 +50,7 @@ export const AXIS_NOTE = '越轴：'
 export const STATE_STAY = '收尾保持'
 export const HOLD_TAIL_BODY = '姿态和位置不动，不加新动作'
 export const INNER_CUE = '这句话只在音轨上，人物不出声，嘴唇闭合，只用眼神和呼吸表现'
-export const OFFSCREEN_CUE = '画外有人说话，画面人物停住倾听，嘴唇闭合不说话'
+export const OFFSCREEN_CUE = '画外有人说话，画面人物嘴唇闭合不说话，同时保持呼吸、眨眼、肩线或重心等生命感微动，禁止整段静止'
 
 type S = VideoPipelineShot & Record<string, any>
 type Exp = VideoPipelineExport & { sceneBlocking?: Record<string, SceneBlocking>; sceneLighting?: Record<string, SceneLighting> }

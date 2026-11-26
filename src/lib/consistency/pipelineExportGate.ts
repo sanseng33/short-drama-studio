@@ -4,6 +4,7 @@
  * 不改写剧本或分镜对白，不改 videoExport.ts。副作用（下载、提示、写项目）由调用方注入，便于测试。
  */
 import type { Project } from '../../types'
+import { evaluateExportHardGates, type ExportHardIssue } from '../exportHardGates'
 import { buildVideoPipelineExport, videoPipelineFilename } from '../videoExport'
 import {
   acceptRisksForFindings,
@@ -24,6 +25,7 @@ export interface PipelineExportDeps {
 export type PipelineExportAttempt =
   | { status: 'empty' }
   | { status: 'blocked'; pending: FindingMeta[] }
+  | { status: 'blocked_consistency'; issues: ExportHardIssue[] }
   | { status: 'downloaded'; shots: number }
 
 export type PipelineConfirmResult =
@@ -56,6 +58,10 @@ export function attemptPipelineExport(project: Project, deps: PipelineExportDeps
   if (!data.shots.length) {
     deps.flash(PIPELINE_EMPTY_MESSAGE)
     return { status: 'empty' }
+  }
+  const hard = evaluateExportHardGates(project)
+  if (!hard.ok) {
+    return { status: 'blocked_consistency', issues: hard.issues }
   }
   if (isPipelineJsonBlocked(project)) {
     return { status: 'blocked', pending: unacceptedDefiniteMissing(project) }

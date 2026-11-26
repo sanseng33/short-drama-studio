@@ -1,5 +1,6 @@
 import { cleanField } from './placeholder'
 import type { Project } from '../types'
+import { formatExportHardIssues, collectExportHardIssues } from './exportHardGates'
 import {
   buildShotStateExportPack,
   renderShotStateAppendix,
@@ -98,6 +99,8 @@ export function projectToMarkdown(project: Project, options?: ShotStateExportTex
     '',
     '详见 GUIDE.md',
   )
+  const hardMd = formatExportHardIssues(collectExportHardIssues(project))
+  if (hardMd) lines.push('', hardMd.trimEnd())
   if (pack) lines.push('', '---', '', ...renderShotStateAppendix(pack, 2))
   return lines.join('\n')
 }
@@ -128,6 +131,8 @@ export function seedancePack(project: Project, episode?: number, options?: ShotS
       )
     }
   }
+  const hardSp = formatExportHardIssues(collectExportHardIssues(project))
+  if (hardSp) blocks.push(hardSp.trimEnd(), '')
   if (pack) blocks.push(...renderShotStateAppendix(pack, 2))
   return blocks.filter((x) => x !== undefined).join('\n')
 }
