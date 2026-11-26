@@ -1,8 +1,9 @@
 /**
- * shot-state-ssot@0.1.0-draft 的显式 opt-in 导出（工作室侧附加包）。
+ * shot-state-export@0.1.0 的显式 opt-in 导出（工作室侧附加包）。
+ * 状态源规格为已冻结的 shot-state-ssot@0.1.0。
  *
  * 重要边界：
- *  - 这是工作室侧附加包。H3 接收端未改，也没有声明支持这里的任何字段；不得据此认为 H3 会接收或消费。
+ *  - 这是工作室侧附加包。规格已冻结为 0.1.0。H3 接收端尚未声明支持本版本，也未消费这里的任何字段；不得据此认为 H3 会接收或消费。
  *  - 默认导出（buildVideoPipelineExport / projectToMarkdown / seedancePack 不带选项）完全不调用本模块。
  *  - compat 模式只记录；strict / run-ready 不满足时明确拒绝（抛 ShotStateExportRejectedError，或 try 版返回 ok:false），
  *    不吞异常、不降级成 compat、不产出自称 run-ready 的包。
@@ -36,11 +37,11 @@ import {
 } from './types'
 import { validateShotState } from './validate'
 
-export const SHOT_STATE_EXPORT_SPEC = 'shot-state-export@0.1.0-draft' as const
+export const SHOT_STATE_EXPORT_SPEC = 'shot-state-export@0.1.0' as const
 
-/** 写入每个附加包与每段 Markdown/Seedance 附段的固定声明。 */
+/** 写入每个附加包与每段 Markdown/Seedance 附段的固定声明。不表示 H3 已声明支持。 */
 export const H3_SUPPORT_NOTICE =
-  '工作室侧 opt-in 附加包（草案）。H3 接收端未改，也未声明支持其中任何字段；不得据此认为 H3 已接收或消费。'
+  '工作室侧 opt-in 附加包，规格已冻结为 shot-state-export@0.1.0。H3 接收端尚未声明支持本版本，也未消费其中任何字段；不得据此认为 H3 已接收或消费。'
 
 export interface ShotStateExportOptions {
   /** 默认 'compat'（只记录）。'strict' / 'run-ready' 不满足时拒绝。 */

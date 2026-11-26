@@ -1,4 +1,4 @@
-/** shot-state-ssot@0.1.0-draft 的公开入口。 */
+/** shot-state-ssot@0.1.0（已冻结）的公开入口。 */
 export * from './types'
 export { hashSource, hashText, sameSet, setDiff, canonicalSource, normalizeSource } from './hashing'
 export { createShotState, firstFrameVisibleIds, castEqualsFirstFrameVisible, withFields, type CreateShotStateInput } from './state'

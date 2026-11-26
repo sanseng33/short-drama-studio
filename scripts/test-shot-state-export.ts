@@ -197,8 +197,11 @@ t('B opt-in 出现版本化包：source、派生 provenance、version、hashes�
   const out = buildVideoPipelineExport(mkProject(), { shotStateExport: true })
   const pack = out.shotStateExport
   assert.ok(pack)
-  assert.equal(pack.spec, 'shot-state-export@0.1.0-draft')
-  assert.equal(pack.shotStateSpec, 'shot-state-ssot@0.1.0-draft')
+  assert.equal(pack.spec, 'shot-state-export@0.1.0')
+  assert.equal(pack.shotStateSpec, 'shot-state-ssot@0.1.0')
+  assert.equal(pack.spec.includes('draft'), false)
+  assert.equal(pack.shotStateSpec.includes('draft'), false)
+  assert.equal(/草案|draft/i.test(pack.notice), false)
   assert.ok(pack.compilerVersion)
   assert.equal(pack.mode, 'compat')
   assert.equal(pack.projectId, 't7-hash-fixture')

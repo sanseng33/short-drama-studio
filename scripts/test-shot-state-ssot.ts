@@ -1,5 +1,5 @@
 /** 状态：未执行。建议：npx tsc -b && npx --yes tsx scripts/test-shot-state-ssot.ts
- * shot-state-ssot@0.1.0-draft：模块用例 + 生成入口（generateStoryboardChecked）+ 检查入口（collectFindings）集成验收。
+ * shot-state-ssot@0.1.0：模块用例 + 生成入口（generateStoryboardChecked）+ 检查入口（collectFindings）集成验收。
  * 不联网（假 LLM），不执行 shell。 */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -51,6 +51,13 @@ const fullDoc = (cast: string[] = ['a', 'b']): ShotStateDoc =>
   createShotState({ shotId: 'x1', cast, firstFrame: cast.map((id) => ({ id, kind: 'full' as const })) })
 
 // ---------------- A. 模块用例 ----------------
+
+t('规格身份已冻结为 shot-state-ssot@0.1.0', () => {
+  assert.equal(SHOT_STATE_SPEC, 'shot-state-ssot@0.1.0')
+  assert.equal(SHOT_STATE_SPEC.includes('draft'), false)
+  const d = createShotState({ shotId: 'id', cast: ['a'], firstFrame: [{ id: 'a', kind: 'full' }] })
+  assert.equal(d.spec, 'shot-state-ssot@0.1.0')
+})
 
 t('同义不同文：语义审查 pass 后 strict / run-ready 可通过', () => {
   let d = fullDoc()
