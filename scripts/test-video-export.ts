@@ -548,6 +548,8 @@ t('P2 classifyPlace: villa / alley_window / classroom', () => {
   assert.equal(classifyPlace('教室靠窗座位，课桌')?.key, 'classroom')
   assert.equal(classifyPlace('教学楼走廊：水磨石地面')?.key, 'school_corridor')
   assert.equal(classifyPlace('校门口奶茶店柜台')?.key, 'milk_tea_shop')
+  assert.equal(classifyPlace('餐厅')?.key, 'dining_room')
+  assert.equal(classifyPlace('别墅餐厅全景：实木长餐桌，餐边柜')?.key, 'dining_room')
 })
 t('P2 classifyShotScene: stable sceneId across villa window variants', () => {
   const a = classifyShotScene({

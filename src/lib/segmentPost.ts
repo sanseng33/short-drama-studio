@@ -392,10 +392,12 @@ export function placeRelation(
   return BRIDGE_RE.test(bridgeText(a)) || BRIDGE_RE.test(bridgeText(b)) ? 'bridge' : false
 }
 function shotsCompatible(a: VideoPipelineShot, b: VideoPipelineShot): boolean {
+  if (a.delayedEntrySplit || b.delayedEntrySplit) return false
   if ((a.timeOfDay || '') !== (b.timeOfDay || '')) return false
   return placeRelation(a, b) === 'same'
 }
 function shotsBridgeable(a: VideoPipelineShot, b: VideoPipelineShot): boolean {
+  if (a.delayedEntrySplit || b.delayedEntrySplit) return false
   return (a.timeOfDay || '') === (b.timeOfDay || '') && placeRelation(a, b) !== false
 }
 /** Near-identical consecutive shots (same parent split, or same visual & cast). */
@@ -482,6 +484,9 @@ function mergedPrompt(shots: VideoPipelineShot[], durs: number[], total: number,
 function mergeUnit(shots: VideoPipelineShot[], minSec: number, maxSec: number, nameOf: (id: string) => string, usedIds: Set<string>): VideoPipelineShot {
   if (shots.length === 1) {
     const s = shots[0]
+    // Delayed-entry pre/post must not be silently extended to SEGMENT_MIN_SEC
+    // (e.g. 3.5+3.5 of a 7s source becoming 5+5=10). Duration policy is explicit in delayedEntrySplit.
+    if (s.delayedEntrySplit) return s
     const d = s.durationSec < minSec ? minSec : s.durationSec
     // leave sceneId unset — applySceneContinuity assigns with episode place fall-forward
     return d === s.durationSec ? s : { ...s, durationSec: d, prompt: s.prompt.replace(/时间轴[：:][^。]*。/g, '') }

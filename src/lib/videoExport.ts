@@ -1,8 +1,9 @@
 /** 导出给视频流水线：pure builder for short-drama-studio/video-pipeline@1 (additive fields only). */
 import type { Character, Project, Shot } from '../types'
+import { finalizeDelayedEntryDurationWarnings, splitDelayedEntryShots } from './delayedEntrySplit'
 import { mapNamesToIds, shotCharacterIds } from './shotCast'
 import { cleanField, cleanPrompt } from './placeholder'
-import { postProcessExport, type DialogueLineOut } from './segmentPost'
+import { postProcessExport, SEGMENT_MIN_SEC, type DialogueLineOut } from './segmentPost'
 import { missingVoices, type AutoVoice, type VoiceSpec } from './voice'
 import { buildAssetContract, type AssetContract } from './assetFeed'
 import { factsForShotPrompts, tierSettingFactsForPrompt, type SettingFactsByTier } from './settingFacts'
@@ -90,6 +91,11 @@ export interface VideoPipelineShot {
   timeBand?: string
   /** opt-in splitCrossCut: id of the two-person cross-cut segment this solo child was split from */
   splitFrom?: string
+  /** delayed-entry split: pre has no entering-character refs; post first frame includes the enterer */
+  delayedEntrySplit?: 'pre' | 'post'
+  splitSourceDurationSec?: number
+  splitPlannedDurationSec?: number
+  splitUntimed?: boolean
   /**
    * opt-in splitCrossCut: camera-angle continuity key = `${sceneId}_${sorted characterIds joined '+' | 'empty'}`,
    * e.g. villa_bedroom_day_c2. Set on every shot of a split pack.
@@ -179,7 +185,7 @@ export interface VideoPipelineWarning {
   episode: number
   shotId?: string
   characterId?: string
-  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing' | 'cast_consistency' | 'asset_refset_missing' | 'asset_plate_missing' | 'asset_ref_file_missing' | 'asset_scene_id_missing' | 'asset_character_id_duplicate' | 'asset_reference_conflict' | 'asset_hash_unverified' | 'asset_binding_unused' | 'asset_costume_placeholder' | 'asset_costume_divergence'
+  code: 'dialogue_too_long' | 'segment_duration' | 'duration_remainder' | 'speaker_unresolved' | 'speaker_offlist' | 'multi_character_shot' | 'character_missing_costume' | 'character_missing_prop' | 'time_conflict' | 'style_mismatch' | 'setting_fact_gap' | 'stiff_camera_run' | 'acting_speech_only' | 'style_drift' | 'voice_missing' | 'cast_consistency' | 'asset_refset_missing' | 'asset_plate_missing' | 'asset_ref_file_missing' | 'asset_scene_id_missing' | 'asset_character_id_duplicate' | 'asset_reference_conflict' | 'asset_hash_unverified' | 'asset_binding_unused' | 'asset_costume_placeholder' | 'asset_costume_divergence' | 'asset_hidden_face_unqualified' | 'asset_hidden_face_unverified' | 'delayed_entry_split' | 'delayed_entry_split_untimed' | 'delayed_entry_duration_below_min' | 'delayed_entry_duration_extended'
   message: string
 }
 
@@ -588,7 +594,9 @@ const lower = (s: Seg, max: number) => Math.max(MIN_UNITS, Math.min(s.need, max)
 
 /** Move time inside an episode so every seg is within [lower, max]; prefers dialogue-free nearest donors. */
 function allocate(segs: Seg[], max: number) {
+  const frozen = (s: Seg) => Boolean(s.shot.delayedEntrySplit)
   for (let i = 0; i < segs.length; i++) {
+    if (frozen(segs[i])) continue
     let def = lower(segs[i], max) - segs[i].u
     if (def <= 0) continue
     const order = segs.map((_, j) => j).filter((j) => j !== i).sort((a, b) => Math.abs(a - i) - Math.abs(b - i))
@@ -596,6 +604,7 @@ function allocate(segs: Seg[], max: number) {
       for (const j of order) {
         if (def <= 0) break
         const d = segs[j]
+        if (frozen(d)) continue
         if (pass === 0 && d.dialogue) continue
         const slack = d.u - lower(d, max)
         if (slack <= 0) continue
@@ -607,11 +616,13 @@ function allocate(segs: Seg[], max: number) {
     }
   }
   for (let i = 0; i < segs.length; i++) {
+    if (frozen(segs[i])) continue
     let sur = segs[i].u - max
     if (sur <= 0) continue
     const order = segs.map((_, j) => j).filter((j) => j !== i).sort((a, b) => Math.abs(a - i) - Math.abs(b - i))
     for (const j of order) {
       if (sur <= 0) break
+      if (frozen(segs[j])) continue
       const room = max - segs[j].u
       if (room <= 0) continue
       const t = Math.min(room, sur)
@@ -648,7 +659,8 @@ function buildShotSegs(
   const onscreen0 = shotCharacterIds(s, chars)
   const shotVoice = mapNamesToIds(s.voiceOnly, chars)
   const actionX = extractSfx(cleanField(s.action))
-  const actions = splitActions(actionX.text)
+  // Delayed-entry pre/post already own the time cut; do not re-split on 随后/然后 inside the original action.
+  const actions = s.delayedEntrySplit ? [actionX.text] : splitActions(actionX.text)
   const sysIds = new Set(chars.filter(isSystemCharacter).map((c) => c.id))
   const sysNames = chars.filter(isSystemCharacter).flatMap((c) => [c.name, c.baseName || ''].filter(Boolean))
   // explicit overlayText entries: strip `系统小转：` prefix, then keep literal UI text only
@@ -711,16 +723,16 @@ function buildShotSegs(
 
   const voiceIds = uniq([
     ...shotVoice.filter((id) => !sysIds.has(id)),
-    ...groups.filter((g) => g.speaker && (g.voice || !onscreen0.includes(g.speaker))).map((g) => g.speaker!),
+    ...groups.filter((g) => g.speaker && (g.voice || g.inner || !onscreen0.includes(g.speaker))).map((g) => g.speaker!),
   ])
-  // OS/画外/V.O./电话/广播 → remove from characterIds; 内心/心声/心想 keep onscreen if originally present
-  const onscreen = onscreen0.filter(
-    (id) => !shotVoice.includes(id) && !groups.some((g) => g.speaker === id && g.voice && !g.inner),
-  )
+  // Pure offscreen VO (not in the shot's characterIds) stays out of characterIds.
+  // On-screen + VO (already in characterIds, also listed in voiceOnly / 画外 tag) stays in characterIds
+  // and may also appear in voiceOnly. Do not drop a visible character just because they have a VO line.
+  const onscreen = [...onscreen0]
   const innerOnscreen = new Set(
     groups.filter((g) => g.speaker && g.inner && onscreen0.includes(g.speaker)).map((g) => g.speaker!),
   )
-  const voice = voiceIds.filter((id) => !onscreen.includes(id) || innerOnscreen.has(id))
+  const voice = voiceIds.filter((id) => !onscreen.includes(id) || innerOnscreen.has(id) || shotVoice.includes(id) || groups.some((g) => g.speaker === id && g.voice))
 
   const n = Math.max(actions.length, groups.length, 1)
   const segs: Seg[] = []
@@ -870,7 +882,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
   const SETTING_FACT_KEYS = ['对窗', '邻居', '别墅', '贫困', '旧楼'] as const
   const SETTING_SHOT_KEYS = ['对窗', '邻居', '别墅', '贫困', '旧楼', '对面楼', '对面窗', '窗对窗', '老楼', '城中村', '贫寒']
   for (const ep of eps) {
-    const list = [...project.storyboards[ep]].sort((a, b) => a.shotNo - b.shotNo)
+    const split = splitDelayedEntryShots([...project.storyboards[ep]].sort((a, b) => a.shotNo - b.shotNo), chars, undefined, opts.segmentMinSec ?? SEGMENT_MIN_SEC)
+    for (const w of split.warnings) warnings.push({ episode: ep, shotId: w.shotId, code: w.code, message: w.message })
+    const list = split.shots
     // soft: settingFacts space relations missing from this episode's visuals/prompts
     const factBlob = (project.settingFacts || []).join(' ')
     const factHits = SETTING_FACT_KEYS.filter((k) => factBlob.includes(k))
@@ -906,8 +920,9 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     const remainderSec = Math.round((rawTotal - targetUnits * DURATION_STEP) * 1000) / 1000
     let T = segs.reduce((a, b) => a + b.u, 0)
     if (segs.length && T !== targetUnits) {
-      segs[segs.length - 1].u += targetUnits - T
-      if (segs[segs.length - 1].u < 0) segs[segs.length - 1].u = 0
+      const idx = [...segs.keys()].reverse().find((i) => !segs[i].shot.delayedEntrySplit) ?? segs.length - 1
+      segs[idx].u += targetUnits - T
+      if (segs[idx].u < 0) segs[idx].u = 0
       T = segs.reduce((a, b) => a + b.u, 0)
     }
     allocate(segs, max)
@@ -999,6 +1014,12 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
         refImage: s.refImage || null,
         ...(s.timeOfDay ? { timeOfDay: s.timeOfDay } : {}),
         ...(s.location?.trim() ? { location: s.location.trim() } : {}),
+        ...(s.wardrobeState && typeof s.wardrobeState === 'object' ? { wardrobeState: s.wardrobeState } : {}),
+        ...(s.delayedEntrySplit ? { delayedEntrySplit: s.delayedEntrySplit } : {}),
+        ...(s.splitFrom ? { splitFrom: s.splitFrom } : {}),
+        ...(s.splitSourceDurationSec != null ? { splitSourceDurationSec: s.splitSourceDurationSec } : {}),
+        ...(s.splitPlannedDurationSec != null ? { splitPlannedDurationSec: s.splitPlannedDurationSec } : {}),
+        ...(s.splitUntimed ? { splitUntimed: true } : {}),
         ...(multi ? { segment: { index: idx, total: group.length, parentId: s.id } } : {}),
         ...generatorHints(s, chars, idx, group.length),
       })
@@ -1092,6 +1113,8 @@ export function buildVideoPipelineExport(project: Project, opts: VideoPipelineOp
     splitCrossCut: opts.splitCrossCut,
     sceneOverrides: opts.sceneOverrides,
   })
+  const segmentMin = opts.segmentMinSec ?? SEGMENT_MIN_SEC
+  out.warnings = finalizeDelayedEntryDurationWarnings(out.shots, out.warnings, segmentMin)
   // a line without a voice cannot be voiced (scripts/repack.ts fails on it; the app export warns)
   const ep = new Map(out.shots.map((s) => [s.id, s.episode]))
   for (const m of missingVoices(out.shots)) {

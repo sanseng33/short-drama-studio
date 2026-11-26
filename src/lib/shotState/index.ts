@@ -48,3 +48,5 @@ export {
   type TryShotStateExport,
 } from './export'
 export { recordShotStates, shotStateFindings, collectShotStateFindings, type ShotStateEpisodeRecord } from './record'
+
+export { shotStateFromShot, hasExplicitShotState } from './fromShot'

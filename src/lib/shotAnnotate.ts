@@ -41,6 +41,7 @@ import {
   withFirstLineNoText,
 } from './renderHygiene'
 import { autoVoices, withCharacterIdentity, withCharacterVoices, withLineVoices, type VoiceSpec } from './voice'
+import { baseWardrobeStateFromCard, parseExplicitWardrobeRefConstraints, type WardrobeRefConstraint } from './wardrobeConstraint'
 
 export type Framing = 'closeup_dialogue' | 'medium' | 'full' | 'empty'
 export const FRAMINGS: Framing[] = ['closeup_dialogue', 'medium', 'full', 'empty']
@@ -96,7 +97,19 @@ const SIZE_RE = /大全景|中全景|全景|远景|中近景|近景特写|近景
 const CLOSE_RE = /近景|特写/
 const FULL_RE = /全景|远景/
 
-type ShotLike = Pick<VideoPipelineShot, 'size' | 'camera' | 'characterIds' | 'dialogue' | 'speaker' | 'voiceOnly' | 'dialogueLines' | 'speakerOffscreen'>
+type ShotLike = Pick<VideoPipelineShot, 'size' | 'camera' | 'characterIds' | 'dialogue' | 'speaker' | 'voiceOnly' | 'dialogueLines' | 'speakerOffscreen' | 'startState' | 'endState'> & {
+  visual?: string
+  firstFrame?: { id?: string; kind?: string }[]
+}
+
+export type PresenceShot = {
+  characterIds?: string[]
+  startState?: unknown
+  endState?: unknown
+  firstFrame?: { id?: string; kind?: string }[]
+  voiceOnly?: string[]
+  visual?: string
+}
 
 /** at least one line spoken on screen by a cast member (not voiceOnly / off-screen / narration) */
 export function hasOnscreenDialogue(s: ShotLike): boolean {
@@ -110,11 +123,56 @@ export function hasOnscreenDialogue(s: ShotLike): boolean {
   return lines.some((l) => Boolean(l.text?.trim()) && !l.voiceOnly && Boolean(l.speaker) && cast.includes(l.speaker!) && !vo.has(l.speaker!))
 }
 
+const FIRST_FRAME_ABSENT = new Set(['offscreen', 'absent'])
+
+function resolveCastKey(key: string, chars: { id: string; name?: string; baseName?: string }[]): string | null {
+  const k = (key || '').trim()
+  if (!k) return null
+  const hit = chars.find((c) => c.id === k) || chars.find((c) => c.name === k) || chars.find((c) => c.baseName === k)
+  return hit ? hit.id : null
+}
+
 /**
- * Characters actually on screen: characterIds minus voice-only cast members. A cast member listed in voiceOnly
- * (inner voice / heard off-screen) still counts as on screen when the shot's visual text names them.
+ * First-frame visible ids from structured shot fields, or null when those fields are absent/malformed.
+ * Does not parse visual/action prose and does not mark visibility verified.
+ */
+export function firstFrameOnscreenIds(
+  s: PresenceShot,
+  chars: { id: string; name?: string; baseName?: string }[] = [],
+): string[] | null {
+  const ff = s.firstFrame
+  if (Array.isArray(ff) && ff.length) {
+    const out: string[] = []
+    for (const row of ff) {
+      if (!row || typeof row !== 'object') return null
+      const id = resolveCastKey(String(row.id ?? ''), chars) || (typeof row.id === 'string' && (s.characterIds || []).includes(row.id) ? row.id : null)
+      if (!id || typeof row.kind !== 'string' || !row.kind.trim()) return null
+      if (!FIRST_FRAME_ABSENT.has(row.kind.trim()) && !out.includes(id)) out.push(id)
+    }
+    return out
+  }
+  const start = s.startState
+  if (start && typeof start === 'object' && !Array.isArray(start) && Object.keys(start).length) {
+    const out: string[] = []
+    for (const key of Object.keys(start)) {
+      const id = resolveCastKey(key, chars) || ((s.characterIds || []).includes(key) ? key : null)
+      if (id && !out.includes(id)) out.push(id)
+    }
+    return out.length ? out : null
+  }
+  return null
+}
+
+/**
+ * Characters visible at the first frame, used for 景别 / 主体 / framing.
+ * Prefer explicit firstFrame (offscreen/absent excluded), else startState keys.
+ * Fallback: characterIds minus pure voice-only, unless a voiceOnly id is named in visual
+ * (legacy involvement-as-on-screen when no structured presence exists).
+ * characterIds remains involvement, including delayed-entry and on-screen VO.
  */
 export function onscreenCast(s: ShotLike & { visual?: string }, chars: { id: string; name?: string; baseName?: string }[] = []): string[] {
+  const structured = firstFrameOnscreenIds(s, chars)
+  if (structured) return structured
   const vo = new Set(s.voiceOnly || [])
   const byId = new Map(chars.map((c) => [c.id, c]))
   return (s.characterIds || []).filter((id) => {
@@ -525,25 +583,29 @@ export function finalizePrompt(prompt: string, framing: Framing): string {
 }
 
 export function baseWardrobeState(c: WardrobeMeta | undefined): string {
-  if (!c) return 'default'
-  if (c.wardrobeState?.trim()) return c.wardrobeState.trim()
-  const ref = (c.refImage || '').trim()
-  const key = (c.characterKey || '').trim()
-  if (ref && key && ref.startsWith(`${key}_`) && ref.length > key.length + 1) return ref.slice(key.length + 1)
-  return 'default'
+  return baseWardrobeStateFromCard(c).state
 }
 
 const startsAt = (s: VideoPipelineShot, id: string) => s.id === id || s.splitFrom === id || Boolean(s.mergedFrom?.includes(id)) || s.segment?.parentId === id
 
 /** wardrobeState for every shot (pack order, carried forward per character id). */
-export function wardrobeStates(shots: VideoPipelineShot[], chars: WardrobeMeta[]): Record<string, string>[] {
+export function wardrobeStates(
+  shots: VideoPipelineShot[],
+  chars: WardrobeMeta[],
+  opts: { facts?: readonly string[] | null; constraints?: readonly WardrobeRefConstraint[] } = {},
+): Record<string, string>[] {
   const byId = new Map(chars.map((c) => [c.id, c]))
   const cur = new Map<string, string>()
   const doneTimeline = new Map<string, Set<number>>()
+  const constraints =
+    opts.constraints || parseExplicitWardrobeRefConstraints(opts.facts, chars as never).applied
+  const constrained = new Map(constraints.map((x) => [x.characterId, x.state]))
   return shots.map((s) => {
     const text = `${s.visual || ''}\n${s.action || ''}`
     for (const c of chars) {
-      if (!cur.has(c.id)) cur.set(c.id, baseWardrobeState(c))
+      if (!cur.has(c.id)) cur.set(c.id, constrained.get(c.id) || baseWardrobeState(c))
+      const preset = s.wardrobeState?.[c.id]?.trim()
+      if (preset) cur.set(c.id, preset)
       const done = doneTimeline.get(c.id) || new Set<number>()
       doneTimeline.set(c.id, done)
       ;(c.wardrobeTimeline || []).forEach((e, i) => {
@@ -690,7 +752,7 @@ export function annotateShots(exp: VideoPipelineExport, opts: { speechRate?: Par
   const chars = e.characters as WardrobeMeta[]
   const extraVoices = (e.project?.voices || {}) as Record<string, unknown>
   const auto = autoVoices(e.shots, e.characters, extraVoices, e.project?.id || e.project?.title || '')
-  const ws = wardrobeStates(e.shots, chars)
+  const ws = wardrobeStates(e.shots, chars, { facts: e.project?.settingFacts })
   const pid = e.project?.id || e.project?.title || ''
   return {
     ...e,

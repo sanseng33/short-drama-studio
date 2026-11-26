@@ -91,7 +91,7 @@ export interface FieldDecl {
 }
 
 export interface MigrationInfo {
-  origin: 'legacy_migration'
+  origin: 'legacy_migration' | 'shot_fields' | 'start_state'
   fromCharacterIds: string[]
   fromVoiceOnly: string[]
   /** voiceOnly 中无法解析到角色 id 的原值（保留为 cast 成员） */

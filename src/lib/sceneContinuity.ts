@@ -97,6 +97,7 @@ const PLACE_RULES: { key: string; labelZh: string; re: RegExp; weight: number }[
   { key: 'mall', labelZh: '商场', re: /商场|超市|便利店/, weight: 20 },
   { key: 'elevator', labelZh: '电梯', re: /电梯|大堂/, weight: 20 },
   { key: 'bathroom', labelZh: '卫生间', re: /浴室|卫生间|洗手间/, weight: 25 },
+  { key: 'dining_room', labelZh: '餐厅', re: /餐厅|餐桌|餐边柜/, weight: 36 },
   { key: 'kitchen', labelZh: '厨房', re: /厨房/, weight: 25 },
   { key: 'living_room', labelZh: '客厅', re: /客厅/, weight: 25 },
   { key: 'balcony', labelZh: '阳台', re: /阳台|天台|楼顶/, weight: 25 },
